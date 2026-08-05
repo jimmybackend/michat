@@ -1,0 +1,2278 @@
+// chat1.js — Chat con Markdown, adjuntos, proyectos y herramientas (Versión Corregida)
+(function () {
+  'use strict';
+
+  window.addEventListener('DOMContentLoaded', () => {
+    if (!document.getElementById('pane-Chat2')) return;
+
+    // ===============================
+    // Endpoints del backend
+    // ===============================
+    const API = {
+      send: 'bedrock_chat2.php',
+      sessions: 'chat2_sessions.php',
+      createSession: 'chat2_session_create.php',
+      renameSession: 'chat2_session_title.php',
+      archiveSession: 'chat2_session_archive.php',
+      restoreSession: 'chat2_session_restore.php',
+      messages: 'chat2_messages.php',
+      genImage: 'chat_gen_image.php',
+      genVideoStart: 'chat_gen_video_start.php',
+      genVideoStatus: 'chat_gen_video_status.php',
+      notifyPoll: 'chat_notify_poll.php',
+      markPrimordial: 'chat_mark_primordial.php', // <-- NUEVO: Endpoint para metacognición
+      getContext: 'get_context.php'// <-- NUEVO: contextos
+    };
+
+    const PROJECT_API = {
+      list: 'projects.php',
+      create: 'projects.php',
+      update: 'projects.php',
+      delete: 'projects.php',
+      sources: 'project_sources.php',
+      tools: 'tools.php'
+    };
+
+    // ===============================
+    // DOM refs (Sidebar + Main)
+    // ===============================
+    const $ = (s) => document.querySelector(s);
+    const $$ = (s) => Array.from(document.querySelectorAll(s));
+    
+    const el = {
+      pane: $('#pane-Chat2'),
+      
+      // Sidebar Chats
+      sbChatList: $('#sbChatList'),
+      sbChatSearch: $('#sbChatSearch'),
+      sbNewChat: $('#sbNewChat'),
+      
+      // Sidebar Projects
+      sbProjectList: $('#sbProjectList'),
+      sbNewProject: $('#sbNewProject'),
+      sbManageProjects: $('#sbManageProjects'),
+      sbCurrentProject: $('#sbCurrentProject'),
+      sbCurrentSession: $('#sbCurrentSession'),
+      sbSourcesCount: $('#sbSourcesCount'),
+
+      // Main Chat Area
+      sessionsList: $('#chat2SessionsList'),
+      search: $('#chat2Search'),
+      reload: $('#chat2Reload'),
+      showArchived: $('#chat2ShowArchived'),
+      newBtn: $('#chat2NewBtn'),
+      
+      title: $('#chat2Title'),
+      badge: $('#chat2SessionBadge'),
+      rename: $('#chat2Rename'),
+      archive: $('#chat2Archive'),
+      restore: $('#chat2Restore'),
+
+      model: $('#chat2Model'),
+      auto: $('#chat2Auto'),
+      temp: $('#chat2Temp'),
+      max: $('#chat2Max'),
+      topP: $('#chat2TopP'),
+
+      messages: $('#chat2Messages'),
+      status: $('#chat2Status'),
+      usage: $('#chat2Usage'),
+
+      input: $('#chat2Input'),
+      file: $('#chat2File'),
+      attach: $('#chat2Attach'),
+
+      btnGenImg: $('#chat2BtnGenImg'),
+      btnGenVid: $('#chat2BtnGenVid'),
+      btnSonic: $('#chat2BtnSonic'),
+      send: $('#chat2Send'),
+
+      queue: $('#chat2Queue'),
+      queueList: $('#chat2QueueList'),
+      
+      // Project UI in main area
+      projectSelect: $('#chat2Project'),
+      projectNew: $('#chat2ProjectNew'),
+      projectManage: $('#chat2ProjectManage'),
+      sourcesPanel: $('#chat2SourcesPanel'),
+      sourcesList: $('#chat2SourcesList'),
+      sourcesCount: $('#chat2SourcesCount'),
+      sourcesAdd: $('#chat2SourcesAdd'),
+      sourcesRefresh: $('#chat2SourcesRefresh'),
+    };
+
+    // ===============================
+    // Estado
+    // ===============================
+    let currentSessionId = null;
+    let currentProjectId = null;
+    let sessions = [];
+    let projects = [];
+    let projectSources = [];
+    let isSending = false;
+    let pendingFiles = []; 
+    let fileIdSeq = 1;
+
+    // ===============================
+    // Utils
+    // ===============================
+    const esc = (s) => (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
+    function fmtDate(dtStr) {
+      if (!dtStr) return '';
+      try { return new Date(dtStr.replace(' ', 'T')).toLocaleString(); } 
+      catch { return dtStr; }
+    }
+
+    function setStatus(txt) {
+      if (!el.status) return;
+      el.status.innerHTML = txt ? `⏳ ${esc(txt)}` : '';
+    }
+    
+    function setUsage(txt) {
+      if (el.usage) el.usage.textContent = txt || '';
+    }
+    
+    function toJSONorThrow(text, status, label) {
+      try { return JSON.parse(text); }
+      catch {
+        throw new Error(`${label} no devolvió JSON (HTTP ${status}). Respuesta: ${text.slice(0, 280)}`);
+      }
+    }
+    
+    function buildS3Url(key) {
+      return 'descargar.php?archivo=' + encodeURIComponent(key) + '&nombre=' + encodeURIComponent(key.split('/').pop());
+    }
+    
+    function scrollMessagesToBottom() {
+      if (el.messages) el.messages.scrollTop = el.messages.scrollHeight;
+    }
+    
+    function getUserId() {
+      const hid = document.getElementById('chatUserId');
+      if (hid && hid.value) {
+        const n = parseInt(hid.value, 10);
+        if (Number.isFinite(n) && n > 0) return String(n);
+      }
+      const ds = document.querySelector('[data-user-id]');
+      if (ds) {
+        const v = ds.getAttribute('data-user-id') || (ds.dataset ? ds.dataset.userId : '');
+        const n = parseInt(v, 10);
+        if (Number.isFinite(n) && n > 0) return String(n);
+      }
+      return '';
+    }
+
+    function requireModelSelected() {
+      const model = el.model ? String(el.model.value || '').trim() : '';
+      if (!model) {
+        setStatus('Selecciona un modelo antes de continuar.');
+        if (el.model) el.model.focus();
+        return '';
+      }
+      return model;
+    }
+
+    // ===============================
+    // Markdown básico → HTML (Compacto)
+    // ===============================
+    function mdSafe(html) {
+      return String(html || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function mdInline(text) {
+      let s = String(text || '');
+      s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+      s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+      s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+      s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+      s = s.replace(/_([^_\n]+)_/g, '<em>$1</em>');
+      return s;
+    }
+
+    function parseMarkdownTable(block) {
+      const lines = String(block || '').split('\n').map(v => v.trim()).filter(Boolean);
+      if (lines.length < 2 || !/\|/.test(lines[0]) || !/\|/.test(lines[1])) return null;
+      const sep = lines[1].replace(/\s/g, '');
+      if (!/^(\|?[:\-]+)+\|?[:\-]*$/.test(sep.replace(/\|/g, '|')) || !/^[:\-\|]+$/.test(sep)) return null;
+
+      const splitRow = (row) => {
+        let r = row.trim();
+        if (r.startsWith('|')) r = r.slice(1);
+        if (r.endsWith('|')) r = r.slice(0, -1);
+        return r.split('|').map(cell => mdInline(cell.trim()));
+      };
+
+      const head = splitRow(lines[0]);
+      const body = lines.slice(2).map(splitRow);
+      if (!head.length) return null;
+
+      let html = '<div class="chat-table-wrap"><table><thead><tr>' + head.map(cell => `<th>${cell}</th>`).join('') + '</tr></thead>';
+      if (body.length) {
+        html += '<tbody>' + body.map(row => `<tr>${head.map((_, i) => `<td>${row[i] || ''}</td>`).join('')}</tr>`).join('') + '</tbody>';
+      }
+      return html + '</table></div>';
+    }
+
+function mdToHtml(md) {
+  if (!md) return '';
+  
+  let codeBlocks = [];
+  let thinkingBlocks = [];
+  let tempMd = String(md);
+  
+  // 1. Extraer y proteger bloques <thinking>...</thinking>
+  tempMd = tempMd.replace(/<thinking>([\s\S]*?)<\/thinking>/gi, (match, content) => {
+    const index = thinkingBlocks.length;
+    // Sanitizamos el contenido interno para evitar XSS, pero preservamos saltos de línea
+    const safeContent = mdSafe(content.trim()).replace(/\n/g, '<br>');
+    thinkingBlocks.push(`<div class="thinking-block"><i class="fas fa-brain"></i> <strong>Pensamiento:</strong><br>${safeContent}</div>`);
+    return `\n___THINKING_BLOCK_${index}___\n`;
+  });
+
+  // 2. Extraer y proteger bloques de código (``` ... ```)
+  tempMd = tempMd.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+    const index = codeBlocks.length;
+    const cleanCode = mdSafe(code.trim());
+    codeBlocks.push(`<pre class="chat-code-block" data-lang="${lang || 'text'}"><code>${cleanCode}</code></pre>`);
+    return `\n___CODE_BLOCK_${index}___\n`;
+  });
+
+  // 3. Procesar el resto del markdown (que ya no contiene bloques de código ni thinking)
+  const lines = mdSafe(tempMd).split('\n');
+  const out = [];
+  let inUl = false, inOl = false, inBlockquote = false;
+
+  const closeLists = () => { if (inUl) { out.push('</ul>'); inUl = false; } if (inOl) { out.push('</ol>'); inOl = false; } };
+  const closeBlockquote = () => { if (inBlockquote) { out.push('</blockquote>'); inBlockquote = false; } };
+  const closeAllBlocks = () => { closeLists(); closeBlockquote(); };
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const line = raw.trim();
+
+    // Si es un marcador de bloque de pensamiento, lo insertamos directamente como HTML
+    const thinkingMatch = line.match(/^___THINKING_BLOCK_(\d+)___$/);
+    if (thinkingMatch) {
+      closeAllBlocks();
+      const idx = parseInt(thinkingMatch[1], 10);
+      out.push(thinkingBlocks[idx]);
+      continue;
+    }
+
+    // Si es un marcador de bloque de código, lo insertamos directamente como HTML
+    const codeMatch = line.match(/^___CODE_BLOCK_(\d+)___$/);
+    if (codeMatch) {
+      closeAllBlocks();
+      const idx = parseInt(codeMatch[1], 10);
+      out.push(codeBlocks[idx]);
+      continue;
+    }
+
+    if (!line) { closeAllBlocks(); continue; }
+
+    // Tablas
+    if (i + 1 < lines.length && /\|/.test(lines[i]) && /\|/.test(lines[i + 1]) && /^[:\-\|\s]+$/.test(lines[i + 1].trim())) {
+      closeAllBlocks();
+      const tableBlock = [];
+      while (i < lines.length && lines[i].trim() && /\|/.test(lines[i])) { tableBlock.push(lines[i]); i++; }
+      const tableHtml = parseMarkdownTable(tableBlock.join('\n'));
+      if (tableHtml) { out.push(tableHtml); continue; } else { i -= tableBlock.length; }
+    }
+
+    // Encabezados
+    const h = raw.match(/^(#{1,6})\s+(.+)$/);
+    if (h) { closeAllBlocks(); out.push(`<h${h[1].length}>${mdInline(h[2].trim())}</h${h[1].length}>`); continue; }
+    
+    // Regla horizontal
+    if (/^([-*_]){3,}$/.test(line.replace(/\s/g, ''))) { closeAllBlocks(); out.push('<hr>'); continue; }
+
+    // Blockquote
+    const bq = raw.match(/^\s*>\s?(.*)$/);
+    if (bq) { closeLists(); if (!inBlockquote) { out.push('<blockquote>'); inBlockquote = true; } out.push(`<p>${mdInline(bq[1])}</p>`); continue; } 
+    else { closeBlockquote(); }
+
+    // Listas desordenadas
+    const ul = raw.match(/^\s*[-*]\s+(.+)$/);
+    if (ul) { closeBlockquote(); if (inOl) { out.push('</ol>'); inOl = false; } if (!inUl) { out.push('<ul>'); inUl = true; } out.push(`<li>${mdInline(ul[1])}</li>`); continue; }
+
+    // Listas ordenadas
+    const ol = raw.match(/^\s*\d+\.\s+(.+)$/);
+    if (ol) { closeBlockquote(); if (inUl) { out.push('</ul>'); inUl = false; } if (!inOl) { out.push('<ol>'); inOl = true; } out.push(`<li>${mdInline(ol[1])}</li>`); continue; }
+
+    // Párrafos
+    closeLists(); closeBlockquote();
+    out.push(`<p>${mdInline(line)}</p>`);
+  }
+
+  closeAllBlocks();
+  return out.join('\n').trim();
+}
+
+    // ===============================
+    // Cola de adjuntos
+    // ===============================
+    function addFilesFromInput(fileList) {
+      const arr = Array.from(fileList || []);
+      if (!arr.length) return;
+      arr.forEach(f => pendingFiles.push({ file: f, id: fileIdSeq++ }));
+      renderQueue();
+      suggestAttachmentsHeader();
+      if (el.file) el.file.value = '';
+    }
+
+    function removeFileById(id) {
+      pendingFiles = pendingFiles.filter(x => x.id !== id);
+      renderQueue();
+    }
+
+    function renderQueue() {
+      const has = pendingFiles.length > 0;
+      if (!el.queue || !el.queueList) return;
+      el.queue.classList.toggle('d-none', !has);
+      if (!has) { el.queueList.innerHTML = ''; return; }
+
+      el.queueList.innerHTML = pendingFiles.map(({file, id}) => {
+        const k = 1024, sizes = ['B','KB','MB','GB','TB'];
+        const i = file.size === 0 ? 0 : Math.floor(Math.log(file.size)/Math.log(k));
+        const size = (file.size/Math.pow(k,i)).toFixed(1) + ' ' + sizes[i];
+        return `<span class="file-chip" title="${esc(file.name)} • ${size}">
+          <i class="fas fa-file mr-1"></i>${esc(file.name)}
+          <button type="button" class="chip-x" data-id="${id}" aria-label="Quitar">&times;</button>
+        </span>`;
+      }).join('');
+
+      el.queueList.querySelectorAll('.chip-x').forEach(btn => {
+        btn.addEventListener('click', () => removeFileById(parseInt(btn.getAttribute('data-id'), 10)));
+      });
+    }
+
+    function suggestAttachmentsHeader() {
+      if (!el.input) return;
+      const txt = (el.input.value || '').trim();
+      if (txt || !pendingFiles.length) return;
+      el.input.value = `Adjunto(s): ${pendingFiles.map(x => x.file.name).join(', ')}\n\n`;
+      el.input.focus();
+      el.input.setSelectionRange(el.input.value.length, el.input.value.length);
+    }
+
+
+function pushLocal(role, content, opts = {}) {
+  const ct = opts.content_type || 'text';
+  const timeHtml = opts.created_at ? `<div class="msg-time">${esc(fmtDate(opts.created_at))}</div>` : '';
+  let html = '';
+
+ if (ct === 'image' && (opts.s3_key || opts.thumb_s3_key)) {
+    const imgUrl = buildS3Url(opts.thumb_s3_key || opts.s3_key);
+    const fullUrl = buildS3Url(opts.s3_key || opts.thumb_s3_key);
+    html = `<div class="chat-msg ${role === 'assistant' ? 'assistant chat-assistant' : 'user chat-user'}">
+      <div><strong>${role === 'assistant' ? 'Asistente' : 'Tú'}</strong></div>
+      ${content ? `<div>${esc(content)}</div>` : ''}
+      <a href="${fullUrl}" target="_blank" rel="noopener"><img src="${imgUrl}" alt="imagen" style="max-width:320px; border-radius:8px; margin-top:.35rem;"></a>
+      ${timeHtml}
+    </div>`;
+  } else if (ct === 'video' && opts.s3_key) {
+    const vidUrl = buildS3Url(opts.s3_key);
+    html = `<div class="chat-msg ${role === 'assistant' ? 'assistant chat-assistant' : 'user chat-user'}">
+      <div><strong>${role === 'assistant' ? 'Asistente' : 'Tú'}</strong></div>
+      ${content ? `<div>${esc(content)}</div>` : ''}
+      <video controls style="max-width:420px; margin-top:.35rem;" preload="metadata">
+        <source src="${vidUrl}" type="${esc(opts.mime_type || 'video/mp4')}">
+        Tu navegador no soporta video embebido. <a href="${vidUrl}" target="_blank" rel="noopener">Descargar</a>
+      </video>
+      ${timeHtml}
+    </div>`;
+  } else if (ct === 'audio' && opts.s3_key) {
+    const aUrl = buildS3Url(opts.s3_key);
+    html = `<div class="chat-msg ${role === 'assistant' ? 'assistant chat-assistant' : 'user chat-user'}">
+      <div><strong>${role === 'assistant' ? 'Asistente' : 'Tú'}</strong></div>
+      ${content ? `<div>${esc(content)}</div>` : ''}
+      <audio controls style="width:320px; margin-top:.35rem;">
+        <source src="${aUrl}" type="${esc(opts.mime_type || 'audio/mpeg')}">
+        <a href="${aUrl}" target="_blank" rel="noopener">Descargar audio</a>
+      </audio>
+      ${timeHtml}
+    </div>`;
+  } else {
+    if (role === 'assistant') {
+      const msgId = opts.message_id || '';
+      const isPrimordial = opts.is_primordial == 1 || opts.is_primordial === true;
+      const primordialBtn = msgId ? `
+        <button class="btn-primordial ${isPrimordial ? 'active' : ''}" 
+                data-msg-id="${msgId}" 
+                title="${isPrimordial ? 'Quitar de primordiales (verdad absoluta)' : 'Marcar como primordial (verdad absoluta)'}"
+                style="float:right; background:none; border:1px solid #ffc107; color:${isPrimordial ? '#ffc107' : '#ccc'}; 
+                       padding:2px 8px; font-size:0.7rem; border-radius:4px; cursor:pointer; margin-bottom: 4px; transition: all 0.2s;">
+          <i class="fas fa-${isPrimordial ? 'star' : 'star-o'}"></i> ${isPrimordial ? 'Primordial' : 'Marcar'}
+        </button>
+      ` : '';
+      html = `<div class="chat-msg assistant chat-assistant">
+        ${primordialBtn}
+        <div class="chat-md">${mdToHtml(content || '')}</div>${timeHtml}
+      </div>`;
+    } 
+    // ✅ NUEVO: Manejo específico para mensajes del sistema (Prompt Mejorado)
+    else if (role === 'system') {
+      html = `<div class="chat-msg system chat-system" style="background: rgba(255, 193, 7, 0.08); border-left: 3px solid #ffc107; padding: 10px; border-radius: 6px; margin: 10px 0; font-size: 0.9em; color: #e0e0e0;">
+        <div style="font-weight: bold; color: #ffc107; margin-bottom: 6px; font-size: 0.85rem;">
+          <i class="fas fa-magic"></i> Prompt optimizado por IA:
+        </div>
+        <div style="font-style: italic; opacity: 0.9;">${mdToHtml(content || '')}</div>
+        ${timeHtml}
+      </div>`;
+    } 
+    // Usuario normal
+    else {
+      html = `<div class="chat-msg user chat-user"><div>${esc(content || '').replace(/\n/g, '<br>')}</div>${timeHtml}</div>`;
+    }
+  }
+  
+  el.messages.insertAdjacentHTML('beforeend', html);
+  scrollMessagesToBottom();
+}
+    // ===============================
+    // Sesiones
+    // ===============================
+async function loadSessions() {
+  setStatus('Cargando sesiones…');
+  try {
+    const qs = new URLSearchParams();
+    const q = (el.sbChatSearch && el.sbChatSearch.value.trim()) || (el.search && el.search.value.trim()) || '';
+    if (q) qs.set('q', q);
+    if (el.showArchived && el.showArchived.checked) qs.set('archived', '1');
+
+    // ✅ AÑADIR ESTO: Enviar user_id
+    const uid = getUserId();
+    if (uid) qs.set('user_id', uid);
+
+    const r = await fetch(`${API.sessions}?${qs.toString()}`, { credentials: 'same-origin' });
+    const j = toJSONorThrow(await r.text(), r.status, 'La API de sesiones');
+    if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+    sessions = Array.isArray(j.sessions) ? j.sessions : [];
+    renderSessionsList();
+  } catch (e) {
+    console.error(e);
+    const target = el.sbChatList || el.sessionsList;
+    if (target) target.innerHTML = `<div class="text-danger small">${esc(e.message)}</div>`;
+  } finally {
+    setStatus('');
+  }
+}
+
+
+function renderSessionsList() {
+  const targetList = el.sbChatList || el.sessionsList;
+  if (!targetList) return;
+
+  // ✅ FILTRO: Solo mostrar sesiones que NO tienen project_id ni project_id_
+  const freeSessions = sessions.filter(s => !s.project_id && !s.project_id_);
+
+  const items = freeSessions.map(s => {
+    const sid = s.id || s.id_;
+    const title = esc(s.title || `Sesión #${sid}`);
+    const small = esc(s.updated_at || s.created_at || '');
+    const isArchived = s.archived || s.status === 'archived';
+    const badge = isArchived ? `<span class="badge badge-secondary ml-1">archivada</span>` : '';
+    const active = (sid === currentSessionId) ? ' active' : '';
+    
+    return `<div class="sb-item${active}" data-id="${sid}" title="${title}">
+      <div class="d-flex justify-content-between align-items-center">
+        <span class="text-truncate" style="max-width: 85%;">${title} ${badge}</span>
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-link p-0 js-rename" title="Renombrar"><i class="fas fa-pen" style="font-size:0.6rem;"></i></button>
+          ${isArchived
+            ? `<button class="btn btn-link p-0 js-restore text-success" title="Restaurar"><i class="fas fa-undo" style="font-size:0.6rem;"></i></button>`
+            : `<button class="btn btn-link p-0 js-archive text-danger" title="Archivar"><i class="fas fa-archive" style="font-size:0.6rem;"></i></button>`}
+        </div>
+      </div>
+      <small class="text-muted d-block" style="font-size:0.6rem;">${small}</small>
+    </div>`;
+  }).join('') || `<div class="text-muted small">Sin chats libres</div>`;
+
+  targetList.innerHTML = items;
+  
+  // Re-asignar eventos a los elementos renderizados
+  targetList.querySelectorAll('.sb-item').forEach(item => {
+    item.addEventListener('click', (ev) => {
+      if (ev.target.closest('.js-rename,.js-archive,.js-restore')) return;
+      selectSession(parseInt(item.getAttribute('data-id'), 10));
+    });
+    const sid = parseInt(item.getAttribute('data-id'), 10);
+    const btnRename = item.querySelector('.js-rename');
+    const btnArchive = item.querySelector('.js-archive');
+    const btnRestore = item.querySelector('.js-restore');
+    if (btnRename) btnRename.addEventListener('click', (e) => { e.stopPropagation(); promptRename(sid); });
+    if (btnArchive) btnArchive.addEventListener('click', (e) => { e.stopPropagation(); doArchive(sid); });
+    if (btnRestore) btnRestore.addEventListener('click', (e) => { e.stopPropagation(); doRestore(sid); });
+  });
+}
+
+    async function createSession(title) {
+      setStatus('Creando sesión…');
+      const fd = new FormData();
+      if (title) fd.append('title', title);
+      const uid = getUserId();
+      if (uid) fd.append('user_id', uid);
+      if (currentProjectId) fd.append('project_id', currentProjectId);
+
+      const model = requireModelSelected();
+      if (!model) throw new Error('Selecciona un modelo.');
+      fd.append('model', model);
+      
+      const r = await fetch(API.createSession, { method:'POST', credentials:'same-origin', body: fd });
+      const j = toJSONorThrow(await r.text(), r.status, 'Crear sesión');
+      if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+      setStatus('');
+      return j;
+    }
+
+    async function promptRename(id) {
+      const s = sessions.find(x => x.id === id);
+      const oldTitle = s ? (s.title || `Sesión #${id}`) : `Sesión #${id}`;
+      const title = window.prompt('Nuevo título:', oldTitle);
+      if (title == null) return;
+      setStatus('Renombrando…');
+      const fd = new FormData();
+      fd.append('session_id', id);
+      fd.append('title', title);
+      const r = await fetch(API.renameSession, { method:'POST', credentials:'same-origin', body: fd });
+      const j = toJSONorThrow(await r.text(), r.status, 'Renombrar sesión');
+      if (!r.ok || j.ok === false) { setStatus(''); alert(j.error || `HTTP ${r.status}`); return; }
+      await loadSessions();
+      if (id === currentSessionId && el.title) el.title.textContent = title;
+      setStatus('');
+    }
+
+    async function doArchive(id) {
+      setStatus('Archivando…');
+      const fd = new FormData();
+      fd.append('session_id', id);
+      const r = await fetch(API.archiveSession, { method:'POST', credentials:'same-origin', body: fd });
+      const j = toJSONorThrow(await r.text(), r.status, 'Archivar sesión');
+      if (!r.ok || j.ok === false) { setStatus(''); alert(j.error || `HTTP ${r.status}`); return; }
+      await loadSessions();
+      if (id === currentSessionId) {
+        const s = sessions.find(x => x.id === id);
+        if (el.badge) {
+          if (s && s.archived) { el.badge.textContent = 'archivada'; el.badge.classList.remove('d-none'); }
+          else { el.badge.textContent = ''; el.badge.classList.add('d-none'); }
+        }
+        if (el.restore) el.restore.classList.toggle('d-none', !(s && s.archived));
+        if (el.archive) el.archive.classList.toggle('d-none', !!(s && s.archived));
+      }
+      setStatus('');
+    }
+
+    async function doRestore(id) {
+      setStatus('Restaurando…');
+      const fd = new FormData();
+      fd.append('session_id', id);
+      const r = await fetch(API.restoreSession, { method:'POST', credentials:'same-origin', body: fd });
+      const j = toJSONorThrow(await r.text(), r.status, 'Restaurar sesión');
+      if (!r.ok || j.ok === false) { setStatus(''); alert(j.error || `HTTP ${r.status}`); return; }
+      await loadSessions();
+      if (id === currentSessionId) {
+        const s = sessions.find(x => x.id === id);
+        if (el.badge) {
+          if (s && s.archived) { el.badge.textContent = 'archivada'; el.badge.classList.remove('d-none'); }
+          else { el.badge.textContent = ''; el.badge.classList.add('d-none'); }
+        }
+        if (el.restore) el.restore.classList.toggle('d-none', !(s && s.archived));
+        if (el.archive) el.archive.classList.toggle('d-none', !!(s && s.archived));
+      }
+      setStatus('');
+    }
+
+    async function selectSession(id) {
+      if (!id || Number.isNaN(id)) return;
+      currentSessionId = id;
+      const s = sessions.find(x => x.id === id);
+      
+      if (el.title) el.title.textContent = s ? (s.title || `Sesión #${id}`) : `Sesión #${id}`;
+      if (el.sbCurrentSession) el.sbCurrentSession.textContent = s ? (s.title || `Sesión #${id}`) : 'Ninguna';
+
+      if (s && s.project_id) {
+        currentProjectId = s.project_id;
+        await selectProject(s.project_id);
+      } else {
+        currentProjectId = null;
+        await selectProject(null);
+      }
+
+      if (el.badge) {
+        if (s && s.archived) { el.badge.textContent = 'archivada'; el.badge.classList.remove('d-none'); }
+        else { el.badge.textContent = ''; el.badge.classList.add('d-none'); }
+      }
+      if (el.restore) el.restore.classList.toggle('d-none', !(s && s.archived));
+      if (el.archive) el.archive.classList.toggle('d-none', !!(s && s.archived));
+
+      setStatus('Cargando mensajes…');
+      try {
+        const qs = new URLSearchParams({ session_id: String(id) });
+        const r = await fetch(`${API.messages}?${qs.toString()}`, { credentials: 'same-origin' });
+        const j = toJSONorThrow(await r.text(), r.status, 'Mensajes de la sesión');
+        if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+        renderMessages(j.messages || []);
+        renderSessionsList();
+      } catch (e) {
+        console.error(e);
+        el.messages.innerHTML = `<div class="text-danger">Error cargando mensajes: ${e.message}</div>`;
+      } finally {
+        setStatus('');
+      }
+    }
+
+    function renderMessages(msgs) {
+      el.messages.innerHTML = '';
+      (msgs || []).forEach(m => {
+        pushLocal(m.role || 'assistant', m.content || '', {
+          // ✅ CORREGIDO: Soporta tanto 'id_' como 'id' para que el botón de estrella siempre aparezca
+          message_id: m.id_ || m.id,               
+          // ✅ CORREGIDO: Asegura que se evalúe correctamente como verdadero 
+          is_primordial: (m.is_primordial == 1 || m.is_primordial === true),
+          content_type: m.content_type || 'text',
+          s3_key: m.s3_key || null,
+          mime_type: m.mime_type || null,
+          thumb_s3_key: m.thumb_s3_key || null,
+          created_at: m.created_at || null,
+        });
+      });
+    }
+
+function showPromptApprovalModal(compiledPrompt, compilationId) {
+    return new Promise((resolve) => {
+        // Detectar si el prompt fue realmente enriquecido
+        const originalLength = compiledPrompt.length;
+        const isEnriched = originalLength > 100 && !compiledPrompt.startsWith("Por favor, responde de manera detallada");
+        
+        const warningHtml = !isEnriched ? `
+            <div class="alert alert-warning small" role="alert">
+                <i class="fas fa-exclamation-triangle"></i> 
+                <strong>Advertencia:</strong> El prompt parece no haber sido enriquecido por la IA. 
+                Te recomiendo editarlo manualmente para agregar más contexto y detalles antes de aprobarlo.
+            </div>
+        ` : '';
+        
+        const modalHtml = `
+        <div class="modal fade" id="promptApprovalModal" tabindex="-1" role="dialog">
+            <div class="modal-dialog modal-lg" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">💡 Prompt Optimizado por IA</h5>
+                        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="text-muted small">
+                            He optimizado tu pregunta incorporando el contexto de la sesión, las instrucciones del proyecto 
+                            y los fragmentos de código relevantes. <strong>Puedes editarlo antes de enviarlo</strong> o aprobarlo tal cual.
+                        </p>
+                        
+                        ${warningHtml}
+                        
+                        <div class="form-group">
+                            <label for="compiledPromptText">
+                                Prompt compilado ${isEnriched ? '(✅ enriquecido)' : '(⚠️ sin enriquecer - edita antes de aprobar)'}:
+                            </label>
+                            <textarea class="form-control" id="compiledPromptText" rows="12" 
+                                style="font-family: monospace; font-size: 0.85rem;">${esc(compiledPrompt)}</textarea>
+                            <small class="form-text text-muted">
+                                Longitud: ${originalLength} caracteres
+                            </small>
+                        </div>
+                        
+                        <div class="alert alert-info small" role="alert">
+                            <i class="fas fa-info-circle"></i> 
+                            Este prompt se enviará al modelo de IA para generar la respuesta. 
+                            Editarlo puede mejorar o empeorar los resultados.
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" id="btnCancelPrompt" data-dismiss="modal">
+                            <i class="fas fa-times"></i> Cancelar
+                        </button>
+                        <button type="button" class="btn btn-primary" id="btnApprovePrompt">
+                            <i class="fas fa-check"></i> Aprobar y Enviar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        const modalContainer = document.createElement('div');
+        modalContainer.innerHTML = modalHtml;
+        document.body.appendChild(modalContainer);
+
+        const modal = document.getElementById('promptApprovalModal');
+        const textarea = document.getElementById('compiledPromptText');
+        const btnApprove = document.getElementById('btnApprovePrompt');
+        const btnCancel = document.getElementById('btnCancelPrompt');
+
+        jQuery(modal).modal('show');
+
+        btnApprove.addEventListener('click', () => {
+            const finalPrompt = textarea.value.trim();
+            if (!finalPrompt) {
+                alert('El prompt no puede estar vacío');
+                return;
+            }
+            jQuery(modal).modal('hide');
+            resolve({
+                prompt: finalPrompt,
+                compilation_id: compilationId
+            });
+        });
+
+        btnCancel.addEventListener('click', () => {
+            jQuery(modal).modal('hide');
+            resolve(null);
+        });
+
+        jQuery(modal).on('hidden.bs.modal', () => {
+            modalContainer.remove();
+        });
+    });
+}
+
+    // ===============================
+    // Envío de mensajes (Unificado: Edición de Código + Flujo de 2 pasos)
+    // ===============================
+    async function sendMessage() {
+      if (isSending) return;
+      
+      const text = (el.input && el.input.value) ? el.input.value.trim() : '';
+      const auto = !!(el.auto && el.auto.checked);
+      const model = requireModelSelected();
+      if (!model) return;
+
+      const temperature = el.temp ? parseFloat(el.temp.value) : 0.7;
+      const max_tokens = el.max ? parseInt(el.max.value, 10) : 800;
+      const top_p = el.topP ? parseFloat(el.topP.value) : 0.9;
+
+      if (pendingFiles.length > 0 && !text) {
+        suggestAttachmentsHeader();
+        setStatus('Agrega un mensaje para enviar junto con tus archivos.');
+        el.input && el.input.focus();
+        return;
+      }
+      if (!text && pendingFiles.length === 0) {
+        el.input && el.input.focus();
+        return;
+      }
+
+      if (!currentSessionId) {
+        try {
+          const created = await createSession(text.slice(0, 64) || 'Nueva conversación (Auto)');
+          currentSessionId = created.id;
+          await loadSessions();
+        } catch (e) {
+          pushLocal('assistant', '⚠️ Error creando sesión: ' + e.message);
+          return;
+        }
+      }
+
+// ==========================================================
+// 1. DETECCIÓN DE EDICIÓN O CREACIÓN DE CÓDIGO (Intercepta primero)
+// ==========================================================
+
+// Patrón para EDICIÓN: "edita/modifica/cambia/actualiza el archivo X para Y"
+const editMatch = text.match(/(?:edita|modifica|cambia|actualiza)\s+(?:el\s+archivo\s+)?([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)\s+(?:para\s+|y\s+)?(.+)/i);
+
+// 🚀 NUEVO: Patrón para CREACIÓN: "crea/genera un archivo llamado X con Y"
+const createMatch = text.match(/(?:crea|crear|genera|generar|haz|has)\s+(?:un\s+)?(?:archivo|clase|módulo|script)\s+(?:llamado|denominado|con\s+nombre|nombrado)?\s*([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)\s+(?:en\s+la\s+(?:raíz|carpeta)\s+del\s+proyecto\s+)?(?:con|que\s+(?:tenga|contenga|tenga)|para)\s+(.+)/i);
+
+// Si hay match de edición O creación Y hay un proyecto activo
+if ((editMatch || createMatch) && currentProjectId) {
+  const match = editMatch || createMatch;
+  const targetFilename = match[1];
+  const instruction = match[2];
+  const isCreation = !!createMatch;
+  
+  isSending = true;
+  setStatus(`🔪 ${isCreation ? 'Creando' : 'Editando'} ${targetFilename}…`);
+  pushLocal('user', text, { created_at: new Date().toISOString() });
+  
+  try {
+    const fd = new FormData();
+    fd.append('session_id', String(currentSessionId));
+    fd.append('project_id', String(currentProjectId));
+    fd.append('target_filename', targetFilename);
+    fd.append('instruction', instruction);
+    
+    const r = await fetch('code_edit.php', { 
+      method:'POST', 
+      credentials:'same-origin', 
+      body: fd 
+    });
+    const j = toJSONorThrow(await r.text(), r.status, isCreation ? 'Crear código' : 'Editar código');
+    
+    if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+    
+    const action = isCreation ? 'creado' : 'actualizado';
+    const replyText = `✅ **${j.filename}** ${action} exitosamente (versión **v${j.new_version}**).\n\n📝 *Instrucción:* ${esc(j.diff_summary)}\n\n🤖 *Modelo usado:* \`${j.model_used || 'desconocido'}\`\n\n📂 *Ruta S3:* \`${j.download_url || 'N/A'}\``;
+    
+    pushLocal('assistant', replyText, { created_at: new Date().toISOString() });
+    
+    // Recargar fuentes del proyecto para ver el nuevo archivo
+    await loadProjectSources(currentProjectId);
+    
+    // Indexar en segundo plano
+    setStatus('🔄 Actualizando índice de conocimientos...');
+    const fdIndex = new FormData();
+    fdIndex.append('project_id', String(currentProjectId));
+    fetch('index_project_sources.php', { method: 'POST', credentials: 'same-origin', body: fdIndex })
+      .then(async (res) => {
+        try {
+          const jIdx = await res.json();
+          if (jIdx.ok) {
+            setStatus(`✅ Índice actualizado (${jIdx.indexed_count || 1} archivo procesado).`);
+            setTimeout(() => setStatus(''), 4000);
+            await loadProjectSources(currentProjectId);
+          }
+        } catch (err) {
+          console.error('Error parseando indexación:', err);
+          setStatus('');
+        }
+      })
+      .catch(err => {
+        console.error('Error indexando:', err);
+        setStatus('');
+      });
+      
+  } catch (e) {
+    console.error(e);
+    pushLocal('assistant', '⚠️ Error al procesar el archivo: ' + e.message);
+  } finally {
+    setStatus('');
+    isSending = false;
+    if (el.input) el.input.value = '';
+    clearQueue();
+  }
+  return; // Salir, no continuar al flujo de chat normal
+}
+
+      // ==========================================================
+      // 2. FLUJO DE 2 PASOS: Compilar (Haiku) + Responder (Opus)
+      // ==========================================================
+      isSending = true;
+      setStatus('Compilando prompt…');
+      pushLocal('user', text, { created_at: new Date().toISOString() });
+
+      try {
+        // PASO A: Compilación con Haiku
+        const fdCompile = new FormData();
+        fdCompile.append('session_id', String(currentSessionId));
+        const uid = getUserId();
+        if (uid) fdCompile.append('user_id', uid);
+        fdCompile.append('text', text);
+        fdCompile.append('auto', auto ? '1' : '0');
+        fdCompile.append('model', model);
+        fdCompile.append('temperature', String(temperature));
+        fdCompile.append('max_tokens', String(max_tokens));
+        fdCompile.append('top_p', String(top_p));
+        fdCompile.append('compile_only', '1');
+
+        if (pendingFiles.length > 0) {
+          pendingFiles.forEach(({file}) => fdCompile.append('files[]', file, file.name));
+        }
+
+        const rCompile = await fetch(API.send, { method:'POST', credentials:'same-origin', body: fdCompile });
+        const jCompile = toJSONorThrow(await rCompile.text(), rCompile.status, 'Compilar prompt');
+        if (!rCompile.ok || jCompile.ok === false) throw new Error(jCompile.error || `HTTP ${rCompile.status}`);
+
+        // Si el backend devolvió un prompt compilado, mostrar modal de aprobación
+        if (jCompile.phase === 'compile_only' && jCompile.compiled_prompt) {
+          const approved = await showPromptApprovalModal(jCompile.compiled_prompt, jCompile.compilation_id);
+          
+          if (!approved) {
+            // El usuario canceló la operación
+            setStatus('');
+            isSending = false;
+            // Remover el mensaje de usuario que mostramos temporalmente
+            const lastMsg = el.messages.lastElementChild;
+            if (lastMsg && lastMsg.classList.contains('chat-user')) {
+              lastMsg.remove();
+            }
+            return; // Salir sin enviar nada a Opus
+          }
+
+// ❌ COMENTA O ELIMINA ESTO - No actualices el mensaje del usuario inline
+         /* // ✅ ACTUALIZAR: El mensaje del usuario en el chat con el prompt APROBADO/EDITADO
+          const lastUserMsg = el.messages.querySelector('.chat-msg.user:last-child');
+          if (lastUserMsg) {
+            const contentDiv = lastUserMsg.querySelector('div > div') || lastUserMsg.querySelector('div');
+            if (contentDiv) {
+              contentDiv.innerHTML = mdToHtml(approved.prompt);
+            }
+          }*/
+          
+// En su lugar, simplemente remueve el mensaje temporal del usuario
+const lastUserMsg = el.messages.querySelector('.chat-msg.user:last-child');
+if (lastUserMsg) {
+  lastUserMsg.remove();
+}
+
+          // PASO B: Respuesta final con prompt aprobado
+          setStatus('Generando respuesta…');
+          
+          const fdRespond = new FormData();
+          fdRespond.append('session_id', String(currentSessionId));
+          if (uid) fdRespond.append('user_id', uid);
+          fdRespond.append('text', text); // Texto original para trazabilidad en DB
+          fdRespond.append('compiled_prompt', approved.prompt); // El prompt que el usuario aprobó/editó
+          fdRespond.append('compilation_id', String(approved.compilation_id));
+          fdRespond.append('model', model);
+          fdRespond.append('temperature', String(temperature));
+          fdRespond.append('max_tokens', String(max_tokens));
+          fdRespond.append('top_p', String(top_p));
+
+          const rRespond = await fetch(API.send, { method:'POST', credentials:'same-origin', body: fdRespond });
+          const jRespond = toJSONorThrow(await rRespond.text(), rRespond.status, 'Enviar mensaje');
+          if (!rRespond.ok || jRespond.ok === false) throw new Error(jRespond.error || `HTTP ${rRespond.status}`);
+
+          // Mostrar respuesta final
+          if (jRespond.reply) {
+            pushLocal('assistant', jRespond.reply, { created_at: new Date().toISOString() });
+          }
+
+          // ✅ AUTOMÁTICO: Si la IA modificó un archivo, indexarlo en segundo plano
+          if (currentProjectId && jRespond.reply && (jRespond.reply.includes('actualizado') || jRespond.reply.includes('modificado') || jRespond.needs_indexing)) {
+            setStatus('🔄 Actualizando índice de conocimientos...');
+            
+            const fdIndex = new FormData();
+            fdIndex.append('project_id', String(currentProjectId));
+            
+            fetch('index_project_sources.php', { method: 'POST', credentials: 'same-origin', body: fdIndex })
+              .then(async (res) => {
+                try {
+                  const j = await res.json();
+                  if (j.ok) {
+                    setStatus(`✅ Índice actualizado (${j.indexed_count || 1} archivo procesado). La IA ya puede leer los cambios.`);
+                    setTimeout(() => setStatus(''), 4000);
+                    await loadProjectSources(currentProjectId);
+                  }
+                } catch (err) {
+                  console.error('Error parseando respuesta de indexación:', err);
+                  setStatus('');
+                }
+              })
+              .catch(err => {
+                console.error('Error indexando en segundo plano:', err);
+                setStatus('');
+              });
+          }
+
+          // ✅ CORRECCIÓN APLICADA: Manejo de acciones secundarias o recarga de sesión
+          const action = (jRespond.action || '').toLowerCase();
+          const improved = jRespond.router && jRespond.router.improved_prompt ? String(jRespond.router.improved_prompt) : (text || '');
+          
+          if (action === 'gen_image') {
+            await autoGenerateImage(improved);
+          } else if (action === 'gen_video') {
+            await autoGenerateVideo(improved);
+          } else {
+            // ✅ CORRECCIÓN: Recargamos la sesión para pintar el estado final limpio desde la BD:
+            // 1. Tu pregunta original (user)
+            // 2. El prompt mejorado (system, con estilo visual distintivo)
+            // 3. La respuesta de la IA (assistant)
+            await selectSession(currentSessionId);
+          }
+
+          if (jRespond.usage) {
+            const u = jRespond.usage;
+            setUsage(`Tokens ~ prompt ${u.prompt_tokens||0} + completion ${u.completion_tokens||0} = ${u.total_tokens||0}`);
+          }
+
+        } else {
+          // Fallback: Si el backend no devolvió 'compile_only', asumimos que usó el texto original directamente.
+          if (jCompile.reply) {
+            pushLocal('assistant', jCompile.reply, { created_at: new Date().toISOString() });
+          }
+          await selectSession(currentSessionId);
+        }
+
+        // Limpieza final exitosa
+        if (el.input) el.input.value = '';
+        clearQueue();
+
+      } catch (e) {
+        console.error(e);
+        pushLocal('assistant', '⚠️ Error: ' + e.message);
+      } finally {
+        setStatus('');
+        isSending = false;
+      }
+    }
+    
+    
+    function clearQueue(){
+      pendingFiles = [];
+      renderQueue();
+    }
+
+    // ===============================
+    // Generación de imágenes / video
+    // ===============================
+    async function autoGenerateImage(prompt) {
+      setStatus('Generando imagen…');
+      const fd = new FormData();
+      fd.append('session_id', String(currentSessionId || 0));
+      const uid = getUserId();
+      if (uid) fd.append('user_id', uid);
+      fd.append('prompt', prompt);
+
+      try {
+        const r = await fetch(API.genImage, { method:'POST', credentials:'same-origin', body: fd });
+        const j = toJSONorThrow(await r.text(), r.status, 'Generar imagen');
+        if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+        await selectSession(currentSessionId);
+        setStatus('Imagen lista.');
+        setTimeout(() => setStatus(''), 1500);
+      } catch (e) {
+        console.error(e);
+        pushLocal('assistant', '⚠️ Error generando imagen: ' + e.message);
+        setStatus('');
+      }
+    }
+
+    async function autoGenerateVideo(prompt) {
+      setStatus('Iniciando video…');
+      const SERVER_WAIT_SECS = 120, MAX_WAIT_MS = 20 * 60 * 1000, COOLDOWN_MS = 1500, FETCH_TIMEOUT_MS = (SERVER_WAIT_SECS + 30) * 1000;
+      const wait = (ms) => new Promise(res => setTimeout(res, ms));
+      const normalize = (s) => String(s || '').toLowerCase();
+      const isDone = (s) => ['completed','complete','succeeded','success','done'].includes(normalize(s));
+      const isWorking = (s) => ['queued','processing','running','generating','in_progress','submitted','pending'].includes(normalize(s));
+
+      const fd = new FormData();
+      fd.append('session_id', String(currentSessionId || 0));
+      const uid = getUserId(); if (uid) fd.append('user_id', uid);
+      fd.append('prompt', prompt);
+      fd.append('duration', '6');
+
+      try {
+        const r = await fetch(API.genVideoStart, { method:'POST', credentials:'same-origin', body: fd });
+        const j = toJSONorThrow(await r.text(), r.status, 'Iniciar video');
+        if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+
+        const messageId = j.message_id || j.msg_id || j.id || null;
+        const status0 = normalize(j.status);
+        if (!messageId) throw new Error('No se recibió message_id del servidor.');
+        if (status0 === 'unsupported') {
+          pushLocal('assistant', '⚠️ Video no soportado en esta cuenta/región.');
+          await selectSession(currentSessionId);
+          setStatus('');
+          return;
+        }
+
+        setStatus('Generando video…');
+        const started = Date.now();
+
+        while (true) {
+          const qs = new URLSearchParams();
+          qs.set('message_id', String(messageId));
+          qs.set('wait_secs', String(SERVER_WAIT_SECS));
+          const ctrl = new AbortController();
+          const to = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+          let js;
+          try {
+            const rq = await fetch(`${API.genVideoStatus}?${qs.toString()}`, { credentials:'same-origin', signal: ctrl.signal });
+            js = toJSONorThrow(await rq.text(), rq.status, 'Estado de video');
+            if (!rq.ok || js.ok === false) throw new Error(js.error || `HTTP ${rq.status}`);
+          } catch (err) {
+            clearTimeout(to);
+            if (err.name === 'AbortError') {
+              if (Date.now() - started > MAX_WAIT_MS) throw new Error('Timeout de red consultando estado de video.');
+              await wait(COOLDOWN_MS);
+              continue;
+            }
+            throw err;
+          }
+          clearTimeout(to);
+          const st = normalize(js.status);
+
+          if (isDone(st)) {
+            await selectSession(currentSessionId);
+            setStatus('Video listo.');
+            setTimeout(() => setStatus(''), 1500);
+            break;
+          }
+          if (!isWorking(st)) {
+            pushLocal('assistant', `⚠️ Estado de video: ${st || 'desconocido'}.`);
+            await selectSession(currentSessionId);
+            setStatus('');
+            break;
+          }
+          if (Date.now() - started > MAX_WAIT_MS) {
+            pushLocal('assistant', `⚠️ Timeout de generación de video (${st || 'sin estatus'})`);
+            await selectSession(currentSessionId);
+            setStatus('');
+            break;
+          }
+          await wait(COOLDOWN_MS);
+        }
+      } catch (e) {
+        console.error(e);
+        pushLocal('assistant', '⚠️ Error generando video: ' + e.message);
+        setStatus('');
+      }
+    }
+
+    // ===============================
+    // Notificaciones
+    // ===============================
+    const NOTIFY_POLL_MS = 20000;
+    let notifyTimer = null;
+    let lastNotifyId = parseInt(localStorage.getItem('chat2_last_notify_id') || '0', 10);
+    let notifiedSet = new Set(JSON.parse(localStorage.getItem('chat2_notified_ids') || '[]'));
+
+    function ensureToastContainer(){
+      if (!document.getElementById('chatToasts')) {
+        const c = document.createElement('div');
+        c.id = 'chatToasts';
+        c.className = 'chat-toasts';
+        document.body.appendChild(c);
+      }
+      return document.getElementById('chatToasts');
+    }
+
+    function showToastVideo(item){
+      if (notifiedSet.has(item.id)) return;
+      notifiedSet.add(item.id);
+      localStorage.setItem('chat2_notified_ids', JSON.stringify(Array.from(notifiedSet)));
+
+      const $c = ensureToastContainer();
+      const elx = document.createElement('div');
+      elx.className = 'chat-toast';
+      elx.innerHTML = `
+        <div class="ct-title">🎬 Video listo</div>
+        <div class="ct-body">En <strong>${(item.title || 'esta conversación')}</strong></div>
+        <div class="ct-actions">
+          <button class="ct-view">Ver</button>
+          <button class="ct-close">Cerrar</button>
+        </div>`;
+      $c.appendChild(elx);
+
+      elx.querySelector('.ct-close').addEventListener('click', () => elx.remove());
+      elx.querySelector('.ct-view').addEventListener('click', async () => {
+        elx.remove();
+        if (item.session_id) {
+          await selectSession(item.session_id);
+          const box = document.getElementById('chat2Messages');
+          if (box) box.scrollTop = box.scrollHeight;
+        }
+      });
+      setTimeout(() => { try{ elx.remove(); }catch{} }, 12000);
+    }
+
+    async function pollNotifications(){
+      try{
+        const uid = getUserId();
+        const qs = new URLSearchParams();
+        if (lastNotifyId > 0) qs.set('last_id', String(lastNotifyId));
+        if (uid) qs.set('user_id', uid);
+        const r = await fetch(`${API.notifyPoll}?${qs.toString()}`, { credentials:'same-origin' });
+        const j = toJSONorThrow(await r.text(), r.status, 'Notificaciones');
+        if (!j || j.ok === false) return;
+
+        const items = Array.isArray(j.items) ? j.items : [];
+        if (items.length) {
+          items.forEach(item => {
+            showToastVideo(item);
+            if (item.id && item.id > lastNotifyId) lastNotifyId = item.id;
+          });
+          localStorage.setItem('chat2_last_notify_id', String(lastNotifyId));
+        }
+      }catch(e){ /* silencio */ }
+    }
+
+    function startNotifyPoller(){
+      pollNotifications();
+      if (notifyTimer) clearInterval(notifyTimer);
+      notifyTimer = setInterval(pollNotifications, NOTIFY_POLL_MS);
+    }
+
+    // ===============================
+    // PROYECTOS Y FUENTES
+    // ===============================
+    async function loadProjects() {
+      try {
+        const uid = getUserId();
+        const qs = new URLSearchParams();
+        if (uid) qs.set('user_id', uid);
+        
+        console.log("🔄 Cargando proyectos desde:", `${PROJECT_API.list}?${qs.toString()}`);
+        const r = await fetch(`${PROJECT_API.list}?${qs.toString()}`, { credentials: 'same-origin' });
+        
+        if (!r.ok) {
+          console.error("❌ Error HTTP al cargar proyectos:", r.status, r.statusText);
+          throw new Error(`HTTP ${r.status}`);
+        }
+        
+        const j = toJSONorThrow(await r.text(), r.status, 'Listar proyectos');
+        if (!j.ok) throw new Error(j.error || 'Error desconocido');
+        
+        projects = Array.isArray(j.projects) ? j.projects : [];
+        console.log("✅ Proyectos cargados:", projects.length);
+        renderProjectSelector();
+        renderProjectList();
+      } catch (e) {
+        console.error('❌ Error cargando proyectos:', e);
+        setStatus('Error cargando proyectos (revisa la consola F12)');
+        if (el.sbProjectList) el.sbProjectList.innerHTML = '<div class="text-danger small">Error al cargar</div>';
+      }
+    }
+
+    function renderProjectSelector() {
+      const select = el.projectSelect;
+      if (!select) return;
+      const currentValue = select.value;
+      select.innerHTML = '<option value="">— Sin proyecto (chat libre) —</option>';
+      projects.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name;
+        if (p.id == currentValue) opt.selected = true;
+        select.appendChild(opt);
+      });
+    }
+
+function renderProjectList() {
+  const targetList = el.sbProjectList;
+  if (!targetList) return;
+
+  if (projects.length === 0) {
+    targetList.innerHTML = '<div class="text-muted small">Sin proyectos</div>';
+    return;
+  }
+
+  targetList.innerHTML = projects.map(p => {
+    const pid = p.id || p.id_;
+    const isActive = (pid === currentProjectId) ? ' active' : '';
+    
+    // ✅ BUSCAR: Sesiones que pertenecen a este proyecto específico
+    const projSessions = sessions.filter(s => (s.project_id === pid) || (s.project_id_ === pid));
+    
+    let sessionsHtml = '';
+    if (projSessions.length > 0) {
+      sessionsHtml = projSessions.map(s => {
+        const sid = s.id || s.id_;
+        const stitle = esc(s.title || `Sesión #${sid}`);
+        const sactive = (sid === currentSessionId) ? ' active' : '';
+        const isArchived = s.archived || s.status === 'archived';
+        const badge = isArchived ? `<span class="badge badge-secondary ml-1" style="font-size:0.6rem;">arch</span>` : '';
+        
+        return `<div class="sb-item project-session${sactive}" data-id="${sid}" title="${stitle}" 
+                style="padding-left: 1.2rem; font-size: 0.75rem; border-left: 2px solid var(--accent, #00ff88); margin-top: 2px;">
+          <div class="d-flex justify-content-between align-items-center">
+            <span class="text-truncate" style="max-width: 80%;">
+              <i class="fas fa-comment-dots mr-1" style="font-size:0.6rem;"></i>${stitle} ${badge}
+            </span>
+            <div class="btn-group btn-group-sm">
+              <button class="btn btn-link p-0 js-rename text-muted" title="Renombrar"><i class="fas fa-pen" style="font-size:0.55rem;"></i></button>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    } else {
+      sessionsHtml = `<div class="text-muted small" style="padding-left: 1.2rem; font-size: 0.7rem; margin-top: 2px;">
+        <i class="fas fa-info-circle mr-1"></i>Sin chats aún
+      </div>`;
+    }
+
+    return `
+      <div class="project-group mb-2">
+        <div class="sb-item project-header${isActive}" data-id="${pid}" title="${esc(p.name)}" style="font-weight: 600;">
+          <div class="text-truncate"><i class="fas fa-briefcase mr-1" style="font-size:0.7rem;"></i>${esc(p.name)}</div>
+        </div>
+        <div class="project-sessions-list">
+          ${sessionsHtml}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // ✅ EVENTOS: Clic en el encabezado del proyecto para seleccionarlo
+  targetList.querySelectorAll('.project-header').forEach(item => {
+    item.addEventListener('click', () => {
+      const pid = parseInt(item.getAttribute('data-id'), 10);
+      selectProject(pid);
+    });
+  });
+
+  // ✅ EVENTOS: Clic en las sesiones anidadas para seleccionarlas
+  targetList.querySelectorAll('.project-session').forEach(item => {
+    item.addEventListener('click', (ev) => {
+      if (ev.target.closest('.js-rename')) return; // Ignorar si se hizo clic en el botón de renombrar
+      const sid = parseInt(item.getAttribute('data-id'), 10);
+      selectSession(sid);
+    });
+    
+    const sid = parseInt(item.getAttribute('data-id'), 10);
+    const btnRename = item.querySelector('.js-rename');
+    if (btnRename) {
+      btnRename.addEventListener('click', (e) => { 
+        e.stopPropagation(); 
+        promptRename(sid); 
+      });
+    }
+  });
+}
+
+    async function selectProject(projectId) {
+      currentProjectId = projectId ? parseInt(projectId) : null;
+      
+      if (el.sbCurrentProject) {
+        const p = projects.find(x => x.id === currentProjectId);
+        el.sbCurrentProject.textContent = p ? p.name : 'Ninguno';
+      }
+      if (el.projectSelect) el.projectSelect.value = currentProjectId || '';
+      
+      const sourcesPanel = el.sourcesPanel;
+      if (!currentProjectId) {
+        if (sourcesPanel) sourcesPanel.classList.add('d-none');
+        projectSources = [];
+        if (el.sbSourcesCount) el.sbSourcesCount.textContent = '0';
+        renderProjectList();
+        return;
+      }
+      
+      if (sourcesPanel) sourcesPanel.classList.remove('d-none');
+      await loadProjectSources(currentProjectId);
+      renderProjectList();
+    }
+
+    async function loadProjectSources(projectId) {
+      try {
+        const qs = new URLSearchParams({ project_id: projectId });
+        const r = await fetch(`${PROJECT_API.sources}?${qs.toString()}`, { credentials: 'same-origin' });
+        const j = toJSONorThrow(await r.text(), r.status, 'Listar fuentes');
+        if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+        
+        projectSources = Array.isArray(j.sources) ? j.sources : [];
+        renderProjectSources();
+      } catch (e) {
+        console.error('Error cargando fuentes:', e);
+        const list = el.sourcesList;
+        if (list) list.innerHTML = '<div class="text-danger small">Error cargando fuentes</div>';
+      }
+    }
+
+
+function renderProjectSources() {
+  const list = el.sourcesList;
+  const countMain = el.sourcesCount;
+  if (!list) return;
+  
+  if (projectSources.length === 0) {
+    list.innerHTML = '<div class="text-muted small">Sin fuentes agregadas</div>';
+    if (countMain) countMain.textContent = '0';
+    if (el.sbSourcesCount) el.sbSourcesCount.textContent = '0';
+    return;
+  }
+  
+  list.innerHTML = projectSources.map(s => {
+    const statusClass = s.status || 'pending';
+    const statusText = { 'pending': 'Pendiente', 'indexed': 'Indexado', 'stale': 'Desactualizado', 'error': 'Error' }[statusClass] || statusClass;
+    const badgeClass = statusClass === 'indexed' ? 'success' : statusClass === 'error' ? 'danger' : 'warning';
+
+    // ✅ Botones de acciones (editar / ver) usando las URLs que devuelve el backend
+    let actionsHtml = '';
+    if (s.edit_url) {
+      actionsHtml += `<a href="${esc(s.edit_url)}" target="_blank" class="btn btn-sm btn-primary" style="padding: 0 .3rem; font-size: 0.6rem;" title="Editar"><i class="fas fa-edit"></i></a>`;
+    }
+    if (s.view_url) {
+      actionsHtml += `<a href="${esc(s.view_url)}" target="_blank" class="btn btn-sm btn-info" style="padding: 0 .3rem; font-size: 0.6rem;" title="Ver"><i class="fas fa-eye"></i></a>`;
+    }
+
+    return `<div class="list-group-item source-item d-flex justify-content-between align-items-center py-1 px-2" data-id="${s.id}" style="font-size:0.7rem;">
+      <span class="text-truncate" style="max-width:45%;" title="${esc(s.filename)}">${esc(s.filename)}</span>
+      <span class="d-flex align-items-center" style="gap: 4px;">
+        ${actionsHtml}
+        <span class="badge badge-${badgeClass}" style="font-size:0.6rem;">${statusText}</span>
+        <button class="btn btn-sm btn-outline-danger btn-delete-source" data-id="${s.id}" title="Eliminar" style="padding: 0 .3rem; font-size: 0.6rem;">
+          <i class="fas fa-trash"></i>
+        </button>
+      </span>
+    </div>`;
+  }).join('');
+  
+  if (countMain) countMain.textContent = String(projectSources.length);
+  if (el.sbSourcesCount) el.sbSourcesCount.textContent = String(projectSources.length);
+  
+  list.querySelectorAll('.btn-delete-source').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = parseInt(btn.getAttribute('data-id'), 10);
+      deleteProjectSource(id);
+    });
+  });
+}
+ 
+    function openProjectManager() {
+      const modal = document.getElementById('modalProjectManager');
+      if (!modal) return;
+      loadProjectsInModal();
+      jQuery(modal).modal('show'); // ✅ Usamos jQuery explícito
+    }
+
+    async function loadProjectsInModal() {
+      const list = document.getElementById('projectList');
+      if (!list) return;
+      try {
+        await loadProjects();
+        if (projects.length === 0) {
+          list.innerHTML = '<div class="list-group-item text-muted">No hay proyectos creados</div>';
+          return;
+        }
+        list.innerHTML = projects.map(p => `
+          <div class="list-group-item d-flex align-items-center" data-id="${p.id}">
+            <div class="flex-grow-1">
+              <strong>${esc(p.name)}</strong>
+              <small class="text-muted d-block">${esc(p.description || 'Sin descripción')}</small>
+              <small class="text-muted"><i class="fas fa-folder"></i> ${esc(p.root_prefix)}</small>
+            </div>
+            <button class="btn btn-sm btn-outline-primary btn-edit-project ml-2" data-id="${p.id}"><i class="fas fa-edit"></i></button>
+            <button class="btn btn-sm btn-outline-danger btn-delete-project ml-1" data-id="${p.id}"><i class="fas fa-trash"></i></button>
+          </div>
+        `).join('');
+        
+        list.querySelectorAll('.btn-edit-project').forEach(btn => {
+          btn.addEventListener('click', (e) => { e.stopPropagation(); editProject(parseInt(btn.dataset.id)); });
+        });
+        list.querySelectorAll('.btn-delete-project').forEach(btn => {
+          btn.addEventListener('click', (e) => { e.stopPropagation(); deleteProject(parseInt(btn.dataset.id)); });
+        });
+      } catch (e) {
+        console.error('Error cargando proyectos en modal:', e);
+        list.innerHTML = '<div class="list-group-item text-danger">Error cargando proyectos</div>';
+      }
+    }
+
+    function editProject(projectId) {
+      const project = projects.find(p => p.id === projectId);
+      if (!project) return;
+      
+      document.getElementById('projectId').value = project.id;
+      document.getElementById('projectName').value = project.name || '';
+      document.getElementById('projectSlug').value = project.slug || '';
+      document.getElementById('projectDescription').value = project.description || '';
+      document.getElementById('projectLanguage').value = project.language || '';
+      document.getElementById('projectFramework').value = project.framework || '';
+      document.getElementById('projectRootPrefix').value = project.root_prefix || '';
+      
+      // ✅ NUEVO: Cargar las instrucciones guardadas en el campo meta
+      const instructions = (project.meta && project.meta.instructions) ? project.meta.instructions : '';
+      document.getElementById('projectInstructions').value = instructions;
+    }
+
+    async function deleteProject(projectId) {
+      if (!confirm('¿Estás seguro de eliminar este proyecto? Esta acción no se puede deshacer.')) return;
+      try {
+        const fd = new FormData();
+        fd.append('action', 'delete');
+        fd.append('project_id', projectId);
+        const r = await fetch(PROJECT_API.delete, { method: 'POST', credentials: 'same-origin', body: fd });
+        const j = toJSONorThrow(await r.text(), r.status, 'Eliminar proyecto');
+        if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+        await loadProjectsInModal();
+        await loadProjects();
+        setStatus('Proyecto eliminado');
+      } catch (e) {
+        console.error('Error eliminando proyecto:', e);
+        alert('Error eliminando proyecto: ' + e.message);
+      }
+    }
+    
+// ===============================
+// Autogenerar Prefijo S3 con fecha al escribir el Slug
+// ===============================
+const slugInput = document.getElementById('projectSlug');
+const prefixInput = document.getElementById('projectRootPrefix');
+
+if (slugInput && prefixInput) {
+  slugInput.addEventListener('input', () => {
+    const slug = slugInput.value.trim().replace(/[^a-z0-9-]/gi, '').toLowerCase();
+    if (slug) {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      // Formato: Data/Chat/Uploads/YYYY/MM/DD/slug/
+      prefixInput.value = `Data/Chat/Uploads/${year}/${month}/${day}/${slug}/`;
+    } else {
+      prefixInput.value = '';
+    }
+  });
+}
+
+async function saveProject(e) {
+  e.preventDefault();
+  
+  const projectId = document.getElementById('projectId').value;
+  const action = projectId ? 'update' : 'create';
+  
+  const fd = new FormData();
+  fd.append('action', action);
+  if (projectId) fd.append('project_id', projectId);
+  fd.append('name', document.getElementById('projectName').value);
+  fd.append('slug', document.getElementById('projectSlug').value);
+  fd.append('description', document.getElementById('projectDescription').value);
+  fd.append('language', document.getElementById('projectLanguage').value);
+  fd.append('framework', document.getElementById('projectFramework').value);
+  fd.append('root_prefix', document.getElementById('projectRootPrefix').value);
+  
+  // ✅ NUEVO: Guardar instrucciones en el campo meta (JSON)
+  const instructions = document.getElementById('projectInstructions').value;
+  if (instructions) {
+    fd.append('meta', JSON.stringify({ instructions: instructions }));
+  }
+  
+  const uid = getUserId();
+  if (uid) fd.append('user_id', uid);
+  
+  try {
+    const r = await fetch(PROJECT_API.create, { method: 'POST', credentials: 'same-origin', body: fd });
+    const j = toJSONorThrow(await r.text(), r.status, 'Guardar proyecto');
+    if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+    
+    document.getElementById('projectForm').reset();
+    document.getElementById('projectId').value = '';
+    
+    await loadProjectsInModal();
+    await loadProjects();
+    setStatus('Proyecto guardado');
+    
+    // Cerrar modal (Bootstrap 4)
+    jQuery('#modalProjectManager').modal('hide'); // ✅ Usamos jQuery explícito
+    
+  } catch (e) {
+    console.error('Error guardando proyecto:', e);
+    alert('Error guardando proyecto: ' + e.message);
+  }
+}
+
+
+    async function loadAvailableFiles() {
+      const select = document.getElementById('sourceFileSelector');
+      if (!select) return;
+      select.innerHTML = '<option value="">Cargando archivos...</option>';
+      try {
+        // TODO: Implementar endpoint real para listar archivos S3
+        select.innerHTML = '<option value="">Funcionalidad pendiente - requiere endpoint backend</option>';
+      } catch (e) {
+        console.error('Error cargando archivos:', e);
+        select.innerHTML = '<option value="">Error cargando archivos</option>';
+      }
+    }
+
+    async function addSourcesToProject() {
+      const select = document.getElementById('sourceFileSelector');
+      if (!select) return;
+      const selected = Array.from(select.selectedOptions).map(o => o.value);
+      if (selected.length === 0) { alert('Selecciona al menos un archivo'); return; }
+      
+      try {
+        const fd = new FormData();
+        fd.append('action', 'add');
+        fd.append('project_id', currentProjectId);
+        selected.forEach(s3Key => fd.append('s3_keys[]', s3Key));
+        
+        const r = await fetch(PROJECT_API.sources, { method: 'POST', credentials: 'same-origin', body: fd });
+        const j = toJSONorThrow(await r.text(), r.status, 'Agregar fuentes');
+        if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+        
+        await loadProjectSources(currentProjectId);
+        const modal = document.getElementById('modalProjectSources');
+        if (window.bootstrap) bootstrap.Modal.getInstance(modal)?.hide();
+        else $(modal).modal('hide');
+        setStatus('Fuentes agregadas');
+      } catch (e) {
+        console.error('Error agregando fuentes:', e);
+        alert('Error agregando fuentes: ' + e.message); 
+      }
+    }
+
+    async function executeTool(toolName) {
+      if (!currentProjectId) { 
+        alert('⚠️ Primero selecciona o crea un proyecto en el panel lateral izquierdo.'); 
+        return; 
+      }
+      if (!currentSessionId) { 
+        alert('⚠️ Primero crea o selecciona una sesión de chat.'); 
+        return; 
+      }
+
+      pushLocal('user', `[Herramienta: ${toolName}] Solicitando ejecución en el proyecto activo...`);
+      setStatus(`Ejecutando ${toolName}...`);
+      
+      // Aquí irá la llamada real a PROJECT_API.tools
+      setTimeout(() => {
+        pushLocal('assistant', `⚙️ La herramienta **${toolName}** está configurada y lista.\n\nEl backend está preparado para procesar solicitudes para el proyecto #${currentProjectId}.\n\n*(Próximo paso: Implementar el modal de parámetros específicos para "${toolName}")*`);
+        setStatus('');
+      }, 600);
+    }
+
+// ===============================
+// SUBIDA DE ARCHIVOS AL PROYECTO
+// ===============================
+function openProjectSourcesModal() {
+  if (!currentProjectId) { 
+    alert('⚠️ Selecciona un proyecto primero en el panel lateral.'); 
+    return; 
+  }
+  
+  const modal = document.getElementById('modalProjectSources');
+  if (!modal) return;
+  
+  // 1. Mostrar la ruta destino calculada
+  const project = projects.find(p => p.id === currentProjectId);
+  if (project) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const path = `Data/Chat/Uploads/${year}/${month}/${day}/${project.slug}/`;
+    const pathEl = document.getElementById('projectUploadPath');
+    if (pathEl) pathEl.textContent = path;
+  }
+  
+  // 2. Renderizar la lista de fuentes actuales DENTRO del modal
+  const modalList = document.getElementById('modalSourcesList');
+  if (modalList) {
+    if (projectSources.length === 0) {
+      modalList.innerHTML = '<div class="list-group-item text-muted small">No hay fuentes agregadas aún.</div>';
+    } else {
+      modalList.innerHTML = projectSources.map(s => {
+        const statusClass = s.status || 'pending';
+        const statusText = { 'pending': 'Pendiente', 'indexed': 'Indexado', 'stale': 'Desactualizado', 'error': 'Error' }[statusClass] || statusClass;
+        const badgeClass = statusClass === 'indexed' ? 'success' : statusClass === 'error' ? 'danger' : 'warning';
+        
+        return `<div class="list-group-item d-flex justify-content-between align-items-center py-2" data-id="${s.id}">
+          <div class="text-truncate" style="max-width: 70%;" title="${esc(s.filename)}">
+            <i class="fas fa-file-code mr-1 text-muted"></i> ${esc(s.filename)}
+          </div>
+          <div class="d-flex align-items-center" style="gap: 8px;">
+            <span class="badge badge-${badgeClass}" style="font-size: 0.7rem;">${statusText}</span>
+            <button class="btn btn-sm btn-outline-danger btn-delete-modal-source" data-id="${s.id}" title="Eliminar fuente" style="padding: 0 .4rem;">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
+        </div>`;
+      }).join('');
+
+      // 3. Agregar listeners a los botones de eliminar del modal
+      modalList.querySelectorAll('.btn-delete-modal-source').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const id = parseInt(btn.getAttribute('data-id'), 10);
+          deleteProjectSource(id); // Esta función ya la tenemos en el JS
+        });
+      });
+    }
+  }
+
+  // 4. Resetear UI de subida
+  const progress = document.getElementById('projectUploadProgress');
+  const result = document.getElementById('projectUploadResult');
+  if (progress) progress.classList.add('d-none');
+  if (result) result.classList.add('d-none');
+  
+  const fileInput = document.getElementById('projectFilesInput');
+  if (fileInput) fileInput.value = '';
+  
+  // 5. Mostrar modal
+    jQuery(modal).modal('show'); // ✅ Usamos jQuery explícito
+}
+
+async function uploadProjectFiles() {
+  if (!currentProjectId) {
+    alert('⚠️ No hay proyecto seleccionado');
+    return;
+  }
+  
+  const fileInput = document.getElementById('projectFilesInput');
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    alert('⚠️ Selecciona al menos un archivo');
+    return;
+  }
+  
+  const files = fileInput.files;
+  const fd = new FormData();
+  fd.append('project_id', currentProjectId);
+  
+  for (let i = 0; i < files.length; i++) {
+    fd.append('files[]', files[i], files[i].name);
+  }
+  
+  const progress = document.getElementById('projectUploadProgress');
+  const progressBar = document.getElementById('projectUploadProgressBar');
+  const statusEl = document.getElementById('projectUploadStatus');
+  const result = document.getElementById('projectUploadResult');
+  const successMsg = document.getElementById('projectUploadSuccessMsg');
+  
+  if (progress) progress.classList.remove('d-none');
+  if (result) result.classList.add('d-none');
+  if (progressBar) progressBar.style.width = '30%';
+  if (statusEl) statusEl.textContent = `Subiendo ${files.length} archivo(s)...`;
+  
+  try {
+    const r = await fetch('project_upload.php', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd
+    });
+    
+    if (progressBar) progressBar.style.width = '80%';
+    
+    const j = toJSONorThrow(await r.text(), r.status, 'Subir archivos');
+    
+    if (!r.ok || j.ok === false) {
+      throw new Error(j.error || `HTTP ${r.status}`);
+    }
+    
+    if (progressBar) {
+      progressBar.style.width = '100%';
+      progressBar.classList.remove('progress-bar-animated');
+    }
+    if (statusEl) statusEl.textContent = '¡Completado!';
+    
+    if (successMsg) {
+      let msg = `${j.uploaded.length} archivo(s) subido(s) correctamente.`;
+      if (j.errors && j.errors.length > 0) {
+        msg += `<br><small class="text-warning">${j.errors.length} error(es): ${j.errors.join(', ')}</small>`;
+      }
+      successMsg.innerHTML = msg;
+    }
+    if (result) result.classList.remove('d-none');
+    
+    // Recargar fuentes del proyecto
+    await loadProjectSources(currentProjectId);
+    
+    // Cerrar modal después de 2 segundos (Bootstrap 4)
+    setTimeout(() => {
+      jQuery('#modalProjectSources').modal('hide'); // ✅ Usamos jQuery explícito
+    }, 2000);
+    
+  } catch (e) {
+    console.error('Error subiendo archivos:', e);
+    if (statusEl) statusEl.textContent = 'Error: ' + e.message;
+    if (progressBar) {
+      progressBar.classList.remove('progress-bar-animated');
+      progressBar.classList.add('bg-danger');
+    }
+    alert('Error subiendo archivos: ' + e.message);
+  }
+}
+
+async function deleteProjectSource(sourceId) {
+  if (!confirm('¿Eliminar esta fuente del proyecto? Se borrará el archivo de S3 y todos sus chunks indexados.')) {
+    return;
+  }
+  
+  try {
+    const fd = new FormData();
+    fd.append('source_id', sourceId);
+    
+    const r = await fetch('project_source_delete.php', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd
+    });
+    
+    const j = toJSONorThrow(await r.text(), r.status, 'Eliminar fuente');
+    
+    if (!r.ok || j.ok === false) {
+      throw new Error(j.error || `HTTP ${r.status}`);
+    }
+    
+    setStatus('Fuente eliminada');
+    await loadProjectSources(currentProjectId);
+    
+  } catch (e) {
+    console.error('Error eliminando fuente:', e);
+    alert('Error eliminando fuente: ' + e.message);
+  }
+}
+
+// ===============================
+// INDEXAR PENDIENTES DESDE EL PANEL
+// ===============================
+async function indexPendingFromPanel() {
+  if (!currentProjectId) {
+    alert('⚠️ No hay proyecto seleccionado');
+    return;
+  }
+  
+  const btn = document.getElementById('chat2IndexPending');
+  if (!btn) return;
+  
+  // Estado de carga
+  const originalHtml = btn.innerHTML;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+  btn.disabled = true;
+  
+  try {
+    const fd = new FormData();
+    fd.append('project_id', currentProjectId);
+    
+    const r = await fetch('index_project_sources.php', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd
+    });
+    
+    const j = toJSONorThrow(await r.text(), r.status, 'Indexar fuentes');
+    
+    if (!r.ok || j.ok === false) {
+      throw new Error(j.error || `HTTP ${r.status}`);
+    }
+    
+    if (j.indexed_count > 0) {
+      setStatus(`✅ ${j.indexed_count} archivo(s) indexado(s)`);
+      setTimeout(() => setStatus(''), 3000);
+    } else {
+      setStatus('ℹ️ No hay archivos pendientes por indexar');
+      setTimeout(() => setStatus(''), 3000);
+    }
+    
+    // Recargar la lista de fuentes
+    await loadProjectSources(currentProjectId);
+    
+  } catch (e) {
+    console.error('Error indexando fuentes:', e);
+    alert('Error al indexar: ' + e.message);
+  } finally {
+    btn.innerHTML = originalHtml;
+    btn.disabled = false;
+  }
+}
+
+// ===============================
+// INDEXACIÓN DE FUENTES
+// ===============================
+async function indexPendingSources() {
+  if (!currentProjectId) {
+    alert('⚠️ No hay proyecto seleccionado');
+    return;
+  }
+  
+  const btn = document.getElementById('btnIndexPending');
+  if (!btn) return;
+  
+  // Estado de carga
+  const originalHtml = btn.innerHTML;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Indexando...';
+  btn.disabled = true;
+  
+  try {
+    const fd = new FormData();
+    fd.append('project_id', currentProjectId);
+    
+    const r = await fetch('index_project_sources.php', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd
+    });
+    
+    const j = toJSONorThrow(await r.text(), r.status, 'Indexar fuentes');
+    
+    if (!r.ok || j.ok === false) {
+      throw new Error(j.error || `HTTP ${r.status}`);
+    }
+    
+    if (j.indexed_count > 0) {
+      alert(`✅ ¡Éxito! Se indexaron ${j.indexed_count} archivo(s).\n\nAhora la IA puede buscar en su contenido.`);
+    } else {
+      alert('ℹ️ No se encontraron archivos pendientes por indexar.');
+    }
+    
+    // Recargar la lista para mostrar los estados actualizados (verde "Indexado")
+    await loadProjectSources(currentProjectId);
+    
+    // Si el modal está abierto, refrescar su lista interna también
+    const modalList = document.getElementById('modalSourcesList');
+    if (modalList && document.getElementById('modalProjectSources').classList.contains('show')) {
+        // Reutilizamos la lógica de renderizado del modal
+        if (projectSources.length === 0) {
+            modalList.innerHTML = '<div class="list-group-item text-muted small">No hay fuentes agregadas aún.</div>';
+        } else {
+            modalList.innerHTML = projectSources.map(s => {
+                const statusClass = s.status || 'pending';
+                const statusText = { 'pending': 'Pendiente', 'indexed': 'Indexado', 'stale': 'Desactualizado', 'error': 'Error' }[statusClass] || statusClass;
+                const badgeClass = statusClass === 'indexed' ? 'success' : statusClass === 'error' ? 'danger' : 'warning';
+                return `<div class="list-group-item d-flex justify-content-between align-items-center py-2" data-id="${s.id}">
+                  <div class="text-truncate" style="max-width: 70%;" title="${esc(s.filename)}">
+                    <i class="fas fa-file-code mr-1 text-muted"></i> ${esc(s.filename)}
+                  </div>
+                  <div class="d-flex align-items-center" style="gap: 8px;">
+                    <span class="badge badge-${badgeClass}" style="font-size: 0.7rem;">${statusText}</span>
+                    <button class="btn btn-sm btn-outline-danger btn-delete-modal-source" data-id="${s.id}" title="Eliminar fuente" style="padding: 0 .4rem;">
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </div>
+                </div>`;
+            }).join('');
+            
+            // Re-asignar listeners de eliminar
+            modalList.querySelectorAll('.btn-delete-modal-source').forEach(b => {
+                b.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deleteProjectSource(parseInt(b.getAttribute('data-id'), 10));
+                });
+            });
+        }
+    }
+    
+    if (j.errors && j.errors.length > 0) {
+      console.warn('Errores de indexación:', j.errors);
+    }
+    
+  } catch (e) {
+    console.error('Error indexando fuentes:', e);
+    alert('Error al indexar: ' + e.message);
+  } finally {
+    btn.innerHTML = originalHtml;
+    btn.disabled = false;
+  }
+}
+    // ===============================
+    // Listeners UI
+    // ===============================
+
+// Agrega esto cerca de los otros listeners de botones, por ejemplo, después de btnUploadProjectFiles
+const btnIndexPending = document.getElementById('btnIndexPending');
+if (btnIndexPending) {
+  btnIndexPending.addEventListener('click', indexPendingSources);
+}
+
+    if (el.attach && el.file) el.attach.addEventListener('click', () => el.file.click());
+    if (el.file) el.file.addEventListener('change', (ev) => addFilesFromInput(el.file.files));
+    if (el.send) el.send.addEventListener('click', sendMessage);
+    if (el.input) {
+      el.input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendMessage(); }
+      });
+    }
+
+    // Sidebar Chat
+    if (el.sbNewChat) {
+      el.sbNewChat.addEventListener('click', async () => {
+        try {
+          const created = await createSession('Nueva conversación');
+          currentSessionId = created.id;
+          await loadSessions();
+          await selectSession(currentSessionId);
+          el.input && el.input.focus();
+        } catch (e) {
+          pushLocal('assistant', '⚠️ No se pudo crear la sesión: ' + e.message);
+        }
+      });
+    }
+    if (el.sbChatSearch) el.sbChatSearch.addEventListener('input', () => loadSessions());
+
+    // Sidebar Projects
+    if (el.sbNewProject) el.sbNewProject.addEventListener('click', openProjectManager);
+    if (el.sbManageProjects) el.sbManageProjects.addEventListener('click', openProjectManager);
+
+    // Main Chat Actions
+    if (el.btnGenImg) {
+      el.btnGenImg.addEventListener('click', async () => {
+        if (!currentSessionId) {
+          const created = await createSession('Imágenes');
+          currentSessionId = created.id;
+          await loadSessions();
+        }
+        const prompt = (el.input && el.input.value.trim()) || window.prompt('Prompt de imagen:') || '';
+        if (!prompt) return;
+        await autoGenerateImage(prompt);
+      });
+    }
+    if (el.btnGenVid) {
+      el.btnGenVid.addEventListener('click', async () => {
+        if (!currentSessionId) {
+          const created = await createSession('Videos');
+          currentSessionId = created.id;
+          await loadSessions();
+        }
+        const prompt = (el.input && el.input.value.trim()) || window.prompt('Prompt de video:') || '';
+        if (!prompt) return;
+        await autoGenerateVideo(prompt);
+      });
+    }
+    if (el.newBtn) {
+      el.newBtn.addEventListener('click', async () => {
+        try {
+          const created = await createSession('Nueva conversación (Auto)');
+          currentSessionId = created.id;
+          await loadSessions();
+          await selectSession(currentSessionId);
+          el.input && el.input.focus();
+        } catch (e) {
+          pushLocal('assistant', '⚠️ No se pudo crear la sesión: ' + e.message);
+        }
+      });
+    }
+    
+    if (el.reload) el.reload.addEventListener('click', () => loadSessions());
+    if (el.search) el.search.addEventListener('input', () => loadSessions());
+    if (el.showArchived) el.showArchived.addEventListener('change', () => loadSessions());
+    if (el.rename) el.rename.addEventListener('click', () => currentSessionId && promptRename(currentSessionId));
+    if (el.archive) el.archive.addEventListener('click', () => currentSessionId && doArchive(currentSessionId));
+    if (el.restore) el.restore.addEventListener('click', () => currentSessionId && doRestore(currentSessionId));
+
+    // Project UI Listeners
+    if (el.projectSelect) el.projectSelect.addEventListener('change', (e) => selectProject(e.target.value));
+    if (el.projectNew) el.projectNew.addEventListener('click', openProjectManager);
+    if (el.projectManage) el.projectManage.addEventListener('click', openProjectManager);
+    if (el.sourcesAdd) el.sourcesAdd.addEventListener('click', openProjectSourcesModal);
+    if (el.sourcesRefresh) el.sourcesRefresh.addEventListener('click', () => { if (currentProjectId) loadProjectSources(currentProjectId); });
+
+// ✅ NUEVO: Listener para el botón de indexar en el panel
+const chat2IndexPending = document.getElementById('chat2IndexPending');
+if (chat2IndexPending) {
+  chat2IndexPending.addEventListener('click', indexPendingFromPanel);
+}
+
+    // ✅ CORRECCIÓN: Buscar botones de herramientas en TODO el documento (Sidebar + Footer)
+    document.querySelectorAll('[data-tool]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const tool = btn.dataset.tool;
+        executeTool(tool);
+      });
+    });
+
+    // Modals
+    const projectForm = document.getElementById('projectForm');
+    if (projectForm) projectForm.addEventListener('submit', saveProject);
+    
+    const btnCancelProject = document.getElementById('btnCancelProject');
+    if (btnCancelProject) {
+      btnCancelProject.addEventListener('click', () => {
+        document.getElementById('projectForm').reset();
+        document.getElementById('projectId').value = '';
+      });
+    }
+    
+    
+const btnUploadProjectFiles = document.getElementById('btnUploadProjectFiles');
+if (btnUploadProjectFiles) btnUploadProjectFiles.addEventListener('click', uploadProjectFiles);
+
+// ===============================
+// NUEVO: Manejador para marcar/desmarcar mensajes como Primordiales
+// ===============================
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.btn-primordial');
+  if (!btn) return;
+
+  const msgId = parseInt(btn.getAttribute('data-msg-id'), 10);
+  if (!msgId) return;
+
+  const isCurrentlyPrimordial = btn.classList.contains('active');
+  const action = isCurrentlyPrimordial ? 'unmark' : 'mark';
+
+  try {
+    setStatus('Actualizando memoria...');
+    const fd = new FormData();
+    fd.append('message_id', String(msgId));
+    fd.append('action', action);
+
+    const r = await fetch(API.markPrimordial, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd
+    });
+
+    const j = toJSONorThrow(await r.text(), r.status, 'Marcar primordial');
+
+    if (j.ok) {
+      // Actualizar UI del botón sin recargar todo el chat
+      btn.classList.toggle('active');
+      const icon = isCurrentlyPrimordial ? 'star-o' : 'star';
+      const text = isCurrentlyPrimordial ? 'Marcar' : 'Primordial';
+      const color = isCurrentlyPrimordial ? '#ccc' : '#ffc107';
+
+      btn.innerHTML = `<i class="fas fa-${icon}"></i> ${text}`;
+      btn.style.color = color;
+      btn.title = isCurrentlyPrimordial
+        ? 'Marcar como primordial (verdad absoluta)'
+        : 'Quitar de primordiales (verdad absoluta)';
+
+      setStatus('✅ Memoria actualizada');
+      setTimeout(() => setStatus(''), 2000);
+    } else {
+      alert('⚠️ ' + (j.error || 'Error al actualizar'));
+    }
+  } catch (err) {
+    console.error(err);
+    setStatus('');
+    alert('Error de red: ' + err.message);
+  }
+});
+
+    // ===============================
+    // Manejo global de errores
+    // ===============================
+    window.addEventListener('error', (ev) => {
+      const msg = ev && ev.message ? ev.message : 'Error JS no especificado';
+      setStatus('Error en script');
+      pushLocal('assistant', '⚠️ Error de script: ' + msg);
+    });
+    window.addEventListener('unhandledrejection', (ev) => {
+      const msg = (ev && ev.reason && (ev.reason.message || ev.reason)) || 'Promise rechazada sin detalle';
+      setStatus('Error en promesa');
+      pushLocal('assistant', '⚠️ Error: ' + msg);
+    });
+
+
+// =========================================================
+// ✅ NUEVO: Cargar y renderizar la pestaña de Contexto
+// =========================================================
+async function loadContextTab() {
+  const emptyState = document.getElementById('contextEmptyState');
+  const contentState = document.getElementById('contextContent');
+  const projectList = document.getElementById('ctxProjectList');
+  const sessionList = document.getElementById('ctxSessionList');
+  const projectNameEl = document.getElementById('ctxProjectName');
+  const sessionNameEl = document.getElementById('ctxSessionName');
+
+  if (!currentProjectId && !currentSessionId) {
+    if (emptyState) emptyState.classList.remove('d-none');
+    if (contentState) contentState.classList.add('d-none');
+    return;
+  }
+
+  if (emptyState) emptyState.classList.add('d-none');
+  if (contentState) contentState.classList.remove('d-none');
+  
+  if (projectList) projectList.innerHTML = '<div class="text-muted small text-center py-4"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>';
+  if (sessionList) sessionList.innerHTML = '<div class="text-muted small text-center py-4"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>';
+
+  const proj = projects.find(p => p.id === currentProjectId);
+  if (projectNameEl) projectNameEl.textContent = proj ? proj.name : 'Ninguno';
+  
+  const sess = sessions.find(s => (s.id || s.id_) === currentSessionId);
+  if (sessionNameEl) sessionNameEl.textContent = sess ? (sess.title || `Sesión #${currentSessionId}`) : 'Ninguna';
+
+  try {
+    const qs = new URLSearchParams();
+    if (currentProjectId) qs.set('project_id', currentProjectId);
+    if (currentSessionId) qs.set('session_id', currentSessionId);
+
+    const r = await fetch(`${API.getContext}?${qs.toString()}`, { credentials: 'same-origin' });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'Error al cargar contexto');
+
+    // --- 🆕 Render Resumen Maestro de la Sesión (ChatSessions.context_summary) ---
+    const sessionSummaryContainer = document.getElementById('ctxSessionSummary');
+    if (sessionSummaryContainer) {
+        if (j.session_summary && j.session_summary.context_summary) {
+            const levelLabels = { '0': 'Crudo', '1': 'Resumen x5', '2': 'Macro x20', '3': 'Épico x80' };
+            const level = j.session_summary.context_level || '0';
+            const lastComp = j.session_summary.last_compressed_at ? new Date(j.session_summary.last_compressed_at).toLocaleString() : 'Nunca';
+            
+            sessionSummaryContainer.innerHTML = `
+                <div class="card bg-info border-0 mb-3 shadow-sm" style="font-size: 0.85rem;">
+                    <div class="card-body py-2 px-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0 text-white"><i class="fas fa-brain mr-2"></i>Memoria Consolidada de la Sesión</h6>
+                            <span class="badge badge-light">Nivel ${level}: ${levelLabels[level] || 'Crudo'}</span>
+                        </div>
+                        <div class="text-white" style="white-space: pre-wrap; max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; background: rgba(0,0,0,0.15); padding: 10px; border-radius: 4px;">${esc(j.session_summary.context_summary)}</div>
+                        <small class="text-white-50 d-block mt-2"><i class="fas fa-clock mr-1"></i> Última compresión: ${lastComp}</small>
+                    </div>
+                </div>
+            `;
+        } else {
+            sessionSummaryContainer.innerHTML = `
+                <div class="alert alert-secondary border-0 mb-3 small" style="background: rgba(255,255,255,0.05); color: #ccc;">
+                    <i class="fas fa-info-circle mr-1"></i> Aún no se ha generado un resumen consolidado para esta sesión. 
+                    <br>El resumen automático se crea cuando la sesión supera los 5 mensajes y el cron de compresión se ejecuta.
+                </div>
+            `;
+        }
+    }
+
+    // --- Render Proyecto ---
+    if (j.project_context && j.project_context.length > 0 && projectList) {
+      const typeColors = { 'rule': 'danger', 'decision': 'primary', 'fact': 'success', 'style': 'info', 'todo': 'warning', 'note': 'secondary' };
+      const typeLabels = { 'rule': 'Regla', 'decision': 'Decisión', 'fact': 'Hecho', 'style': 'Estilo', 'todo': 'Pendiente', 'note': 'Nota' };
+      
+      projectList.innerHTML = j.project_context.map(ctx => {
+        const badge = typeColors[ctx.type] || 'secondary';
+        const label = typeLabels[ctx.type] || ctx.type;
+        return `
+          <div class="card bg-secondary border-0 mb-2" style="font-size: 0.85rem;">
+            <div class="card-body py-2 px-3">
+              <div class="d-flex justify-content-between align-items-start mb-1">
+                <span class="badge badge-${badge}">${label}</span>
+                <small class="text-muted">${new Date(ctx.created_at).toLocaleDateString()}</small>
+              </div>
+              ${ctx.title ? `<h6 class="mb-1 text-white">${esc(ctx.title)}</h6>` : ''}
+              <div class="text-light" style="white-space: pre-wrap;">${esc(ctx.content)}</div>
+            </div>
+          </div>`;
+      }).join('');
+    } else if (projectList) {
+      projectList.innerHTML = '<div class="text-muted small text-center py-4">Sin contexto registrado para este proyecto.</div>';
+    }
+
+    // --- Render Sesión ---
+    if (j.session_context && j.session_context.length > 0 && sessionList) {
+      const typeColors = { 'primordial': 'warning', 'level_0': 'secondary', 'level_1': 'info', 'level_2': 'primary', 'level_3': 'danger' };
+      const typeLabels = { 'primordial': '👑 Primordial', 'level_0': 'Nivel 0 (Crudo)', 'level_1': 'Nivel 1 (Resumen)', 'level_2': 'Nivel 2 (Macro)', 'level_3': 'Nivel 3 (Épico)' };
+      
+      sessionList.innerHTML = j.session_context.map(ctx => {
+        const badge = typeColors[ctx.block_type] || 'secondary';
+        const label = typeLabels[ctx.block_type] || ctx.block_type;
+        return `
+          <div class="card bg-secondary border-0 mb-2" style="font-size: 0.85rem;">
+            <div class="card-body py-2 px-3">
+              <div class="d-flex justify-content-between align-items-start mb-1">
+                <span class="badge badge-${badge}">${label}</span>
+                <small class="text-muted">${ctx.token_count || 0} tokens</small>
+              </div>
+              <div class="text-light" style="white-space: pre-wrap; font-family: monospace; font-size: 0.8rem;">${esc(ctx.content_preview || 'Sin vista previa')}</div>
+              ${ctx.s3_path ? `<small class="text-info d-block mt-1"><i class="fas fa-file-alt"></i> ${esc(ctx.s3_path)}</small>` : ''}
+            </div>
+          </div>`;
+      }).join('');
+    } else if (sessionList) {
+      sessionList.innerHTML = '<div class="text-muted small text-center py-4">Sin bloques de contexto para esta sesión.</div>';
+    }
+
+  } catch (e) {
+    console.error('Error cargando contexto:', e);
+    const errMsg = `<div class="text-danger small text-center py-4">Error: ${esc(e.message)}</div>`;
+    if (projectList) projectList.innerHTML = errMsg;
+    if (sessionList) sessionList.innerHTML = errMsg;
+  }
+}
+
+// ✅ NUEVO: Listener para cargar contexto al mostrar la pestaña
+const tabContexto = document.getElementById('tab-Contexto');
+if (tabContexto) {
+  tabContexto.addEventListener('shown.bs.tab', function (e) {
+    loadContextTab();
+  });
+}
+
+// ✅ NUEVO: Botón de actualización manual
+const btnRefreshContext = document.getElementById('btnRefreshContext');
+if (btnRefreshContext) {
+  btnRefreshContext.addEventListener('click', loadContextTab);
+}
+
+// =========================================================
+// Boot
+// =========================================================
+(async function boot() {
+  setStatus('Cargando...');
+  await Promise.all([loadSessions(), loadProjects()]);
+  setStatus('');
+  startNotifyPoller();
+})();
+});
+})();
