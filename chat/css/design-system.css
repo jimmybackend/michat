@@ -55,6 +55,7 @@ body.ui-theme {
 }
 
 .chat-main {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
@@ -435,9 +436,61 @@ body.ui-theme {
   background: linear-gradient(180deg, rgba(var(--accent-rgb),.09), rgba(var(--accent-rgb),.04)) !important;
 }
 
-/* ---------- Composer: acabado premium ---------- */
+/* Bloque de "Pensamiento" (<thinking>...</thinking>): SIEMPRE con colores
+   invertidos respecto al tema activo, para que se distinga claramente de la
+   burbuja del mensaje sin importar si el usuario está en modo claro u oscuro.
+   Tema oscuro → caja clara con letras negras. Tema claro → caja oscura con
+   letras blancas. Se fuerza !important porque chat2.css fija el color de
+   todos los <div>/<strong> al color de texto normal del tema activo. */
+.thinking-block {
+  display: block;
+  margin: 6px 0 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: .85em;
+  font-style: italic;
+  line-height: 1.5;
+}
+body.ui-theme.theme-dark .thinking-block {
+  background: #eef0f2 !important;
+  border: 1px solid #d0d7de;
+}
+body.ui-theme.theme-dark .thinking-block,
+body.ui-theme.theme-dark .thinking-block strong,
+body.ui-theme.theme-dark .thinking-block i {
+  color: #1f2328 !important;
+}
+body.ui-theme.theme-light .thinking-block {
+  background: #1c2128 !important;
+  border: 1px solid #30363d;
+}
+body.ui-theme.theme-light .thinking-block,
+body.ui-theme.theme-light .thinking-block strong,
+body.ui-theme.theme-light .thinking-block i {
+  color: #f0f6fc !important;
+}
+
+/* ---------- Composer: flotante con degradado (como el diseño de referencia) ----------
+   Antes el composer era una barra fija en el flujo normal, con un borde/caja
+   duro entre los mensajes y el área de escritura — distinto al diseño original,
+   donde el composer flota sobre los mensajes con un degradado. Se saca del
+   flujo y se reserva espacio abajo en #chat2Messages para que el último
+   mensaje no quede tapado. */
+body.ui-theme .card-footer,
 .card-footer {
-  border-radius: 0 0 var(--radius) var(--radius);
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  background: linear-gradient(180deg, transparent, var(--bg) 42%) !important;
+  box-shadow: none !important;
+  border-top: none !important;
+  border-radius: 0;
+  padding-top: 0 !important;
+}
+#chat2Messages {
+  padding-bottom: 132px !important;
 }
 .card-footer textarea#chat2Input {
   border-radius: var(--radius) !important;
