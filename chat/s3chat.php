@@ -59,16 +59,23 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <head>
 <meta charset="UTF-8">
 <title>Cloud Drive · Chat IA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.3.1/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/dropzone/5.9.3/min/dropzone.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 <link rel="icon" href="ellogo.png" type="image/x-icon">
 <link rel="stylesheet" href="css/chat2.css" />
+<link rel="stylesheet" href="css/design-system.css" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="ui-theme theme-neon-green theme-dark vision-normal ascii-on">
 <input type="hidden" id="chatUserId" value="<?= (int)$_SESSION['user_id'] ?>">
 <nav class="navbar navbar-expand-lg navbar-dark px-3">
+<button id="sidebar-toggle-mobile" class="sidebar-toggle-mobile" aria-label="Abrir barra lateral" title="Abrir barra lateral">
+<i class="fas fa-bars"></i>
+</button>
 <a class="navbar-brand" href="s3.php">
   <i class="fas fa-cloud" style="color: var(--accent); margin-right: 8px;"></i> Cloud Drive
 </a>
@@ -133,10 +140,9 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </nav>
 
 
-<div class="container-fluid">
-<div class="row">
+<div class="app-container">
 <!-- Panel lateral -->
-<div class="col-md-2 sidebar-panel">
+<aside id="chat-sidebar" class="sidebar-panel">
     
 <!-- modelos -->
 <div class="px-3 py-2" style="border-bottom: 1px solid var(--border, #333); flex-shrink: 0;">
@@ -389,11 +395,14 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 
 </div>
 
-</div>
+<button id="sidebar-toggle" class="sidebar-toggle" aria-label="Ocultar o mostrar barra lateral" title="Ocultar o mostrar barra lateral">
+<i class="fas fa-chevron-left"></i>
+</button>
+</aside>
 <!-- Fin de Panel lateral -->
 
 <!-- cuerpo -->
-<div class="col-md-10 p-0">
+<main id="chat-main" class="chat-main">
 <!-- panel -->
 <div id="pane-Chat2" class="tab-pane show active">   
 <div class="card h-100 d-flex flex-column shadow-sm">
@@ -470,17 +479,13 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 
 
 
-</div>
+</main>
 <!-- fin de cuerpo -->
 
-
-
 </div>
+<!-- fin de app-container -->
 
-
-
-</div>
-
+<div id="sidebar-backdrop" class="sidebar-backdrop"></div>
 
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"></script>
@@ -491,6 +496,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <script src="chat1-enhancements.js"></script>
 <script src="js/sincronizar.js"></script>
 <script src="js/estilo.js"></script>
+<script src="js/sidebar-responsive.js"></script>
 
 
 <script>

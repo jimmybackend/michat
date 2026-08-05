@@ -1,0 +1,226 @@
+/* ==============================================================
+   design-system.css — Diseño premium "AI chat" portado desde
+   jimmybackend/chat (public/assets/css/styles.css).
+
+   Se apoya en las variables y clases de temas ya definidas en
+   chat2.css (--bg, --bg2, --bg3, --border, --text, --accent, ...
+   y las clases body.theme-dark/theme-light/theme-neon-*) para no
+   duplicar el sistema de temas existente: solo añade tipografía,
+   layout responsive del sidebar y un acabado visual más cuidado.
+   ============================================================== */
+
+body.ui-theme {
+  font-family: 'Inter', var(--font-sans) !important;
+  -webkit-font-smoothing: antialiased;
+}
+
+body.ui-theme code,
+body.ui-theme pre,
+body.ui-theme .chat-md pre,
+body.ui-theme .chat-md code {
+  font-family: 'JetBrains Mono', var(--font-mono) !important;
+}
+
+body.ui-theme {
+  --radius: 12px;
+  --radius-lg: 18px;
+}
+
+/* ---------- Layout general: app-container (sidebar + main) ---------- */
+.app-container {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+#chat-sidebar.sidebar-panel {
+  width: 288px;
+  flex: 0 0 288px;
+  min-width: 0;
+  position: relative;
+  z-index: 100;
+  transition: transform .22s cubic-bezier(.2,.8,.2,1), width .22s cubic-bezier(.2,.8,.2,1);
+}
+
+#chat-sidebar.sidebar-panel.collapsed {
+  flex-basis: 0;
+  width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  overflow: hidden;
+  border-right-width: 0 !important;
+}
+
+.chat-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- Botón de colapso (escritorio) ---------- */
+.sidebar-toggle {
+  position: absolute;
+  right: -15px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  border-radius: 999px !important;
+  display: grid;
+  place-items: center;
+  background: var(--bg3) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text-soft) !important;
+  box-shadow: var(--shadow);
+  z-index: 1;
+}
+.sidebar-toggle:hover { color: var(--accent) !important; border-color: var(--accent) !important; }
+#chat-sidebar.collapsed .sidebar-toggle i { transform: rotate(180deg); }
+
+/* ---------- Botón hamburguesa (móvil) ---------- */
+.sidebar-toggle-mobile {
+  display: none;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius) !important;
+  background: var(--bg3) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text) !important;
+  align-items: center;
+  justify-content: center;
+  margin-right: .5rem;
+}
+.sidebar-toggle-mobile:hover { color: var(--accent) !important; border-color: var(--accent) !important; }
+
+/* ---------- Backdrop del drawer móvil ---------- */
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.5);
+  backdrop-filter: blur(4px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .22s ease, visibility .22s ease;
+  z-index: 205;
+}
+.sidebar-backdrop.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* ---------- Fix responsive: sidebar como drawer en móvil/tablet ----------
+   Portado del fix ya corregido en el diseño de origen: el sidebar se
+   posiciona en fixed con z-index alto (por encima del backdrop) y solo
+   se muestra al añadir la clase "open"; en escritorio nunca debe quedar
+   con transform ni backdrop visibles (evita el bug donde el sidebar
+   quedaba mal ubicado o bloqueando el contenido). */
+@media (max-width: 900px) {
+  #chat-sidebar.sidebar-panel {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 82vw;
+    max-width: 320px;
+    flex-basis: auto;
+    transform: translateX(-100%);
+    box-shadow: var(--shadow);
+    z-index: 210;
+  }
+  #chat-sidebar.sidebar-panel.open { transform: translateX(0); }
+  #chat-sidebar.sidebar-panel.collapsed { transform: translateX(-100%); width: 82vw; max-width: 320px; padding: 1rem .75rem; }
+
+  .sidebar-toggle { display: none; }
+  .sidebar-toggle-mobile { display: flex; }
+  .sidebar-backdrop { display: block; }
+}
+
+@media (min-width: 900.1px) {
+  .sidebar-backdrop,
+  .sidebar-backdrop.visible {
+    display: none !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+}
+
+/* ---------- Sidebar: acabado premium ---------- */
+.sidebar-panel .sb-item {
+  border-radius: 10px !important;
+}
+.sidebar-panel .accordion-section {
+  border-radius: var(--radius) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,.03) inset;
+}
+.sidebar-panel select,
+.sidebar-panel input.form-control {
+  border-radius: 10px !important;
+}
+
+/* ---------- Navbar: acabado premium ---------- */
+body.ui-theme .navbar {
+  backdrop-filter: blur(14px);
+}
+body.ui-theme .navbar-brand {
+  font-weight: 700;
+  letter-spacing: -.01em;
+}
+
+/* ---------- Mensajes: burbujas más premium ---------- */
+#chat2Messages {
+  gap: .85rem !important;
+}
+#chat2Messages .chat-msg {
+  border-radius: var(--radius-lg) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,.12), 0 1px 0 rgba(255,255,255,.03) inset;
+}
+#chat2Messages .chat-user {
+  border-bottom-left-radius: 6px !important;
+}
+#chat2Messages .chat-assistant {
+  border-bottom-right-radius: 6px !important;
+  background: linear-gradient(180deg, rgba(var(--accent-rgb),.09), rgba(var(--accent-rgb),.04)) !important;
+}
+
+/* ---------- Composer: acabado premium ---------- */
+.card-footer {
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.card-footer textarea#chat2Input {
+  border-radius: var(--radius) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,.03) inset;
+}
+.card-footer .btn-group .btn,
+.card-footer > .d-flex > .ml-2 .btn,
+#chat2Send {
+  border-radius: 10px !important;
+}
+#chat2Send {
+  font-weight: 600;
+  box-shadow: 0 6px 18px rgba(var(--accent-rgb), .28);
+}
+
+/* ---------- Modales: acabado premium ---------- */
+body.ui-theme .modal-content {
+  border-radius: var(--radius-lg) !important;
+}
+
+/* ---------- Accesibilidad: foco visible ---------- */
+body.ui-theme :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #chat-sidebar.sidebar-panel,
+  .sidebar-backdrop {
+    transition-duration: .01ms !important;
+  }
+}
