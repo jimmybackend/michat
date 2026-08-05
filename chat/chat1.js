@@ -410,8 +410,9 @@ function pushLocal(role, content, opts = {}) {
       html = `<div class="chat-msg assistant chat-assistant">
         ${primordialBtn}
         <div class="chat-md">${mdToHtml(content || '')}</div>${timeHtml}
+        ${renderMessageActionsHtml()}
       </div>`;
-    } 
+    }
     // ✅ NUEVO: Manejo específico para mensajes del sistema (Prompt Mejorado)
     else if (role === 'system') {
       html = `<div class="chat-msg system chat-system" style="background: rgba(255, 193, 7, 0.08); border-left: 3px solid #ffc107; padding: 10px; border-radius: 6px; margin: 10px 0; font-size: 0.9em; color: #e0e0e0;">
@@ -429,7 +430,195 @@ function pushLocal(role, content, opts = {}) {
   }
   
   el.messages.insertAdjacentHTML('beforeend', html);
+  if (role === 'assistant' && ct === 'text') {
+    wireMessageActions(el.messages.lastElementChild);
+  }
   scrollMessagesToBottom();
+}
+
+// =====================================================================
+// 💬 ACCIONES DE MENSAJE: Copiar, Escuchar, Compartir, Ramificar
+// Portadas del diseño de referencia (jimmybackend/chat) y adaptadas a los
+// endpoints reales de michat (chat2_session_create.php en vez de
+// backend/api/sessions.php).
+// =====================================================================
+function renderMessageActionsHtml() {
+  return `<div class="message-actions">
+    <button class="action-btn" data-action="copy" title="Copiar">
+      <i class="fas fa-copy"></i> <span class="action-btn-label">Copiar</span>
+    </button>
+    <button class="action-btn" data-action="speak" title="Escuchar">
+      <i class="fas fa-volume-up"></i> <span class="action-btn-label">Escuchar</span>
+    </button>
+    <button class="action-btn" data-action="share" title="Compartir">
+      <i class="fas fa-share-alt"></i> <span class="action-btn-label">Compartir</span>
+    </button>
+    <button class="action-btn" data-action="branch" title="Crear rama desde aquí">
+      <i class="fas fa-code-branch"></i> <span class="action-btn-label">Rama</span>
+    </button>
+  </div>`;
+}
+
+function showActionToast(message) {
+  const container = document.getElementById('chatToasts') || document.getElementById('incomingToasts');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = 'chat-toast';
+  toast.innerHTML = `<div class="small">${esc(message)}</div>`;
+  container.appendChild(toast);
+  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 3000);
+}
+
+async function copyMessageText(text, btn) {
+  if (!text || !text.trim()) return;
+  const restoreHtml = btn.innerHTML;
+  const done = () => {
+    btn.innerHTML = '<i class="fas fa-check"></i> <span class="action-btn-label">¡Copiado!</span>';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.innerHTML = restoreHtml; btn.classList.remove('copied'); }, 2000);
+  };
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      done();
+      return;
+    }
+    throw new Error('clipboard no disponible');
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.className = 'clipboard-fallback';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    if (ok) done();
+  }
+}
+
+let currentUtterance = null;
+function speakMessageText(text, btn) {
+  if (!window.speechSynthesis) {
+    showActionToast('Tu navegador no soporta lectura en voz alta.');
+    return;
+  }
+  if (window.speechSynthesis.speaking) {
+    window.speechSynthesis.cancel();
+    btn.classList.remove('listening');
+    btn.innerHTML = '<i class="fas fa-volume-up"></i> <span class="action-btn-label">Escuchar</span>';
+    if (currentUtterance === btn) currentUtterance = null;
+    return;
+  }
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'es-ES';
+  utterance.rate = 1.0;
+  utterance.pitch = 1.0;
+  const restore = () => {
+    btn.classList.remove('listening');
+    btn.innerHTML = '<i class="fas fa-volume-up"></i> <span class="action-btn-label">Escuchar</span>';
+    currentUtterance = null;
+  };
+  utterance.onstart = () => {
+    currentUtterance = btn;
+    btn.classList.add('listening');
+    btn.innerHTML = '<i class="fas fa-stop"></i> <span class="action-btn-label">Detener</span>';
+  };
+  utterance.onend = restore;
+  utterance.onerror = restore;
+  window.speechSynthesis.speak(utterance);
+}
+
+async function shareMessageText(text) {
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'Respuesta de IA · Cloud Drive', text });
+      return;
+    } catch (e) {
+      // Usuario canceló o falló: caemos al fallback de portapapeles
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    showActionToast('Copiado para compartir');
+  } catch (e) {
+    showActionToast('No se pudo compartir ni copiar.');
+  }
+}
+
+// Crea una nueva sesión (vía chat2_session_create.php) con el historial
+// visible HASTA el mensaje donde se presionó "Rama" (inclusive), replicado
+// en el cliente. Los mensajes futuros que envíes en la rama sí se guardan
+// normalmente en la base de datos; el historial copiado es solo una
+// instantánea visual (igual que el comportamiento del diseño original).
+async function branchFromMessage(msgDiv) {
+  const allMessages = Array.from(el.messages.children);
+  const cutIndex = allMessages.indexOf(msgDiv);
+  const upTo = cutIndex === -1 ? allMessages : allMessages.slice(0, cutIndex + 1);
+
+  const history = upTo.map(m => {
+    const isUser = m.classList.contains('chat-user');
+    const isAssistant = m.classList.contains('chat-assistant');
+    if (!isUser && !isAssistant) return null;
+    const textNode = isAssistant ? m.querySelector('.chat-md') : m.firstElementChild;
+    const text = (textNode ? textNode.innerText : '').trim();
+    if (!text) return null;
+    return { role: isUser ? 'user' : 'assistant', content: text };
+  }).filter(Boolean);
+
+  const model = requireModelSelected();
+  if (!model) return;
+
+  const currentTitle = (el.title && el.title.textContent) || 'Conversación';
+  const newTitle = currentTitle + ' (rama)';
+
+  showActionToast('Creando rama…');
+  try {
+    const fd = new FormData();
+    fd.append('title', newTitle);
+    const uid = getUserId();
+    if (uid) fd.append('user_id', uid);
+    fd.append('model', model);
+    if (currentProjectId) fd.append('project_id', String(currentProjectId));
+
+    const r = await fetch(API.createSession, { method: 'POST', credentials: 'same-origin', body: fd });
+    const j = toJSONorThrow(await r.text(), r.status, 'Crear rama');
+    if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+
+    currentSessionId = j.id;
+    await loadSessions();
+
+    if (el.title) el.title.textContent = newTitle;
+    if (el.badge) { el.badge.textContent = ''; el.badge.classList.add('d-none'); }
+    if (el.restore) el.restore.classList.add('d-none');
+    if (el.archive) el.archive.classList.remove('d-none');
+
+    el.messages.innerHTML = '';
+    history.forEach(h => pushLocal(h.role, h.content, { created_at: new Date().toISOString() }));
+
+    showActionToast('✅ Rama creada — sigue la conversación desde aquí');
+  } catch (e) {
+    console.error('Error creando rama:', e);
+    showActionToast('❌ No se pudo crear la rama: ' + e.message);
+  }
+}
+
+function wireMessageActions(msgDiv) {
+  if (!msgDiv) return;
+  const bar = msgDiv.querySelector('.message-actions');
+  if (!bar) return;
+  bar.querySelectorAll('.action-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const action = btn.dataset.action;
+      const textNode = msgDiv.querySelector('.chat-md');
+      const text = textNode ? textNode.innerText.trim() : '';
+      if (action === 'copy') copyMessageText(text, btn);
+      else if (action === 'speak') speakMessageText(text, btn);
+      else if (action === 'share') shareMessageText(text);
+      else if (action === 'branch') branchFromMessage(msgDiv);
+    });
+  });
 }
     // ===============================
     // Sesiones

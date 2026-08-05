@@ -436,6 +436,52 @@ body.ui-theme {
   background: linear-gradient(180deg, rgba(var(--accent-rgb),.09), rgba(var(--accent-rgb),.04)) !important;
 }
 
+/* ---------- Acciones de mensaje: Copiar / Escuchar / Compartir / Rama ----------
+   Portadas del diseño de referencia (message-actions/action-btn), adaptadas a
+   las variables de tema existentes para que se vean consistentes en claro,
+   oscuro y los acentos neón. */
+.message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  opacity: .75;
+  transition: opacity .15s ease;
+}
+#chat2Messages .chat-msg:hover .message-actions {
+  opacity: 1;
+}
+.message-actions .action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border) !important;
+  background: transparent !important;
+  color: var(--text-soft) !important;
+  border-radius: 999px !important;
+  padding: 4px 10px !important;
+  font-size: 11.5px !important;
+  line-height: 1.4;
+}
+.message-actions .action-btn:hover {
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  background: rgba(var(--accent-rgb), .08) !important;
+}
+.message-actions .action-btn.copied {
+  color: var(--ok) !important;
+  border-color: var(--ok) !important;
+}
+.message-actions .action-btn.listening {
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  background: rgba(var(--accent-rgb), .1) !important;
+}
+@media (max-width: 560px) {
+  .message-actions .action-btn-label { display: none; }
+  .message-actions .action-btn { padding: 5px 8px !important; }
+}
+
 /* Bloque de "Pensamiento" (<thinking>...</thinking>): SIEMPRE con colores
    invertidos respecto al tema activo, para que se distinga claramente de la
    burbuja del mensaje sin importar si el usuario está en modo claro u oscuro.
