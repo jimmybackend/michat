@@ -63,90 +63,207 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.3.1/dist/css/bootstrap.min.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/dropzone/5.9.3/min/dropzone.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 <link rel="icon" href="ellogo.png" type="image/x-icon">
 <link rel="stylesheet" href="css/chat2.css" />
 <link rel="stylesheet" href="css/design-system.css" />
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="ui-theme theme-neon-green theme-dark vision-normal ascii-on">
 <input type="hidden" id="chatUserId" value="<?= (int)$_SESSION['user_id'] ?>">
-<nav class="navbar navbar-expand-lg navbar-dark px-3">
-<button id="sidebar-toggle-mobile" class="sidebar-toggle-mobile" aria-label="Abrir barra lateral" title="Abrir barra lateral">
-<i class="fas fa-bars"></i>
-</button>
-<a class="navbar-brand" href="s3.php">
-  <i class="fas fa-cloud" style="color: var(--accent); margin-right: 8px;"></i> Cloud Drive
-</a>
-
-
-<div class="form-inline my-2 my-lg-0 ml-auto">
-<!-- tema de chat -->
-<strong id="chat2Title">Nueva conversación (Auto)</strong>
-
-<button id="btnRecargar" class="btn btn-primary ml-2" onclick="recargarPagina()" title="Recargar página">
-<i class="fas fa-sync-alt"></i>
-</button>
-</div>
-<ul class="navbar-nav ml-3">
-<li class="nav-item dropdown ml-2">
-<a class="nav-link dropdown-toggle d-flex align-items-center" href="#" id="temaMenu" role="button" data-toggle="dropdown">
-<i class="fas fa-palette mr-1"></i> Diseño
-</a>
-<div class="dropdown-menu dropdown-menu-right" aria-labelledby="temaMenu" style="min-width:280px;">
-<h6 class="dropdown-header">Color neón</h6>
-<button class="dropdown-item js-set-theme" data-theme="theme-neon-green">Verde neón</button>
-<button class="dropdown-item js-set-theme" data-theme="theme-neon-blue">Azul neón</button>
-<button class="dropdown-item js-set-theme" data-theme="theme-neon-red">Rojo neón</button>
-<button class="dropdown-item js-set-theme" data-theme="theme-neon-yellow">Amarillo neón</button>
-<div class="dropdown-divider"></div>
-<h6 class="dropdown-header">Modo</h6>
-<button class="dropdown-item js-set-mode" data-mode="theme-dark">Oscuro</button>
-<button class="dropdown-item js-set-mode" data-mode="theme-light">Claro</button><div class="dropdown-divider"></div>
-<h6 class="dropdown-header">Visión</h6>
-<button class="dropdown-item js-set-vision" data-vision="vision-normal">Normal</button>
-<button class="dropdown-item js-set-vision" data-vision="vision-myopia">Miopía</button>
-<button class="dropdown-item js-set-vision" data-vision="vision-protanopia">Protanopia</button>
-<button class="dropdown-item js-set-vision" data-vision="vision-deuteranopia">Deuteranopia</button>
-<button class="dropdown-item js-set-vision" data-vision="vision-tritanopia">Tritanopia</button>
-<div class="dropdown-divider"></div>
-<button class="dropdown-item" id="btnToggleAscii">
-<i class="fas fa-terminal mr-1"></i> Alternar ASCII
-</button>
-</div>
-</li>
-<li class="nav-item dropdown">
-<a class="nav-link dropdown-toggle d-flex align-items-center text-white" href="#" id="usuarioMenu" role="button" data-toggle="dropdown">
-<img src="logo1.png" alt="Perfil" class="rounded-circle mr-2" width="30" height="30">
-<?= htmlspecialchars($_SESSION['usuario']) ?>
-</a>
-<div class="dropdown-menu dropdown-menu-right" aria-labelledby="usuarioMenu">
-<button id="btnSyncS3" class="dropdown-item">
-<i class="fas fa-rotate"></i> Sincronizar S3
-</button>
-  <!-- ====== PANE: Chat (Auto-Router Titan) ====== -->
-<a href="https://drive.esforzados.com/s3chatstats.php" target="_blank" rel="noopener noreferrer" class="dropdown-item text-danger">
-<i class="fas fa-comment-dots"></i> Ir al Stats
-</a>
-<div class="dropdown-divider"></div>
-<a class="dropdown-item text-danger" href="logout.php">
-<i class="fas fa-sign-out-alt"></i> Cerrar sesión
-</a>
-
-</div>
-</li>
-</ul>
-</nav>
-
 
 <div class="app-container">
 <!-- Panel lateral -->
 <aside id="chat-sidebar" class="sidebar-panel">
+
+<div class="sidebar-brand">
+<a href="s3.php"><i class="fas fa-cloud"></i> Cloud Drive</a>
+</div>
+
+<div class="sidebar-header">
+<button id="sbNewChat" class="btn-new-session" type="button">
+<i class="fas fa-plus"></i> Nueva conversación
+</button>
+<div class="search-container">
+<i class="fas fa-search icon-search"></i>
+<input type="text" id="sbChatSearch" placeholder="Buscar conversaciones..." autocomplete="off">
+</div>
+</div>
+
     
-<!-- modelos -->
-<div class="px-3 py-2" style="border-bottom: 1px solid var(--border, #333); flex-shrink: 0;">
-<div class="d-flex align-items-center flex-wrap" style="gap:.5rem;">
+    
+<div class="sidebar-section">
+<div class="section-label-row">
+<div class="section-label">PROYECTOS</div>
+<button id="sbNewProject" class="btn-icon-sm" title="Nuevo proyecto" type="button">
+<i class="fas fa-plus"></i>
+</button>
+</div>
+<div id="sbProjectList" class="projects-list">
+<div class="empty-state-sidebar">Cargando...</div>
+</div>
+<button class="btn-create-project" id="sbManageProjects" type="button">
+<i class="fas fa-cog"></i> Gestionar proyectos
+</button>
+</div>
+
+<div class="sidebar-section conversations-section">
+<div class="section-label">CONVERSACIONES</div>
+<div id="sbChatList" class="sessions-list">
+<div class="empty-state-sidebar">Cargando...</div>
+</div>
+</div>
+
+<div class="sidebar-footer">
+<div class="user-profile">
+<div class="user-avatar"><?= htmlspecialchars(mb_strtoupper(mb_substr($_SESSION['usuario'], 0, 1))) ?></div>
+<div class="user-info">
+<div class="user-name"><?= htmlspecialchars($_SESSION['usuario']) ?></div>
+<div class="user-role">Cloud Drive</div>
+</div>
+<button id="user-settings-btn" class="btn-settings" aria-label="Preferencias" title="Preferencias" type="button" data-toggle="modal" data-target="#settings-modal">
+<i class="fas fa-cog"></i>
+</button>
+</div>
+</div>
+
+<button id="sidebar-toggle" class="sidebar-toggle" aria-label="Ocultar o mostrar barra lateral" title="Ocultar o mostrar barra lateral">
+<i class="fas fa-chevron-left"></i>
+</button>
+</aside>
+<!-- Fin de Panel lateral -->
+
+<!-- cuerpo -->
+<main id="chat-main" class="chat-main">
+<header class="chat-header">
+<div class="header-left">
+<button id="sidebar-toggle-mobile" class="sidebar-toggle-mobile" aria-label="Abrir barra lateral" title="Abrir barra lateral" type="button">
+<i class="fas fa-bars"></i>
+</button>
+<h1 class="chat-title" id="chat2Title">Nueva conversación</h1>
+<small class="text-muted ml-2 d-none" id="chat2SessionBadge"></small>
+</div>
+<div class="header-right">
+<button id="chat2Rename" class="btn-icon-sm" title="Renombrar chat" type="button">
+<i class="fas fa-pen"></i>
+</button>
+<button id="chat2Archive" class="btn-icon-sm" title="Archivar chat" type="button">
+<i class="fas fa-archive"></i>
+</button>
+<button id="chat2Restore" class="btn-icon-sm d-none" title="Restaurar chat" type="button">
+<i class="fas fa-undo"></i>
+</button>
+</div>
+</header>
+<!-- panel -->
+<div id="pane-Chat2" class="tab-pane show active">   
+<div class="card h-100 d-flex flex-column shadow-sm">
+<div class="card-header">
+
+<div id="chat2SourcesPanel" class="px-3 py-2 d-none" style="border-bottom: 1px solid var(--border, #333); background: rgba(255,255,255,0.02);">
+<div class="d-flex align-items-center">
+<h6 class="mb-0 small"><i class="fas fa-folder-open"></i> Fuentes del Proyecto (<span id="chat2SourcesCount">0</span>)</h6>
+<button id="chat2IndexPending" class="btn btn-sm btn-outline-success ml-2" title="Indexar archivos pendientes/desactualizados">
+<i class="fas fa-sync-alt"></i> Indexar
+</button>
+<button id="chat2SourcesAdd" class="btn btn-sm btn-outline-primary ml-auto" title="Agregar fuentes">
+<i class="fas fa-plus"></i>
+</button><button id="chat2SourcesRefresh" class="btn btn-sm btn-outline-secondary ml-1" title="Recargar">
+<i class="fas fa-sync"></i>
+</button>
+</div>
+<div id="chat2SourcesList" class="d-flex flex-wrap mt-1" style="max-height: 60px; overflow-y: auto; font-size:0.7rem; gap: 4px;"></div>
+</div>
+
+</div>
+<!-- Contenido de Chat -->
+<div id="chat2Messages" class="card-body flex-grow-1 overflow-auto" style="padding: 1rem 1.5rem;"></div>
+</div>
+</div>
+<!-- fin de panel -->
+
+
+<div class="card-footer">
+<small id="chat2Status" class="text-muted"></small>
+<div id="chat2Usage" class="text-muted small mt-2"></div>
+<div id="chatToasts" class="chat-toasts"></div>
+<div id="incomingToasts" class="chat-toasts"></div>
+<div class="form-group mb-2">
+<textarea id="chat2Input" class="form-control" rows="3" placeholder="Escribe tu mensaje… (Enter = enviar, Shift+Enter = salto)"></textarea>
+</div>
+<div id="chat2Queue" class="chat-file-queue d-none">
+<div id="chat2QueueList" class="d-flex align-items-center flex-wrap" style="gap:.35rem;"></div>
+</div>
+<div class="d-flex align-items-center mt-2">
+<div class="ml-2">
+<input id="chat2File" type="file" style="display:none" multiple accept="image/*,video/*,audio/*,text/plain,.txt,.md,.csv,.json,.xml,.log,application/pdf">
+<button id="chat2Attach" class="btn btn-sm btn-outline-secondary" title="Adjuntar">
+<i class="fas fa-paperclip"></i>
+</button>
+</div>
+<button id="chat2BtnGenImg" class="btn btn-sm btn-outline-primary ml-2" title="Generar imagen">
+<i class="fas fa-image"></i>
+</button>
+<button id="chat2BtnGenVid" class="btn btn-sm btn-outline-primary ml-2" title="Generar video">
+<i class="fas fa-film"></i>
+</button>
+<button id="chat2BtnSonic" class="btn btn-sm btn-outline-secondary ml-2" title="Voz">
+<i class="fas fa-microphone"></i>
+</button>
+<div class="btn-group ml-2" role="group"><button class="btn btn-sm btn-outline-info" data-tool="grep"><i class="fas fa-search"></i></button>
+<button class="btn btn-sm btn-outline-info" data-tool="view"><i class="fas fa-eye"></i></button>
+<button class="btn btn-sm btn-outline-info" data-tool="str_replace"><i class="fas fa-exchange-alt"></i></button>
+<button class="btn btn-sm btn-outline-info" data-tool="search"><i class="fas fa-brain"></i></button>
+    <!-- 🚀 NUEVO: Botón Manual para Ejecutar Tests -->
+    <button class="btn btn-sm btn-outline-success" id="btnRunTestsManual" title="Ejecutar Tests del Proyecto">
+        <i class="fas fa-vial"></i>
+    </button>
+  <!-- 🚀 NUEVO: Botón de Rollback / Deshacer -->
+  <button class="btn btn-sm btn-outline-warning" id="btnRollbackEdit" title="Deshacer última edición de un archivo">
+    <i class="fas fa-undo-alt"></i>
+  </button>
+</div>
+<button id="chat2Send" class="btn btn-primary ml-auto">
+  <i class="fas fa-paper-plane"></i> Enviar
+</button>
+</div>
+</div>
+
+
+
+</main>
+<!-- fin de cuerpo -->
+
+</div>
+<!-- fin de app-container -->
+
+<div id="sidebar-backdrop" class="sidebar-backdrop"></div>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"></script>
+<script src="js/actualizar-hora.js"></script>
+<script src="js/recargarPagina.js"></script>
+<script src="chat1.js"></script>
+<script src="chat1-enhancements.js"></script>
+<script src="js/sincronizar.js"></script>
+<script src="js/estilo.js"></script>
+<script src="js/sidebar-responsive.js"></script>
+
+
+<script>
+window.UPLOAD_API = "api/upload.php";
+</script>
+<script src="js/subir-chunked.js"></script>
+<div id="settings-modal" class="modal fade" tabindex="-1" role="dialog" aria-hidden="true">
+<div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+<div class="modal-content">
+<div class="modal-header">
+<h5 class="modal-title" id="settings-title"><i class="fas fa-sliders-h mr-2"></i>Preferencias</h5>
+<button type="button" class="close" data-dismiss="modal" aria-label="Cerrar"><span>&times;</span></button>
+</div>
+<div class="modal-body">
+
+<div class="settings-section">
+<div class="settings-section-title">Modelo y generación</div>
 <select id="chat2Model" class="form-control form-control-sm" style="max-width:520px;">
   
   <!-- ===================================================== -->
@@ -302,207 +419,97 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
   </optgroup>
 
 </select>
+<div class="d-flex align-items-center flex-wrap mt-2" style="gap:.75rem;">
 <div class="custom-control custom-switch">
 <input type="checkbox" class="custom-control-input" id="chat2Auto" checked>
-<label class="custom-control-label" for="chat2Auto" title="Auto-router">Auto</label>
+<label class="custom-control-label" for="chat2Auto" title="Auto-router">Auto-router</label>
 </div>
+<label class="mb-0 small d-flex align-items-center" style="gap:.35rem;">Temp
 <input id="chat2Temp" type="number" class="form-control form-control-sm" step="0.1" min="0" max="2" value="0.7" title="temperature" style="width:70px;">
+</label>
+<label class="mb-0 small d-flex align-items-center" style="gap:.35rem;">Max tokens
 <input id="chat2Max" type="number" class="form-control form-control-sm" step="1" min="1" max="4096" value="800" title="max_tokens" style="width:80px;">
+</label>
+<label class="mb-0 small d-flex align-items-center" style="gap:.35rem;">Top P
 <input id="chat2TopP" type="number" class="form-control form-control-sm" step="0.05" min="0.05" max="1" value="0.9" title="top_p" style="width:70px;">
-</div>
-</div>    
-    
-    
-<div class="accordion-section">
-<div class="accordion-header" data-toggle="collapse" data-target="#sbChats">
-<span><i class="fas fa-comments mr-2"></i>Chats</span>
-<button id="sbNewChat" class="btn btn-sm btn-outline-primary py-0 px-1" title="Nueva sesión">
-<i class="fas fa-plus"></i>
-</button>
-</div>
-<div id="sbChats" class="collapse show">
-<div class="accordion-body">
-<input id="sbChatSearch" class="form-control form-control-sm mb-2" placeholder="Buscar...">
-<div id="sbChatList" style="max-height: 220px; overflow-y: auto;">
-<div class="text-muted small">Cargando...</div>
-</div>
-</div>
-</div>
-</div>
-<div class="accordion-section"><div class="accordion-header" data-toggle="collapse" data-target="#sbProjects">
-<span><i class="fas fa-briefcase mr-2"></i>Proyectos</span>
-<button id="sbNewProject" class="btn btn-sm btn-outline-primary py-0 px-1" title="Nuevo proyecto">
-<i class="fas fa-plus"></i>
-</button>
-</div>
-<div id="sbProjects" class="collapse show">
-<div class="accordion-body">
-<div id="sbProjectList" style="max-height: 220px; overflow-y: auto;">
-<div class="text-muted small">Cargando...</div>
-</div>
-<button class="btn btn-sm btn-outline-secondary btn-block mt-2" id="sbManageProjects">
-<i class="fas fa-cog"></i> Gestionar
-</button>
-</div>
-</div>
-</div>
-<div class="accordion-section">
-<div class="accordion-header" data-toggle="collapse" data-target="#sbContext">
-<span><i class="fas fa-info-circle mr-2"></i>Contexto</span>
-<i class="fas fa-chevron-down small"></i>
-</div>
-<div id="sbContext" class="collapse">
-<div class="accordion-body">
-<div class="small">
-<strong>Proyecto:</strong>
-<div id="sbCurrentProject" class="text-muted mb-2">Ninguno</div>
-<strong>Sesión:</strong>
-<div id="sbCurrentSession" class="text-muted mb-2">Ninguna</div>
-<strong>Fuentes indexadas:</strong>
-<div id="sbSourcesCount" class="text-muted">0</div>
-</div>
-</div>
+</label>
 </div>
 </div>
 
-<!-- proyecto --> 
-<div class="d-flex align-items-center mb-2">
-<label class="mb-0 mr-2" style="font-size:0.85rem;">
-<i class="fas fa-briefcase"></i> Proyecto:
-</label>
-<select id="chat2Project" class="form-control form-control-sm" style="max-width:300px;">
+<hr>
+<div class="settings-section">
+<div class="settings-section-title">Proyecto activo</div>
+<select id="chat2Project" class="form-control form-control-sm" style="max-width:100%;">
 <option value="">— Sin proyecto (chat libre) —</option>
 </select>
-<button id="chat2ProjectNew" class="btn btn-sm btn-outline-primary ml-2" title="Nuevo proyecto">
-<i class="fas fa-plus"></i> Nuevo
-</button>
-<button id="chat2ProjectManage" class="btn btn-sm btn-outline-secondary ml-1" title="Gestionar proyectos">
-<i class="fas fa-cog"></i>
-</button>
-<!--<strong id="chat2Title">Nueva conversación (Auto)</strong>-->
-<small class="text-muted ml-2 d-none" id="chat2SessionBadge"></small>
-<button id="chat2Rename" class="btn btn-sm btn-outline-secondary ml-2" title="Renombrar chat">
-<i class="fas fa-pen"></i>
-</button>
-<button id="chat2Archive" class="btn btn-sm btn-outline-danger ml-1" title="Archivar chat">
-<i class="fas fa-archive"></i>
-</button>
-<button id="chat2Restore" class="btn btn-sm btn-outline-success ml-1 d-none" title="Restaurar chat">
-<i class="fas fa-undo"></i>
-</button>
-
-
-
-</div>
-
-<button id="sidebar-toggle" class="sidebar-toggle" aria-label="Ocultar o mostrar barra lateral" title="Ocultar o mostrar barra lateral">
-<i class="fas fa-chevron-left"></i>
-</button>
-</aside>
-<!-- Fin de Panel lateral -->
-
-<!-- cuerpo -->
-<main id="chat-main" class="chat-main">
-<!-- panel -->
-<div id="pane-Chat2" class="tab-pane show active">   
-<div class="card h-100 d-flex flex-column shadow-sm">
-<div class="card-header">
-
-<div id="chat2SourcesPanel" class="px-3 py-2 d-none" style="border-bottom: 1px solid var(--border, #333); background: rgba(255,255,255,0.02);">
-<div class="d-flex align-items-center">
-<h6 class="mb-0 small"><i class="fas fa-folder-open"></i> Fuentes del Proyecto (<span id="chat2SourcesCount">0</span>)</h6>
-<button id="chat2IndexPending" class="btn btn-sm btn-outline-success ml-2" title="Indexar archivos pendientes/desactualizados">
-<i class="fas fa-sync-alt"></i> Indexar
-</button>
-<button id="chat2SourcesAdd" class="btn btn-sm btn-outline-primary ml-auto" title="Agregar fuentes">
-<i class="fas fa-plus"></i>
-</button><button id="chat2SourcesRefresh" class="btn btn-sm btn-outline-secondary ml-1" title="Recargar">
-<i class="fas fa-sync"></i>
-</button>
-</div>
-<div id="chat2SourcesList" class="d-flex flex-wrap mt-1" style="max-height: 60px; overflow-y: auto; font-size:0.7rem; gap: 4px;"></div>
-</div>
-
-</div>
-<!-- Contenido de Chat -->
-<div id="chat2Messages" class="card-body flex-grow-1 overflow-auto" style="padding: 1rem 1.5rem;"></div>
-</div>
-</div>
-<!-- fin de panel -->
-
-
-<div class="card-footer">
-<small id="chat2Status" class="text-muted"></small>
-<div id="chat2Usage" class="text-muted small mt-2"></div>
-<div id="chatToasts" class="chat-toasts"></div>
-<div id="incomingToasts" class="chat-toasts"></div>
-<div class="form-group mb-2">
-<textarea id="chat2Input" class="form-control" rows="3" placeholder="Escribe tu mensaje… (Enter = enviar, Shift+Enter = salto)"></textarea>
-</div>
-<div id="chat2Queue" class="chat-file-queue d-none">
-<div id="chat2QueueList" class="d-flex align-items-center flex-wrap" style="gap:.35rem;"></div>
-</div>
-<div class="d-flex align-items-center mt-2">
-<div class="ml-2">
-<input id="chat2File" type="file" style="display:none" multiple accept="image/*,video/*,audio/*,text/plain,.txt,.md,.csv,.json,.xml,.log,application/pdf">
-<button id="chat2Attach" class="btn btn-sm btn-outline-secondary" title="Adjuntar">
-<i class="fas fa-paperclip"></i>
-</button>
-</div>
-<button id="chat2BtnGenImg" class="btn btn-sm btn-outline-primary ml-2" title="Generar imagen">
-<i class="fas fa-image"></i>
-</button>
-<button id="chat2BtnGenVid" class="btn btn-sm btn-outline-primary ml-2" title="Generar video">
-<i class="fas fa-film"></i>
-</button>
-<button id="chat2BtnSonic" class="btn btn-sm btn-outline-secondary ml-2" title="Voz">
-<i class="fas fa-microphone"></i>
-</button>
-<div class="btn-group ml-2" role="group"><button class="btn btn-sm btn-outline-info" data-tool="grep"><i class="fas fa-search"></i></button>
-<button class="btn btn-sm btn-outline-info" data-tool="view"><i class="fas fa-eye"></i></button>
-<button class="btn btn-sm btn-outline-info" data-tool="str_replace"><i class="fas fa-exchange-alt"></i></button>
-<button class="btn btn-sm btn-outline-info" data-tool="search"><i class="fas fa-brain"></i></button>
-    <!-- 🚀 NUEVO: Botón Manual para Ejecutar Tests -->
-    <button class="btn btn-sm btn-outline-success" id="btnRunTestsManual" title="Ejecutar Tests del Proyecto">
-        <i class="fas fa-vial"></i>
-    </button>
-  <!-- 🚀 NUEVO: Botón de Rollback / Deshacer -->
-  <button class="btn btn-sm btn-outline-warning" id="btnRollbackEdit" title="Deshacer última edición de un archivo">
-    <i class="fas fa-undo-alt"></i>
-  </button>
-</div>
-<button id="chat2Send" class="btn btn-primary ml-auto">
-  <i class="fas fa-paper-plane"></i> Enviar
-</button>
+<div class="small text-muted mt-2">
+Proyecto: <span id="sbCurrentProject">Ninguno</span> ·
+Sesión: <span id="sbCurrentSession">Ninguna</span> ·
+Fuentes indexadas: <span id="sbSourcesCount">0</span>
 </div>
 </div>
 
+<hr>
+<div class="settings-section">
+<div class="settings-section-title">Apariencia</div>
+<div class="mb-2">
+<div class="small text-muted mb-1">Color de acento</div>
+<div class="d-flex flex-wrap" style="gap:.4rem;">
+<button class="btn btn-sm btn-outline-success js-set-theme" data-theme="theme-neon-green" type="button">Verde</button>
+<button class="btn btn-sm btn-outline-info js-set-theme" data-theme="theme-neon-blue" type="button">Azul</button>
+<button class="btn btn-sm btn-outline-danger js-set-theme" data-theme="theme-neon-red" type="button">Rojo</button>
+<button class="btn btn-sm btn-outline-warning js-set-theme" data-theme="theme-neon-yellow" type="button">Amarillo</button>
+</div>
+</div>
+<div class="mb-2">
+<div class="small text-muted mb-1">Modo</div>
+<div class="d-flex flex-wrap" style="gap:.4rem;">
+<button class="btn btn-sm btn-outline-secondary js-set-mode" data-mode="theme-dark" type="button"><i class="fas fa-moon mr-1"></i>Oscuro</button>
+<button class="btn btn-sm btn-outline-secondary js-set-mode" data-mode="theme-light" type="button"><i class="fas fa-sun mr-1"></i>Claro</button>
+</div>
+</div>
+<div class="mb-2">
+<div class="small text-muted mb-1">Visión</div>
+<div class="d-flex flex-wrap" style="gap:.4rem;">
+<button class="btn btn-sm btn-outline-secondary js-set-vision" data-vision="vision-normal" type="button">Normal</button>
+<button class="btn btn-sm btn-outline-secondary js-set-vision" data-vision="vision-myopia" type="button">Miopía</button>
+<button class="btn btn-sm btn-outline-secondary js-set-vision" data-vision="vision-protanopia" type="button">Protanopia</button>
+<button class="btn btn-sm btn-outline-secondary js-set-vision" data-vision="vision-deuteranopia" type="button">Deuteranopia</button>
+<button class="btn btn-sm btn-outline-secondary js-set-vision" data-vision="vision-tritanopia" type="button">Tritanopia</button>
+</div>
+</div>
+<button class="btn btn-sm btn-outline-secondary" id="btnToggleAscii" type="button">
+<i class="fas fa-terminal mr-1"></i> Alternar ASCII
+</button>
+</div>
 
-
-</main>
-<!-- fin de cuerpo -->
+<hr>
+<div class="settings-section">
+<div class="settings-section-title">Cuenta</div>
+<div class="d-flex flex-wrap" style="gap:.5rem;">
+<button id="btnSyncS3" class="btn btn-sm btn-outline-secondary" type="button">
+<i class="fas fa-rotate mr-1"></i> Sincronizar S3
+</button>
+<button id="btnRecargar" class="btn btn-sm btn-outline-secondary" onclick="recargarPagina()" type="button">
+<i class="fas fa-sync-alt mr-1"></i> Recargar página
+</button>
+<a href="https://drive.esforzados.com/s3chatstats.php" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-info">
+<i class="fas fa-comment-dots mr-1"></i> Ir al Stats
+</a>
+<a href="logout.php" class="btn btn-sm btn-outline-danger">
+<i class="fas fa-sign-out-alt mr-1"></i> Cerrar sesión
+</a>
+</div>
+</div>
 
 </div>
-<!-- fin de app-container -->
+<div class="modal-footer">
+<button type="button" class="btn-ghost" data-dismiss="modal">Cerrar</button>
+</div>
+</div>
+</div>
+</div>
 
-<div id="sidebar-backdrop" class="sidebar-backdrop"></div>
-
-<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/dropzone/5.9.3/min/dropzone.min.js"></script>
-<script src="js/actualizar-hora.js"></script>
-<script src="js/recargarPagina.js"></script>
-<script src="chat1.js"></script>
-<script src="chat1-enhancements.js"></script>
-<script src="js/sincronizar.js"></script>
-<script src="js/estilo.js"></script>
-<script src="js/sidebar-responsive.js"></script>
-
-
-<script>
-window.UPLOAD_API = "api/upload.php";
-</script>
-<script src="js/subir-chunked.js"></script>
 <div class="modal fade" id="modalProjectManager" tabindex="-1" role="dialog" aria-hidden="true">
 <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
 <div class="modal-content">
