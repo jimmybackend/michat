@@ -28,6 +28,8 @@ body.ui-theme {
 
 /* ---------- Layout general: app-container (sidebar + main) ---------- */
 .app-container {
+  --sidebar-w: 288px;
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -35,8 +37,8 @@ body.ui-theme {
 }
 
 #chat-sidebar.sidebar-panel {
-  width: 288px;
-  flex: 0 0 288px;
+  width: var(--sidebar-w);
+  flex: 0 0 var(--sidebar-w);
   min-width: 0;
   position: relative;
   z-index: 100;
@@ -62,12 +64,15 @@ body.ui-theme {
   flex-direction: column;
 }
 
-/* ---------- Botón de colapso (escritorio) ---------- */
+/* ---------- Botón de colapso (escritorio) ----------
+   Vive fuera de #chat-sidebar (hermano, entre </aside> y <main>) para que
+   NO quede recortado por el overflow:hidden/width:0 del sidebar colapsado
+   — si estuviera dentro, se volvía invisible e imposible de volver a abrir. */
 .sidebar-toggle {
   position: absolute;
-  right: -15px;
+  left: var(--sidebar-w);
   top: 50%;
-  transform: translateY(-50%);
+  transform: translate(-50%, -50%);
   width: 30px;
   height: 30px;
   border-radius: 999px !important;
@@ -77,10 +82,12 @@ body.ui-theme {
   border: 1px solid var(--border) !important;
   color: var(--text-soft) !important;
   box-shadow: var(--shadow);
-  z-index: 1;
+  z-index: 150;
+  transition: left .22s cubic-bezier(.2,.8,.2,1);
 }
 .sidebar-toggle:hover { color: var(--accent) !important; border-color: var(--accent) !important; }
-#chat-sidebar.collapsed .sidebar-toggle i { transform: rotate(180deg); }
+#chat-sidebar.collapsed ~ .sidebar-toggle { left: 0; }
+#chat-sidebar.collapsed ~ .sidebar-toggle i { transform: rotate(180deg); }
 
 /* ---------- Botón hamburguesa (móvil) ---------- */
 .sidebar-toggle-mobile {
@@ -158,6 +165,23 @@ body.ui-theme {
 }
 .sidebar-panel .sb-item {
   border-radius: 10px !important;
+  padding: 8px 10px !important;
+}
+.sidebar-panel .sb-item-meta {
+  font-size: 11px !important;
+  color: var(--text-soft) !important;
+  margin-top: 2px;
+}
+.sidebar-panel .sb-group-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  margin: 12px 4px 4px;
+}
+.sidebar-panel .sb-group-label:first-child {
+  margin-top: 2px;
 }
 .sidebar-panel select,
 .sidebar-panel input.form-control {

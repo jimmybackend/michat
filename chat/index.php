@@ -126,11 +126,12 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 </div>
 
+</aside>
+<!-- Fin de Panel lateral -->
+
 <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Ocultar o mostrar barra lateral" title="Ocultar o mostrar barra lateral">
 <i class="fas fa-chevron-left"></i>
 </button>
-</aside>
-<!-- Fin de Panel lateral -->
 
 <!-- cuerpo -->
 <main id="chat-main" class="chat-main">

@@ -461,6 +461,42 @@ async function loadSessions() {
 }
 
 
+// ✅ Fecha compacta para la lista de conversaciones (evita mostrar el timestamp
+// completo "YYYY-MM-DD HH:MM:SS" amontonado bajo cada título).
+function formatSessionMeta(dtStr) {
+  if (!dtStr) return '';
+  const d = new Date(String(dtStr).replace(' ', 'T'));
+  if (isNaN(d.getTime())) return esc(dtStr);
+  const now = new Date();
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+  const today = startOfDay(now);
+  const diffDays = Math.round((today - startOfDay(d)) / 86400000);
+  if (diffDays === 0) return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  if (diffDays === 1) return 'Ayer';
+  if (diffDays > 1 && diffDays < 7) return d.toLocaleDateString('es-ES', { weekday: 'short' });
+  return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+}
+
+// ✅ Agrupa las conversaciones por antigüedad (Hoy / Ayer / Últimos 7 días /
+// Anteriores) igual que el diseño de referencia, así la lista no se ve amontonada.
+function groupFreeSessionsByDate(list) {
+  const now = new Date();
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+  const today = startOfDay(now);
+  const groups = { 'Hoy': [], 'Ayer': [], 'Últimos 7 días': [], 'Anteriores': [] };
+  list.forEach(s => {
+    const raw = s.updated_at || s.created_at;
+    const d = raw ? new Date(String(raw).replace(' ', 'T')) : null;
+    if (!d || isNaN(d.getTime())) { groups['Anteriores'].push(s); return; }
+    const diffDays = Math.round((today - startOfDay(d)) / 86400000);
+    if (diffDays <= 0) groups['Hoy'].push(s);
+    else if (diffDays === 1) groups['Ayer'].push(s);
+    else if (diffDays < 7) groups['Últimos 7 días'].push(s);
+    else groups['Anteriores'].push(s);
+  });
+  return Object.entries(groups).filter(([, arr]) => arr.length > 0);
+}
+
 function renderSessionsList() {
   const targetList = el.sbChatList || el.sessionsList;
   if (!targetList) return;
@@ -468,14 +504,14 @@ function renderSessionsList() {
   // ✅ FILTRO: Solo mostrar sesiones que NO tienen project_id ni project_id_
   const freeSessions = sessions.filter(s => !s.project_id && !s.project_id_);
 
-  const items = freeSessions.map(s => {
+  const renderItem = (s) => {
     const sid = s.id || s.id_;
     const title = esc(s.title || `Sesión #${sid}`);
-    const small = esc(s.updated_at || s.created_at || '');
+    const meta = formatSessionMeta(s.updated_at || s.created_at || '');
     const isArchived = s.archived || s.status === 'archived';
     const badge = isArchived ? `<span class="badge badge-secondary ml-1">archivada</span>` : '';
     const active = (sid === currentSessionId) ? ' active' : '';
-    
+
     return `<div class="sb-item${active}" data-id="${sid}" title="${title}">
       <div class="d-flex justify-content-between align-items-center">
         <span class="text-truncate" style="max-width: 85%;">${title} ${badge}</span>
@@ -486,9 +522,17 @@ function renderSessionsList() {
             : `<button class="btn btn-link p-0 js-archive text-danger" title="Archivar"><i class="fas fa-archive" style="font-size:0.6rem;"></i></button>`}
         </div>
       </div>
-      <small class="text-muted d-block" style="font-size:0.6rem;">${small}</small>
+      <small class="sb-item-meta text-muted d-block">${esc(meta)}</small>
     </div>`;
-  }).join('') || `<div class="text-muted small">Sin chats libres</div>`;
+  };
+
+  const groups = groupFreeSessionsByDate(freeSessions);
+  const items = groups.length
+    ? groups.map(([label, arr]) => `
+        <div class="sb-group-label">${esc(label)}</div>
+        ${arr.map(renderItem).join('')}
+      `).join('')
+    : `<div class="text-muted small">Sin chats libres</div>`;
 
   targetList.innerHTML = items;
   
