@@ -71,6 +71,8 @@ try {
         throw new RuntimeException('S3Manager.php no encontrado en ' . __DIR__);
     }
     require_once $s3ManagerPath;
+
+    require_once __DIR__ . '/includes/ProjectIndexer.php';
 } catch (Throwable $e) {
     jexit(['ok' => false, 'error' => 'Error cargando dependencias: ' . $e->getMessage()], 500);
 }
@@ -601,6 +603,73 @@ Instrucción: " . $instruction;
     }
 }
 
+// ===== 7.5. RESUMEN PROFESIONAL DEL RESULTADO (usa Haiku: "modelo que revisa código") =====
+// Genera, a partir del código REALMENTE producido (no de la instrucción cruda), un
+// resumen técnico conciso que NUNCA debe omitir nombres de variables, funciones,
+// clases o rutas de archivo — es lo que luego alimenta la memoria de la sesión y
+// la respuesta final del asistente, así que debe ser preciso y profesional.
+function summarizeCodeChange(
+    $bedrock, mysqli $db, int $sessionId, int $newVersionId,
+    string $instruction, string $filename, string $newContent, bool $isCreation
+): array {
+    $reviewerModel = 'anthropic.claude-3-5-haiku-20241022-v1:0';
+
+    $systemPrompt = "Eres un revisor de código senior. Tu única tarea es describir, en un párrafo breve y profesional (máx. 80 palabras), qué se implementó en el archivo dado.
+REGLAS OBLIGATORIAS:
+1. NUNCA omitas nombres exactos de funciones, métodos, clases, variables o constantes relevantes que aparezcan en el código.
+2. Menciona el nombre del archivo y si fue creado o editado.
+3. No repitas el código completo, solo referencia los identificadores clave.
+4. No uses markdown ni comillas, solo texto plano en español.
+5. Sé técnicamente preciso: si detectas el lenguaje de programación, indícalo.";
+
+    $action = $isCreation ? 'CREACIÓN' : 'EDICIÓN';
+    $userPrompt = "Acción: {$action}\nArchivo: {$filename}\nInstrucción original: " . mb_substr($instruction, 0, 500) . "\n\nCódigo resultante:\n```\n" . mb_substr($newContent, 0, 6000) . "\n```\n\nDescribe qué se implementó, preservando los nombres exactos de funciones/variables/clases usados.";
+
+    try {
+        $res = $bedrock->converse([
+            'modelId' => $reviewerModel,
+            'messages' => [['role' => 'user', 'content' => [['text' => $userPrompt]]]],
+            'system' => [['text' => $systemPrompt]],
+            'inferenceConfig' => ['maxTokens' => 300, 'temperature' => 0.2]
+        ]);
+
+        $inputTokens = (int)($res['usage']['inputTokens'] ?? 0);
+        $outputTokens = (int)($res['usage']['outputTokens'] ?? 0);
+        try {
+            $tcId = next_id($db, 'TokenUsage', 'id_');
+            $tcPhase = 'compile';
+            $tcCost = ($inputTokens / 1000 * 0.0008) + ($outputTokens / 1000 * 0.004);
+            $sqlTC = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
+                      VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)";
+            $stmtTC = $db->prepare($sqlTC);
+            if ($stmtTC) {
+                $durationMs = 0;
+                $stmtTC->bind_param("iissiddi", $tcId, $sessionId, $tcPhase, $reviewerModel, $inputTokens, $outputTokens, $tcCost, $durationMs);
+                $stmtTC->execute();
+                $stmtTC->close();
+            }
+        } catch (Throwable $e) {
+            @file_put_contents(__DIR__ . '/token_usage_debug.log', "[" . date('Y-m-d H:i:s') . "] summarizeCodeChange TokenUsage: " . $e->getMessage() . "\n", FILE_APPEND | LOCK_EX);
+        }
+
+        $text = '';
+        foreach (($res['output']['message']['content'] ?? []) as $block) {
+            if (isset($block['text'])) $text .= $block['text'];
+        }
+        $text = trim($text);
+        if ($text === '') {
+            $text = ($isCreation ? "Archivo {$filename} creado." : "Archivo {$filename} editado.") . " " . mb_substr($instruction, 0, 150);
+        }
+        return ['text' => $text, 'model' => $reviewerModel];
+    } catch (Throwable $e) {
+        // Fallback: nunca bloquear la respuesta final por un fallo del resumen
+        return [
+            'text' => ($isCreation ? "Archivo {$filename} creado." : "Archivo {$filename} editado.") . " " . mb_substr($instruction, 0, 150),
+            'model' => 'fallback'
+        ];
+    }
+}
+
 // ===== 8. Preparar la escalera base =====
 const OPUS_MODEL_ID = 'anthropic.claude-opus-4-8-v1:0';
 
@@ -1079,6 +1148,33 @@ if ($fileRow) {
     jexit(['ok' => false, 'error' => 'No se pudo guardar el archivo en S3/BD: ' . $e->getMessage()], 500);
 }
 
+// ===== 14d. RESUMEN PROFESIONAL DEL TRABAJO (modelo revisor de código) =====
+// Se genera a partir del código YA subido a S3, no de la instrucción cruda,
+// para no perder nombres de variables/funciones/clases en la memoria de la sesión.
+$summaryResult = summarizeCodeChange($bedrock, $db_connection, $sessionId, $newVersionId, $instruction, $targetFilename, $newContent, $isCreation);
+$diffSummary = $summaryResult['text'];
+try {
+    $stmtUpdSummary = $db_connection->prepare("UPDATE FileVersions SET diff_summary = ? WHERE id_ = ?");
+    $stmtUpdSummary->bind_param('si', $diffSummary, $newVersionId);
+    $stmtUpdSummary->execute();
+    $stmtUpdSummary->close();
+} catch (Throwable $e) {
+    error_log("No se pudo actualizar diff_summary: " . $e->getMessage());
+}
+
+// ===== 14e. INDEXACIÓN REAL (chunks + embeddings) DEL ARCHIVO GENERADO =====
+// Antes esto dependía de que el frontend llamara después a index_project_sources.php;
+// si esa llamada fallaba o el usuario no esperaba, el archivo quedaba marcado como
+// 'indexed' en la BD sin tener chunks/embeddings reales, y la IA no podía "verlo"
+// en búsquedas posteriores. Ahora se indexa aquí mismo, con el contenido en memoria.
+$indexResult = ['ok' => false, 'error' => 'no ejecutado'];
+try {
+    $indexResult = indexProjectSourceContent($db_connection, $bedrock, $projectId, (int)$source['id_'], $targetFilename, $newContent);
+} catch (Throwable $e) {
+    $indexResult = ['ok' => false, 'error' => $e->getMessage()];
+    error_log("Error indexando {$targetFilename} tras code_edit: " . $e->getMessage());
+}
+
 // ===== 15. Respuesta exitosa con Análisis de Impacto =====
 $downloadUrl = 'descargar.php?archivo=' . urlencode($source['s3_key']) . '&nombre=' . urlencode($targetFilename);
 
@@ -1089,13 +1185,16 @@ jexit([
     'new_version'    => $nextVersion,
     'download_url'   => $downloadUrl,
     'diff_summary'   => $diffSummary,
+    'summary_model'  => $summaryResult['model'],
     'model_used'     => $attemptLog[count($attemptLog) - 1]['model'],
     'complexity'     => $category ?? 'unknown',
-    'needs_indexing' => true,
+    'indexed'        => (bool)($indexResult['ok'] ?? false),
+    'index_error'    => $indexResult['ok'] ? null : ($indexResult['error'] ?? null),
+    'needs_indexing' => false,
     'scout_info'     => $scoutResult ?? null,
     // 🚀 NUEVO: Datos para el Orquestador / Frontend
     'impact_analysis' => $impactAnalysis,
-    'next_steps'      => $impactAnalysis['is_multi_file'] 
-        ? "⚠️ Esta edición afecta a " . count($impactAnalysis['affected_files']) . " archivos más. Se recomienda aplicar refactor en cascada." 
+    'next_steps'      => $impactAnalysis['is_multi_file']
+        ? "⚠️ Esta edición afecta a " . count($impactAnalysis['affected_files']) . " archivos más. Se recomienda aplicar refactor en cascada."
         : "Edición contenida en un solo archivo."
 ]);

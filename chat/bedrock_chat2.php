@@ -102,15 +102,41 @@ function cosineSimilarity(array $vecA, array $vecB): float {
 }
 
 // =====================================================================
+// ✅ DETECTOR DE CÓDIGO MULTI-LENGUAJE (agnóstico al lenguaje)
+// Se usa tanto para elegir el modelo de resumen de memoria como para
+// decidir si un texto debe tratarse como contenido técnico/código.
+// Cubre palabras clave de PHP, JS/TS, Python, Java/Kotlin, C/C++/C#,
+// Go, Rust, Ruby, Swift, SQL y shell, además de sintaxis genérica
+// (llaves, punto y coma, indentación de bloques, extensiones de archivo).
+// =====================================================================
+function detectIsCode(string $text): bool {
+    $patterns = [
+        // Genérico / control de flujo común a casi todos los lenguajes
+        '/\b(function|def|func|fn|class|interface|struct|enum|const|let|var|import|export|package|namespace|return|yield|if\s*\(|else\s*if|elif|for\s*\(|foreach|while\s*\(|switch\s*\(|match\s*\(|try\s*\{|catch\s*\(|except|throw|raise|async|await|public|private|protected|static|void|null|nil|None|true|false)\b/i',
+        // Marcadores de sintaxis de apertura de bloque de código
+        '/<\?php|=>|->|::|<div|<script|<style|#include|#!\/usr\/bin|using\s+System|SELECT\s+.+\s+FROM|INSERT\s+INTO|UPDATE\s+.+\s+SET|console\.log|System\.out\.println|print\s*\(/i',
+        // Palabras relacionadas con desarrollo/depuración
+        '/\b(c[oó]digo|archivo|script|variable|array|json|xml|yaml|endpoint|api|query|database|bd|bug|error|excepci[oó]n|stack\s*trace|compilar|compile|refactor|debug|framework|librer[ií]a|library|repositorio|repository|commit|merge|deploy)\b/i',
+        // Extensiones de archivo típicas de código
+        '/\.(php|js|jsx|ts|tsx|py|java|kt|go|rs|rb|c|cpp|cs|swift|sql|sh|html|css|json|yml|yaml)\b/i',
+    ];
+    foreach ($patterns as $p) {
+        if (preg_match($p, $text)) return true;
+    }
+    return false;
+}
+
+// =====================================================================
 // ✅ SMART MEMORY: Resumir Q&A con IA ANTES de guardar en BD
-// Detecta automáticamente si es código para usar Haiku (mayor precisión técnica),
-// o Nova Micro para conversaciones normales (máximo ahorro).
+// Detecta automáticamente si es código (de cualquier lenguaje) para usar
+// Haiku (mayor precisión técnica), o Nova Micro para conversaciones
+// normales (máximo ahorro).
 // Retorna: ['text' => '...', 'inputTokens' => int, 'outputTokens' => int, 'model' => string]
 // =====================================================================
 function summarizeQAWithAI($bedrock, string $question, string $answer): array {
-    // 1. Heurística simple pero efectiva para detectar si el Q&A es sobre código/programación
-    $isCode = preg_match('/\b(function|class|const|let|var|import|export|return|if\s*\(|echo|print|<\?php|=>|<div|<script|error|bug|c[oó]digo|archivo|file|script|variable|array|json|php|js|html|css|sql|query|database|bd|api|endpoint)\b/i', $question . ' ' . $answer);
-    
+    // 1. Detección multi-lenguaje de si el Q&A es sobre código/programación
+    $isCode = detectIsCode($question . ' ' . $answer);
+
     // 2. Seleccionar el modelo dinámicamente
     $modelId = $isCode ? 'anthropic.claude-3-5-haiku-20241022-v1:0' : 'amazon.nova-micro-v1:0';
     
@@ -416,14 +442,17 @@ function execute_tool_code_edit($args, $projectId, $sessionId, $db) {
         CURLOPT_POST => true,
         CURLOPT_POSTFIELDS => $postData,
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 120,
+        CURLOPT_TIMEOUT => 280,
+        CURLOPT_FOLLOWLOCATION => true, // Evita fallos silenciosos si el servidor redirige http->https
+        CURLOPT_MAXREDIRS => 3,
         CURLOPT_COOKIE => $_SERVER['HTTP_COOKIE'] ?? '' // Mantiene la sesión activa
     ]);
-    
+
     $response = curl_exec($ch);
+    $curlErr = curl_error($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
-    
+
     if ($httpCode === 200) {
         $data = json_decode($response, true);
         if ($data && isset($data['ok']) && $data['ok']) {
@@ -431,13 +460,15 @@ function execute_tool_code_edit($args, $projectId, $sessionId, $db) {
                 'success' => true,
                 'message' => "✅ Archivo '{$targetFilename}' " . ($data['new_version'] === '1' ? 'creado' : 'editado') . " exitosamente.",
                 'version' => $data['new_version'],
-                'model_used' => $data['model_used'] ?? 'unknown'
+                'model_used' => $data['model_used'] ?? 'unknown',
+                'summary' => $data['diff_summary'] ?? null,
+                'indexed' => $data['indexed'] ?? false
             ], JSON_UNESCAPED_UNICODE);
         }
         return json_encode(['error' => $data['error'] ?? 'Error desconocido en code_edit.php'], JSON_UNESCAPED_UNICODE);
     }
-    
-    return json_encode(['error' => 'code_edit.php respondió con HTTP ' . $httpCode . ': ' . ($response ?: 'sin respuesta')], JSON_UNESCAPED_UNICODE);
+
+    return json_encode(['error' => 'code_edit.php respondió con HTTP ' . $httpCode . ($curlErr ? " (curl: {$curlErr})" : '') . ': ' . ($response ?: 'sin respuesta')], JSON_UNESCAPED_UNICODE);
 }
 
 // ===== Cargar bootstrap (autoload + Config + db) =====
@@ -1425,6 +1456,15 @@ if ($projectId > 0) {
     $maxRounds = 5;
     $round = 0;
     $stopReason = null;
+    $anyToolFailed = false;
+    $lastToolError = '';
+
+    // ✅ Liberamos el lock del archivo de sesión ANTES de entrar al bucle: el tool
+    // 'code_edit' hace una petición HTTP interna hacia code_edit.php que también
+    // necesita abrir esta misma sesión (para leer $_SESSION['user_id']). Si no la
+    // cerramos aquí, esa petición interna queda bloqueada esperando el lock hasta
+    // agotar su propio timeout, y el archivo nunca llega a crearse/editarse.
+    if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 
     while ($round < $maxRounds) {
         $res = $bedrock->converse($converseParams);
@@ -1468,14 +1508,22 @@ if ($projectId > 0) {
                     } elseif ($toolName === 'str_replace') {
                         $resultText = execute_tool_str_replace($args, $projectId, $db_connection);
                     } elseif ($toolName === 'code_edit') {
-                        // Obtenemos el session_id de la variable global o del contexto actual 
-                        $currentSessionId = $sessionId ?? $_SESSION['session_id'] ?? 0; 
-                        $editResult = execute_tool_code_edit($args, $projectId, $currentSessionId, $db_connection);
+                        // ✅ CORREGIDO: antes usaba $sessionId (nunca definida) y siempre
+                        // caía a 0, lo que hacía que code_edit.php rechazara la petición
+                        // con "Faltan parámetros" y JAMÁS llegara a crear el archivo.
+                        $editResult = execute_tool_code_edit($args, $projectId, $session_id, $db_connection);
                         $resultText = $editResult;
                     }
-                    
+
                 } catch (Throwable $e) {
                     $resultText = json_encode(['error' => $e->getMessage()]);
+                }
+
+                // ✅ Rastreamos si la herramienta realmente falló para no fingir éxito después
+                $decodedResult = json_decode($resultText, true);
+                if (is_array($decodedResult) && !empty($decodedResult['error'])) {
+                    $anyToolFailed = true;
+                    $lastToolError = (string)$decodedResult['error'];
                 }
 
                 $toolResults[] = [
@@ -1498,7 +1546,12 @@ if ($projectId > 0) {
     }
 
     if ($reply_text === null || trim($reply_text) === '') {
-        if ($round > 0) {
+        if ($round > 0 && $anyToolFailed) {
+            // ✅ CORREGIDO: antes se devolvía un mensaje de éxito genérico sin importar
+            // si la herramienta había fallado, por lo que el usuario creía que el
+            // archivo se había creado cuando en realidad code_edit.php nunca llegó a subirlo.
+            $reply_text = "⚠️ No se pudo completar la operación sobre el archivo. Detalle técnico: " . $lastToolError;
+        } elseif ($round > 0) {
             $reply_text = "✅ La operación se ejecutó correctamente en el proyecto. Revisa los archivos para confirmar los cambios. Si necesitas que te muestre el código o te genere un enlace de descarga, por favor pídemelo explícitamente.";
         } else {
             $reply_text = "Procesé tu solicitud, pero no pude generar una respuesta de texto. ¿Podrías reformular la pregunta?";
