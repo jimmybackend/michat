@@ -1,11 +1,11 @@
 -- phpMyAdmin SQL Dump
--- version 5.2.2
+-- version 5.2.3
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: localhost:3306
--- Tiempo de generación: 05-08-2026 a las 13:30:01
+-- Tiempo de generación: 06-08-2026 a las 09:50:12
 -- Versión del servidor: 8.0.46-37
--- Versión de PHP: 8.4.23
+-- Versión de PHP: 8.4.24
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -65,25 +65,25 @@ CREATE TABLE `ChatMessages` (
   `id_` int NOT NULL,
   `session_id_` int NOT NULL,
   `user_id_` int NOT NULL,
-  `role` enum('system','user','assistant','tool') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
-  `content_type` enum('text','image','video','audio','file') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL DEFAULT 'text',
-  `content` longtext CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
-  `s3_key` varchar(1024) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
-  `mime_type` varchar(128) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
+  `role` enum('system','user','assistant','tool') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `content_type` enum('text','image','video','audio','file') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'text',
+  `content` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `s3_key` varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `mime_type` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `size_bytes` bigint DEFAULT NULL,
-  `thumb_s3_key` varchar(1024) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
+  `thumb_s3_key` varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `duration_ms` int DEFAULT NULL,
-  `model_id` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
-  `stop_reason` varchar(32) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
+  `model_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `stop_reason` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `prompt_tokens` int DEFAULT NULL,
   `completion_tokens` int DEFAULT NULL,
   `latency_ms` int DEFAULT NULL,
-  `meta` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
+  `meta` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
   `is_primordial` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = El usuario marcó esta respuesta como verdad absoluta/primordial',
-  `phase` enum('compile','respond','lint_fix','embedding') COLLATE utf8mb3_unicode_ci NOT NULL DEFAULT 'respond' COMMENT 'Fase del pipeline en la que se generó este mensaje',
+  `phase` enum('compile','respond','lint_fix','embedding','classify','scout','plan','rag','edit','summarize','review') NOT NULL DEFAULT 'respond' COMMENT 'Fase del pipeline en la que se generó este mensaje',
   `parent_msg_id` int DEFAULT NULL COMMENT 'Para rastrear ediciones o reintentos de un mensaje anterior',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
 
@@ -154,7 +154,7 @@ CREATE TABLE `FileS3` (
   `Nombre` varchar(255) NOT NULL,
   `Encriptado` varchar(255) NOT NULL,
   `Tamano` bigint NOT NULL,
-  `Metadatos` text,
+  `Metadatos` mediumtext,
   `Ruta` varchar(256) NOT NULL,
   `Found` tinyint(1) NOT NULL DEFAULT '0',
   `AccessType` enum('normal','secure','unlocked') NOT NULL DEFAULT 'normal',
@@ -163,7 +163,7 @@ CREATE TABLE `FileS3` (
   `SecureUpdatedAt` timestamp NULL DEFAULT NULL,
   `Fecha` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `user_id_` int NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
 
@@ -219,6 +219,13 @@ CREATE TABLE `FileVersions` (
   `s3_path` varchar(1024) NOT NULL COMMENT 'Ruta al archivo completo en S3',
   `diff_summary` text COMMENT 'Resumen de cambios (ej. "Se agregó validación de token")',
   `is_stable` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = El usuario la marcó como versión estable/consolidada',
+  `status` enum('draft','committed','failed','rolled_back') NOT NULL DEFAULT 'draft',
+  `sha256_before` char(64) DEFAULT NULL,
+  `sha256_after` char(64) DEFAULT NULL,
+  `bytes_before` bigint DEFAULT NULL,
+  `bytes_after` bigint DEFAULT NULL,
+  `model_used` varchar(120) DEFAULT NULL,
+  `error_message` text,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -236,6 +243,23 @@ CREATE TABLE `LintAttempts` (
   `error_message` text COMMENT 'Salida de php -l, eslint, etc.',
   `is_success` tinyint(1) NOT NULL DEFAULT '0',
   `duration_ms` int DEFAULT '0',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `PhaseCache`
+--
+
+CREATE TABLE `PhaseCache` (
+  `id_` bigint UNSIGNED NOT NULL,
+  `cache_key` char(64) NOT NULL,
+  `project_id_` int NOT NULL,
+  `phase` varchar(32) NOT NULL,
+  `payload` json NOT NULL COMMENT 'Resultado cacheado de la fase',
+  `hit_count` int UNSIGNED NOT NULL DEFAULT '0',
+  `expires_at` timestamp NULL DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -273,6 +297,8 @@ CREATE TABLE `Projects` (
   `framework` varchar(100) DEFAULT NULL,
   `root_prefix` varchar(1024) NOT NULL,
   `status` enum('active','archived','deleted') NOT NULL DEFAULT 'active',
+  `budget_usd_monthly` decimal(10,4) NOT NULL DEFAULT '25.0000' COMMENT 'Tope de gasto en modelos por mes; 0 = sin límite',
+  `budget_usd_per_edit` decimal(10,6) NOT NULL DEFAULT '0.250000' COMMENT 'Tope por operación individual de edición',
   `meta` json DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -340,7 +366,7 @@ CREATE TABLE `S3Folders` (
   `CreatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `UpdatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `PrefixHash` binary(32) GENERATED ALWAYS AS (unhex(sha2(`Prefix`,256))) STORED
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
 
@@ -399,7 +425,7 @@ CREATE TABLE `TokenUsage` (
   `id_` bigint UNSIGNED NOT NULL,
   `session_id_` int NOT NULL,
   `message_id_` int DEFAULT NULL,
-  `phase` enum('compile','respond','lint_fix','embedding') NOT NULL,
+  `phase` enum('compile','respond','lint_fix','embedding','classify','scout','plan','rag','edit','summarize','review') NOT NULL,
   `model_id` varchar(120) NOT NULL COMMENT 'ej. amazon.titan-embed-text-v2:0 o claude-3-opus',
   `input_tokens` int NOT NULL DEFAULT '0',
   `output_tokens` int NOT NULL DEFAULT '0',
@@ -417,9 +443,12 @@ CREATE TABLE `TokenUsage` (
 CREATE TABLE `ToolCalls` (
   `id_` bigint UNSIGNED NOT NULL,
   `session_id_` int NOT NULL,
+  `project_id_` int DEFAULT NULL,
   `message_id_` int DEFAULT NULL,
-  `tool` enum('grep','view','search','str_replace','list_dir','read_chunk','run_shell') NOT NULL,
+  `tool` enum('grep','view','search','str_replace','list_dir','read_chunk','run_shell','create_file','write_file','delete_file','move_file','lint','run_tests','preview_diff','restore_version') NOT NULL,
   `params` json NOT NULL,
+  `target_path` varchar(1024) DEFAULT NULL COMMENT 'Archivo o prefijo sobre el que operó la herramienta',
+  `params_hash` char(64) GENERATED ALWAYS AS (sha2(cast(`params` as char charset utf8mb4),256)) VIRTUAL COMMENT 'Hash de params para detectar llamadas idénticas repetidas',
   `result` mediumtext,
   `status` enum('ok','error','timeout') NOT NULL DEFAULT 'ok',
   `duration_ms` int DEFAULT '0',
@@ -514,7 +543,6 @@ ALTER TABLE `EmbeddingJobs`
 --
 ALTER TABLE `FileS3`
   ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `Encriptado` (`Encriptado`),
   ADD UNIQUE KEY `uq_files3_user_key` (`user_id_`,`Encriptado`),
   ADD KEY `user_id_` (`user_id_`),
   ADD KEY `idx_FileS3_Ruta` (`Ruta`(191)),
@@ -549,7 +577,9 @@ ALTER TABLE `FileVersions`
   ADD UNIQUE KEY `uq_file_version` (`project_id_`,`original_filename`,`version`),
   ADD KEY `idx_fv_project` (`project_id_`),
   ADD KEY `idx_fv_session` (`session_id_`),
-  ADD KEY `fk_fv_message` (`message_id_`);
+  ADD KEY `fk_fv_message` (`message_id_`),
+  ADD KEY `idx_fv_project_file_id` (`project_id_`,`original_filename`,`id_`),
+  ADD KEY `idx_fv_status` (`status`);
 
 --
 -- Indices de la tabla `LintAttempts`
@@ -558,6 +588,15 @@ ALTER TABLE `LintAttempts`
   ADD PRIMARY KEY (`id_`),
   ADD KEY `idx_la_file` (`file_version_id_`),
   ADD KEY `idx_la_success` (`is_success`);
+
+--
+-- Indices de la tabla `PhaseCache`
+--
+ALTER TABLE `PhaseCache`
+  ADD PRIMARY KEY (`id_`),
+  ADD UNIQUE KEY `uq_phase_cache` (`cache_key`),
+  ADD KEY `idx_pcache_project` (`project_id_`),
+  ADD KEY `idx_pcache_expires` (`expires_at`);
 
 --
 -- Indices de la tabla `ProjectContext`
@@ -572,6 +611,7 @@ ALTER TABLE `ProjectContext`
 ALTER TABLE `Projects`
   ADD PRIMARY KEY (`id_`),
   ADD UNIQUE KEY `uq_projects_user_slug` (`user_id_`,`slug`),
+  ADD UNIQUE KEY `uq_projects_user_rootprefix` (`user_id_`,`root_prefix`(255)),
   ADD KEY `idx_projects_user` (`user_id_`);
 
 --
@@ -583,7 +623,8 @@ ALTER TABLE `ProjectSources`
   ADD KEY `idx_ps_s3key_prefix` (`s3_key`(255)),
   ADD KEY `idx_ps_project` (`project_id_`),
   ADD KEY `idx_ps_status` (`status`),
-  ADD KEY `fk_ps_files3` (`files3_id_`);
+  ADD KEY `fk_ps_files3` (`files3_id_`),
+  ADD KEY `idx_ps_project_filename` (`project_id_`,`filename`);
 
 --
 -- Indices de la tabla `PromptCompilations`
@@ -625,7 +666,8 @@ ALTER TABLE `SourceChunks`
   ADD PRIMARY KEY (`id_`),
   ADD KEY `idx_chunks_source` (`source_id_`),
   ADD KEY `idx_chunks_project_type` (`project_id_`,`chunk_type`),
-  ADD KEY `idx_chunks_name` (`name`(191));
+  ADD KEY `idx_chunks_name` (`name`(191)),
+  ADD KEY `idx_chunks_project_name` (`project_id_`,`name`(191));
 
 --
 -- Indices de la tabla `TokenUsage`
@@ -642,7 +684,9 @@ ALTER TABLE `TokenUsage`
 ALTER TABLE `ToolCalls`
   ADD PRIMARY KEY (`id_`),
   ADD KEY `idx_tc_session` (`session_id_`),
-  ADD KEY `idx_tc_tool` (`tool`);
+  ADD KEY `idx_tc_tool` (`tool`),
+  ADD KEY `idx_tc_project` (`project_id_`),
+  ADD KEY `idx_tc_loop_detect` (`session_id_`,`tool`,`params_hash`,`created_at`);
 
 --
 -- Indices de la tabla `Users`
@@ -718,6 +762,12 @@ ALTER TABLE `FileVersions`
 -- AUTO_INCREMENT de la tabla `LintAttempts`
 --
 ALTER TABLE `LintAttempts`
+  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT de la tabla `PhaseCache`
+--
+ALTER TABLE `PhaseCache`
   MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
@@ -832,6 +882,12 @@ ALTER TABLE `LintAttempts`
   ADD CONSTRAINT `fk_la_file_version` FOREIGN KEY (`file_version_id_`) REFERENCES `FileVersions` (`id_`) ON DELETE CASCADE;
 
 --
+-- Filtros para la tabla `PhaseCache`
+--
+ALTER TABLE `PhaseCache`
+  ADD CONSTRAINT `fk_pcache_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE CASCADE;
+
+--
 -- Filtros para la tabla `ProjectContext`
 --
 ALTER TABLE `ProjectContext`
@@ -883,6 +939,7 @@ ALTER TABLE `TokenUsage`
 -- Filtros para la tabla `ToolCalls`
 --
 ALTER TABLE `ToolCalls`
+  ADD CONSTRAINT `fk_tc_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE CASCADE,
   ADD CONSTRAINT `fk_tc_session` FOREIGN KEY (`session_id_`) REFERENCES `ChatSessions` (`id_`) ON DELETE CASCADE;
 COMMIT;
 
