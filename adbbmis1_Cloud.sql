@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: localhost:3306
--- Tiempo de generación: 06-08-2026 a las 09:50:12
+-- Tiempo de generación: 06-08-2026 a las 14:10:36
 -- Versión del servidor: 8.0.46-37
 -- Versión de PHP: 8.4.24
 
@@ -299,6 +299,7 @@ CREATE TABLE `Projects` (
   `status` enum('active','archived','deleted') NOT NULL DEFAULT 'active',
   `budget_usd_monthly` decimal(10,4) NOT NULL DEFAULT '25.0000' COMMENT 'Tope de gasto en modelos por mes; 0 = sin límite',
   `budget_usd_per_edit` decimal(10,6) NOT NULL DEFAULT '0.250000' COMMENT 'Tope por operación individual de edición',
+  `index_gen` int UNSIGNED NOT NULL DEFAULT '0' COMMENT 'Generación del índice. +1 en cada escritura a SourceChunks. Invalida el caché RAG. Fuera de meta a propósito: projects.php sobrescribe meta con JSON del cliente.',
   `meta` json DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -323,6 +324,25 @@ CREATE TABLE `ProjectSources` (
   `sha256` char(64) DEFAULT NULL,
   `status` enum('pending','indexed','stale','error') NOT NULL DEFAULT 'pending',
   `indexed_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `ProjectTestCommands`
+--
+
+CREATE TABLE `ProjectTestCommands` (
+  `id_` int NOT NULL,
+  `project_id_` int NOT NULL,
+  `label` varchar(64) NOT NULL COMMENT 'Unico identificador que el cliente puede enviar',
+  `bin` varchar(512) NOT NULL COMMENT 'Ruta ABSOLUTA al binario. Nunca del PATH.',
+  `args` json NOT NULL COMMENT 'Array de argumentos fijos. proc_open en forma de array, sin shell.',
+  `cwd` varchar(1024) DEFAULT NULL COMMENT 'Directorio de trabajo. NULL = el del proyecto.',
+  `timeout_sec` smallint UNSIGNED NOT NULL DEFAULT '120',
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `created_by_user_id_` int DEFAULT NULL COMMENT 'Humano que autorizo este comando. SET NULL al borrar el usuario: se pierde el autor, no la fila.',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -627,6 +647,15 @@ ALTER TABLE `ProjectSources`
   ADD KEY `idx_ps_project_filename` (`project_id_`,`filename`);
 
 --
+-- Indices de la tabla `ProjectTestCommands`
+--
+ALTER TABLE `ProjectTestCommands`
+  ADD PRIMARY KEY (`id_`),
+  ADD UNIQUE KEY `uq_ptc_project_label` (`project_id_`,`label`),
+  ADD KEY `idx_ptc_project_enabled` (`project_id_`,`enabled`),
+  ADD KEY `fk_ptc_user` (`created_by_user_id_`);
+
+--
 -- Indices de la tabla `PromptCompilations`
 --
 ALTER TABLE `PromptCompilations`
@@ -789,6 +818,12 @@ ALTER TABLE `ProjectSources`
   MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT de la tabla `ProjectTestCommands`
+--
+ALTER TABLE `ProjectTestCommands`
+  MODIFY `id_` int NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT de la tabla `PromptCompilations`
 --
 ALTER TABLE `PromptCompilations`
@@ -905,6 +940,13 @@ ALTER TABLE `Projects`
 ALTER TABLE `ProjectSources`
   ADD CONSTRAINT `fk_ps_files3` FOREIGN KEY (`files3_id_`) REFERENCES `FileS3` (`id_`) ON DELETE SET NULL,
   ADD CONSTRAINT `fk_ps_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE CASCADE;
+
+--
+-- Filtros para la tabla `ProjectTestCommands`
+--
+ALTER TABLE `ProjectTestCommands`
+  ADD CONSTRAINT `fk_ptc_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_ptc_user` FOREIGN KEY (`created_by_user_id_`) REFERENCES `Users` (`id`) ON DELETE SET NULL;
 
 --
 -- Filtros para la tabla `PromptCompilations`
