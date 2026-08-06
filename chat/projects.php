@@ -140,17 +140,16 @@ if ($action === 'create') {
     $description = isset($_POST['description']) ? trim($_POST['description']) : '';
     $language = isset($_POST['language']) ? trim($_POST['language']) : '';
     $framework = isset($_POST['framework']) ? trim($_POST['framework']) : '';
-    $root_prefix = isset($_POST['root_prefix']) ? trim($_POST['root_prefix']) : '';
-    
-    if ($name === '' || $slug === '' || $root_prefix === '') {
-        jexit(['ok'=>false,'error'=>'Faltan campos obligatorios: name, slug, root_prefix'], 400);
+
+    if ($name === '' || $slug === '') {
+        jexit(['ok'=>false,'error'=>'Faltan campos obligatorios: name, slug'], 400);
     }
-    
+
     // Validar slug (solo letras, números, guiones)
     if (!preg_match('/^[a-z0-9-]+$/i', $slug)) {
         jexit(['ok'=>false,'error'=>'El slug solo puede contener letras, números y guiones'], 400);
     }
-    
+
     // Verificar que el slug no exista ya para este usuario
     $sqlCheck = "SELECT id_ FROM Projects WHERE user_id_ = ? AND slug = ?";
     $stmtCheck = $db_connection->prepare($sqlCheck);
@@ -163,12 +162,16 @@ if ($action === 'create') {
         jexit(['ok'=>false,'error'=>'Ya existe un proyecto con ese slug'], 400);
     }
     $stmtCheck->close();
-    
-    // Normalizar root_prefix (asegurar que termine en /)
-    if (substr($root_prefix, -1) !== '/') {
-        $root_prefix .= '/';
-    }
-    
+
+    // ✅ SEGURIDAD / AISLAMIENTO MULTI-USUARIO: el root_prefix (la ruta base en S3
+    // donde se guardan TODOS los archivos del proyecto) se calcula SIEMPRE en el
+    // servidor a partir del user_id autenticado. Nunca se usa el valor que mande
+    // el cliente: si dos usuarios crean un proyecto con el mismo slug el mismo día,
+    // un root_prefix basado solo en fecha+slug produciría la MISMA ruta de S3 para
+    // ambos, y sus archivos se sobrescribirían entre sí. Prefijar con el user_id
+    // hace que las rutas de cada usuario nunca puedan colisionar.
+    $root_prefix = 'Data/Chat/Uploads/' . $user_id . '/' . date('Y/m/d') . '/' . $slug . '/';
+
     $meta_json = isset($_POST['meta']) ? trim($_POST['meta']) : null;
     
     $id_ = next_id($db_connection, 'Projects', 'id_');
@@ -217,25 +220,25 @@ if ($action === 'update') {
     $description = isset($_POST['description']) ? trim($_POST['description']) : '';
     $language = isset($_POST['language']) ? trim($_POST['language']) : '';
     $framework = isset($_POST['framework']) ? trim($_POST['framework']) : '';
-    $root_prefix = isset($_POST['root_prefix']) ? trim($_POST['root_prefix']) : '';
-    
-    if ($name === '' || $slug === '' || $root_prefix === '') {
+
+    if ($name === '' || $slug === '') {
         jexit(['ok'=>false,'error'=>'Faltan campos obligatorios'], 400);
     }
-    
-    if (substr($root_prefix, -1) !== '/') {
-        $root_prefix .= '/';
-    }
-    
+
+    // ✅ El root_prefix es inmutable después de creado: los archivos ya subidos
+    // (ProjectSources.s3_key) fueron calculados con el prefijo original, y ese
+    // prefijo ya incluye el user_id (aislamiento entre usuarios). Cambiarlo aquí
+    // dejaría huérfanos los archivos existentes y, si se aceptara un valor del
+    // cliente, reabriría el riesgo de colisión de rutas entre usuarios.
     $meta_json = isset($_POST['meta']) ? trim($_POST['meta']) : null;
-    
-    $sql = "UPDATE Projects SET name = ?, slug = ?, description = ?, language = ?, framework = ?, root_prefix = ?, meta = ?
+
+    $sql = "UPDATE Projects SET name = ?, slug = ?, description = ?, language = ?, framework = ?, meta = ?
             WHERE id_ = ? AND user_id_ = ?";
     $stmt = $db_connection->prepare($sql);
     if (!$stmt) jexit(['ok'=>false,'error'=>'Error preparando UPDATE: '.$db_connection->error], 500);
-    
+
     // Nota: 's' antes de los últimos dos 'i' es para el campo meta
-    $stmt->bind_param('sssssssii', $name, $slug, $description, $language, $framework, $root_prefix, $meta_json, $project_id, $user_id);
+    $stmt->bind_param('ssssssii', $name, $slug, $description, $language, $framework, $meta_json, $project_id, $user_id);
     if (!$stmt->execute()) {
         $e = $stmt->error; $stmt->close();
         jexit(['ok'=>false,'error'=>'Error actualizando: '.$e], 500);

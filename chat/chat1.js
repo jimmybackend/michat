@@ -1732,8 +1732,12 @@ if (slugInput && prefixInput) {
       const year = now.getFullYear();
       const month = String(now.getMonth() + 1).padStart(2, '0');
       const day = String(now.getDate()).padStart(2, '0');
-      // Formato: Data/Chat/Uploads/YYYY/MM/DD/slug/
-      prefixInput.value = `Data/Chat/Uploads/${year}/${month}/${day}/${slug}/`;
+      const uid = getUserId() || '0';
+      // Solo vista previa: el servidor (projects.php) recalcula y fuerza este
+      // mismo prefijo con el user_id real de la sesión, ignorando lo que se
+      // envíe aquí, para que las rutas de S3 nunca choquen entre usuarios.
+      // Formato: Data/Chat/Uploads/{user_id}/YYYY/MM/DD/slug/
+      prefixInput.value = `Data/Chat/Uploads/${uid}/${year}/${month}/${day}/${slug}/`;
     } else {
       prefixInput.value = '';
     }

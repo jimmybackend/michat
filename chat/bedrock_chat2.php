@@ -418,10 +418,14 @@ function execute_tool_str_replace($args, $projectId, $db) {
 
 function execute_tool_code_edit($args, $projectId, $sessionId, $db) {
     $targetFilename = $args['target_filename'] ?? '';
+    $action = in_array(($args['action'] ?? 'write'), ['write', 'read', 'delete'], true) ? $args['action'] : 'write';
     $instruction = $args['instruction'] ?? '';
-    
-    if ($targetFilename === '' || $instruction === '') {
-        return json_encode(['error' => 'Faltan target_filename o instruction'], JSON_UNESCAPED_UNICODE);
+
+    if ($targetFilename === '') {
+        return json_encode(['error' => 'Falta target_filename'], JSON_UNESCAPED_UNICODE);
+    }
+    if ($action === 'write' && $instruction === '') {
+        return json_encode(['error' => "Falta instruction (obligatoria cuando action='write')"], JSON_UNESCAPED_UNICODE);
     }
 
     // Construir URL absoluta a code_edit.php
@@ -434,9 +438,10 @@ function execute_tool_code_edit($args, $projectId, $sessionId, $db) {
         'session_id' => $sessionId,
         'project_id' => $projectId,
         'target_filename' => $targetFilename,
+        'action' => $action,
         'instruction' => $instruction
     ]);
-    
+
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_POST => true,
@@ -455,17 +460,33 @@ function execute_tool_code_edit($args, $projectId, $sessionId, $db) {
 
     if ($httpCode === 200) {
         $data = json_decode($response, true);
-        if ($data && isset($data['ok']) && $data['ok']) {
+        if (!$data || !isset($data['ok']) || !$data['ok']) {
+            return json_encode(['error' => $data['error'] ?? 'Error desconocido en code_edit.php'], JSON_UNESCAPED_UNICODE);
+        }
+
+        if ($action === 'read') {
             return json_encode([
                 'success' => true,
-                'message' => "✅ Archivo '{$targetFilename}' " . ($data['new_version'] === '1' ? 'creado' : 'editado') . " exitosamente.",
-                'version' => $data['new_version'],
-                'model_used' => $data['model_used'] ?? 'unknown',
-                'summary' => $data['diff_summary'] ?? null,
-                'indexed' => $data['indexed'] ?? false
+                'filename' => $data['filename'] ?? $targetFilename,
+                'size_bytes' => $data['size_bytes'] ?? null,
+                'content' => $data['content'] ?? ''
             ], JSON_UNESCAPED_UNICODE);
         }
-        return json_encode(['error' => $data['error'] ?? 'Error desconocido en code_edit.php'], JSON_UNESCAPED_UNICODE);
+        if ($action === 'delete') {
+            return json_encode([
+                'success' => true,
+                'message' => $data['message'] ?? "✅ Archivo '{$targetFilename}' eliminado."
+            ], JSON_UNESCAPED_UNICODE);
+        }
+
+        return json_encode([
+            'success' => true,
+            'message' => "✅ Archivo '{$targetFilename}' " . ($data['new_version'] === '1' ? 'creado' : 'editado') . " exitosamente.",
+            'version' => $data['new_version'],
+            'model_used' => $data['model_used'] ?? 'unknown',
+            'summary' => $data['diff_summary'] ?? null,
+            'indexed' => $data['indexed'] ?? false
+        ], JSON_UNESCAPED_UNICODE);
     }
 
     return json_encode(['error' => 'code_edit.php respondió con HTTP ' . $httpCode . ($curlErr ? " (curl: {$curlErr})" : '') . ': ' . ($response ?: 'sin respuesta')], JSON_UNESCAPED_UNICODE);
@@ -1353,9 +1374,11 @@ if ($compilation_id > 0 && isset($_POST['compiled_prompt']) && trim($_POST['comp
 $systemPrompt .= "
 
 [REGLA CRÍTICA DE HERRAMIENTAS - OBLIGATORIA]
-Cuando el usuario solicite CREAR, MODIFICAR, EDITAR o GUARDAR un archivo de código en el proyecto, DEBES usar OBLIGATORIAMENTE la herramienta 'code_edit'.
-NUNCA respondas con el código directamente en el chat si la instrucción implica crear o modificar un archivo.
-Parámetros requeridos: project_id, session_id, target_filename, instruction.
+Cuando el usuario solicite CREAR, MODIFICAR, EDITAR o GUARDAR un archivo de código en el proyecto, DEBES usar OBLIGATORIAMENTE la herramienta 'code_edit' con action='write' (o sin 'action', es el valor por defecto).
+Cuando el usuario pida VER, LEER o mostrar el contenido REAL/actual de un archivo del proyecto (no lo que tú recuerdes), usa 'code_edit' con action='read'.
+Cuando el usuario pida ELIMINAR, BORRAR o quitar un archivo del proyecto, usa 'code_edit' con action='delete'.
+NUNCA respondas con el código directamente en el chat si la instrucción implica crear, modificar, leer o eliminar un archivo real del proyecto: siempre usa la herramienta.
+Parámetros requeridos: project_id, session_id, target_filename (y 'instruction' solo cuando action='write').
 ";
 
     // ✅ REGLAS PRIMORDIALES (Cross-Session, solo sesiones activas)
@@ -1420,10 +1443,10 @@ Parámetros requeridos: project_id, session_id, target_filename, instruction.
                 'new_text' => ['type' => 'string', 'description' => 'Nuevo texto']
             ], 'required' => ['source_id', 'old_text', 'new_text']]]
         ]],
-        // 🚀 NUEVO: Herramienta para crear o editar archivos de forma quirúrgica
+        // 🚀 Herramienta CRUD completa de archivos del proyecto (crear/editar/leer/eliminar)
         ['toolSpec' => [
             'name' => 'code_edit',
-            'description' => 'Crea o edita un archivo de código en el proyecto. Úsala SIEMPRE que el usuario pida crear, modificar o guardar un archivo.',
+            'description' => "Administra archivos del proyecto en S3 + base de datos. Úsala SIEMPRE que el usuario pida crear, modificar, guardar, leer/ver el contenido real de, o eliminar un archivo.\n- action='write' (default): crea el archivo si no existe, o lo edita si ya existe. Requiere 'instruction'.\n- action='read': devuelve el contenido REAL actual del archivo tal como está en S3.\n- action='delete': elimina el archivo de S3 y de la base de datos de forma permanente.",
             'inputSchema' => [
                 'json' => [
                     'type' => 'object',
@@ -1431,9 +1454,10 @@ Parámetros requeridos: project_id, session_id, target_filename, instruction.
                         'project_id' => ['type' => 'integer', 'description' => 'ID del proyecto'],
                         'session_id' => ['type' => 'integer', 'description' => 'ID de la sesión'],
                         'target_filename' => ['type' => 'string', 'description' => 'Nombre del archivo (ej: claseejemplo1.php)'],
-                        'instruction' => ['type' => 'string', 'description' => 'Qué hacer en el archivo']
+                        'action' => ['type' => 'string', 'enum' => ['write', 'read', 'delete'], 'description' => "'write' para crear/editar (default), 'read' para leer el contenido real, 'delete' para eliminarlo"],
+                        'instruction' => ['type' => 'string', 'description' => "Qué hacer en el archivo. OBLIGATORIO solo cuando action='write'"]
                     ],
-                    'required' => ['project_id', 'session_id', 'target_filename', 'instruction']
+                    'required' => ['project_id', 'session_id', 'target_filename']
                 ]
             ]
         ]]

@@ -42,13 +42,23 @@ function next_id(mysqli $db, string $table, string $col): int {
 }
 
 // ===== 1. Validar parámetros =====
+// action: 'write' (crear/editar, comportamiento histórico de este archivo),
+// 'read' (leer el contenido actual) o 'delete' (eliminar el archivo de S3 + BD).
+$action = isset($_POST['action']) ? trim(strtolower($_POST['action'])) : 'write';
+if (!in_array($action, ['write', 'read', 'delete'], true)) {
+    jexit(['ok' => false, 'error' => "action inválida: {$action}. Usa 'write', 'read' o 'delete'."], 400);
+}
+
 $sessionId = isset($_POST['session_id']) ? (int) $_POST['session_id'] : 0;
 $projectId = isset($_POST['project_id']) ? (int) $_POST['project_id'] : 0;
 $targetFilename = isset($_POST['target_filename']) ? trim($_POST['target_filename']) : '';
 $instruction = isset($_POST['instruction']) ? trim($_POST['instruction']) : '';
 
-if ($sessionId <= 0 || $projectId <= 0 || $targetFilename === '' || $instruction === '') {
-    jexit(['ok' => false, 'error' => 'Faltan parámetros: session_id, project_id, target_filename, instruction'], 400);
+if ($sessionId <= 0 || $projectId <= 0 || $targetFilename === '') {
+    jexit(['ok' => false, 'error' => 'Faltan parámetros: session_id, project_id, target_filename'], 400);
+}
+if ($action === 'write' && $instruction === '') {
+    jexit(['ok' => false, 'error' => 'Falta parámetro: instruction'], 400);
 }
 
 // ===== 2. Cargar dependencias =====
@@ -163,6 +173,72 @@ if (!$isCreation) {
             jexit(['ok' => false, 'error' => 'No se pudo leer el archivo desde S3: ' . $e->getMessage()], 500);
         }
     }
+}
+
+// ===== 4.5. ACCIONES DE SOLO LECTURA / ELIMINACIÓN (no pasan por la escalera de modelos) =====
+// La propiedad del proyecto (y por lo tanto del s3_key, que ya está namespaced con el
+// user_id vía root_prefix) ya se validó en el paso 2.5, así que estas acciones son
+// seguras: un usuario nunca puede leer/eliminar archivos de otro usuario.
+if ($action === 'read') {
+    if ($isCreation) {
+        jexit(['ok' => false, 'error' => "El archivo '{$targetFilename}' no existe en el proyecto."], 404);
+    }
+    jexit([
+        'ok'       => true,
+        'action'   => 'read',
+        'filename' => $targetFilename,
+        's3_key'   => $source['s3_key'],
+        'mime_type'=> $source['mime_type'] ?: 'text/plain',
+        'size_bytes' => strlen($currentContent),
+        'content'  => $currentContent
+    ]);
+}
+
+if ($action === 'delete') {
+    if ($isCreation) {
+        jexit(['ok' => false, 'error' => "El archivo '{$targetFilename}' no existe en el proyecto."], 404);
+    }
+
+    $db_connection->begin_transaction();
+    try {
+        // 1. Borrar el objeto real en S3
+        $s3->deleteObject(['Bucket' => $bucket, 'Key' => $source['s3_key']]);
+
+        // 2. Limpiar el registro legacy FileS3 (code_edit.php lo sincroniza por
+        // Ruta+Nombre en el paso 14c; ProjectSources.files3_id_ nunca se llena
+        // en esta ruta, así que hay que buscarlo por user_id_+Ruta+Nombre)
+        $legacyFilename = basename($source['s3_key']);
+        $legacyFolder = dirname($source['s3_key']);
+        if ($legacyFolder === '.') $legacyFolder = '';
+        $stmtDelLegacy = $db_connection->prepare("DELETE FROM FileS3 WHERE user_id_ = ? AND Ruta = ? AND Nombre = ?");
+        $stmtDelLegacy->bind_param('iss', $userId, $legacyFolder, $legacyFilename);
+        $stmtDelLegacy->execute();
+        $stmtDelLegacy->close();
+
+        // 3. Borrar la fuente (cascada elimina SourceChunks + ChunkEmbeddings, ver FKs)
+        $stmtDelSrc = $db_connection->prepare("DELETE FROM ProjectSources WHERE id_ = ? AND project_id_ = ?");
+        $stmtDelSrc->bind_param('ii', $source['id_'], $projectId);
+        $stmtDelSrc->execute();
+        $stmtDelSrc->close();
+
+        // 4. Borrar el historial de versiones de ESTE archivo (no tiene FK a ProjectSources)
+        $stmtDelVer = $db_connection->prepare("DELETE FROM FileVersions WHERE project_id_ = ? AND original_filename = ?");
+        $stmtDelVer->bind_param('is', $projectId, $targetFilename);
+        $stmtDelVer->execute();
+        $stmtDelVer->close();
+
+        $db_connection->commit();
+    } catch (Throwable $e) {
+        $db_connection->rollback();
+        jexit(['ok' => false, 'error' => 'No se pudo eliminar el archivo: ' . $e->getMessage()], 500);
+    }
+
+    jexit([
+        'ok'       => true,
+        'action'   => 'delete',
+        'filename' => $targetFilename,
+        'message'  => "🗑️ Archivo '{$targetFilename}' eliminado de S3 y de la base de datos."
+    ]);
 }
 
 // ===== 5. FUNCIÓN DE LINTING AVANZADO + MULTI-LENGUAJE + SEGURIDAD =====
