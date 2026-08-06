@@ -1,0 +1,41 @@
+# =====================================================================
+# Volcados de base de datos CON DATOS — nunca se commitean.
+# El único volcado versionado es el de estructura en la raíz, y va sin
+# una sola fila (ver README.md y .githooks/pre-commit).
+# =====================================================================
+*.dump.sql
+*-data.sql
+*_data.sql
+backup*.sql
+dump*.sql
+*.sql.gz
+*.sql.zip
+
+# Credenciales y configuración local.
+# Config-s3.php y db-s3.php viven fuera del webroot, pero si alguien los
+# copia aquí para depurar, que no acaben en un commit.
+.env
+.env.*
+!.env.example
+Config-s3.php
+db-s3.php
+chat/Config-s3.php
+chat/db-s3.php
+
+# Dependencias (viven en el servidor, fuera del repo)
+vendor/
+node_modules/
+
+# Logs y temporales
+*.log
+error_log
+chat/error_log
+chat/token_usage_debug.log
+chat/upload/storage/state/*.json
+
+# Sistema operativo / editores
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

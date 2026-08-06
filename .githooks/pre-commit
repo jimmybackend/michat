@@ -1,0 +1,38 @@
+#!/bin/sh
+# =====================================================================
+# Impide que un volcado con datos entre al repositorio.
+#
+# Activar una vez por clon:
+#   git config core.hooksPath .githooks
+# =====================================================================
+set -e
+
+# 1. El volcado de estructura es estructura y nada más.
+for f in schema.sql adbbmis1_Cloud.sql; do
+    if git diff --cached --name-only | grep -qx "$f"; then
+        inserts=$(git show ":$f" | grep -c "^INSERT INTO" || true)
+        if [ "$inserts" -ne 0 ]; then
+            echo "ABORTADO: $f contiene $inserts sentencias INSERT INTO." >&2
+            echo "Ese archivo es estructura únicamente. Regeneralo con:" >&2
+            echo "  mysqldump --no-data --skip-comments --skip-add-drop-table \\" >&2
+            echo "            --single-transaction -u USUARIO -p BASEDEDATOS > schema.sql" >&2
+            exit 1
+        fi
+    fi
+done
+
+# 2. Los volcados con datos no entran ni forzando el add.
+if git diff --cached --name-only | grep -qE '(\.dump\.sql|-data\.sql|_data\.sql|^backup.*\.sql|^dump.*\.sql)$'; then
+    echo "ABORTADO: estas intentando commitear un volcado con datos." >&2
+    exit 1
+fi
+
+# 3. Los tests son baratos: si están rojos, no se commitea.
+if [ -f tests/run.php ] && command -v php >/dev/null 2>&1; then
+    if ! php tests/run.php >/dev/null 2>&1; then
+        echo "ABORTADO: tests/run.php está en rojo. Ejecuta 'php tests/run.php'." >&2
+        exit 1
+    fi
+fi
+
+exit 0
