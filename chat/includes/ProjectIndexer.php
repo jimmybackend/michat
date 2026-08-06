@@ -8,6 +8,13 @@
  * posterior del frontend a index_project_sources.php).
  */
 
+// Este archivo llama a next_id() pero no la declaraba: dependía de que el
+// archivo que lo incluyera la hubiera declarado antes (hoy solo code_edit.php
+// lo hace). Cualquier otro endpoint que incluyera este archivo daba fatal
+// error. FileToolkit.php la declara con guard function_exists(), así que este
+// require hace el archivo autosuficiente sin romper a los llamadores actuales.
+require_once __DIR__ . '/FileToolkit.php';
+
 if (!function_exists('chunkFileContent')) {
     function chunkFileContent(string $content, string $filename, int $maxLen = 2000): array {
         $chunks = [];
