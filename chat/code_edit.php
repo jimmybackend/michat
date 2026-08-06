@@ -32,6 +32,7 @@ function jexit($arr, $code = 200) {
 }
 
 // ===== FUNCIÓN AUXILIAR PARA OBTENER EL SIGUIENTE ID (Faltaba en este archivo) =====
+// @deprecated La Fase 2 la elimina: todas las tablas ya tienen AUTO_INCREMENT.
 function next_id(mysqli $db, string $table, string $col): int {
     $table = preg_replace('/[^A-Za-z0-9_]+/', '', $table);
     $col   = preg_replace('/[^A-Za-z0-9_]+/', '', $col);
@@ -53,6 +54,8 @@ $sessionId = isset($_POST['session_id']) ? (int) $_POST['session_id'] : 0;
 $projectId = isset($_POST['project_id']) ? (int) $_POST['project_id'] : 0;
 $targetFilename = isset($_POST['target_filename']) ? trim($_POST['target_filename']) : '';
 $instruction = isset($_POST['instruction']) ? trim($_POST['instruction']) : '';
+// Opcional: mensaje de ChatMessages que originó este cambio (FileVersions.message_id_).
+$messageId = isset($_POST['message_id']) && (int) $_POST['message_id'] > 0 ? (int) $_POST['message_id'] : null;
 
 if ($sessionId <= 0 || $projectId <= 0 || $targetFilename === '') {
     jexit(['ok' => false, 'error' => 'Faltan parámetros: session_id, project_id, target_filename'], 400);
@@ -82,9 +85,23 @@ try {
     }
     require_once $s3ManagerPath;
 
+    require_once __DIR__ . '/includes/FileToolkit.php';
+    require_once __DIR__ . '/includes/EditEngine.php';
     require_once __DIR__ . '/includes/ProjectIndexer.php';
 } catch (Throwable $e) {
     jexit(['ok' => false, 'error' => 'Error cargando dependencias: ' . $e->getMessage()], 500);
+}
+
+// ===== 2.1. Sanitizar la ruta ANTES de tocar la BD o S3 =====
+// $targetFilename llega del usuario (y del modelo vía bedrock_chat2.php) y se
+// concatenaba directo contra root_prefix para formar la key de S3, así que un
+// "../../" permitía escribir fuera del prefijo del proyecto — y como el prefijo
+// es lo que aísla a un usuario de otro, eso era una fuga entre cuentas.
+try {
+    $targetFilename = sanitizeRelativePath($targetFilename);
+    assertAllowedFileType($targetFilename);
+} catch (InvalidArgumentException $e) {
+    jexit(['ok' => false, 'error' => $e->getMessage(), 'code' => 'ruta_invalida'], 400);
 }
 
 if (!isset($db_connection) || !($db_connection instanceof mysqli)) {
@@ -134,16 +151,37 @@ if (!$source) {
     if (!$projRes) {
         jexit(['ok' => false, 'error' => 'Proyecto no encontrado.'], 404);
     }
-    
+
+    // buildProjectS3Key garantiza que la key queda contenida en root_prefix.
+    try {
+        $newKey = buildProjectS3Key($projRes['root_prefix'], $targetFilename);
+    } catch (InvalidArgumentException $e) {
+        jexit(['ok' => false, 'error' => $e->getMessage(), 'code' => 'ruta_invalida'], 400);
+    }
+
     // Simulamos la estructura de $source para que el resto del script no rompa
     $source = [
         'id_' => 0,
-        's3_key' => rtrim($projRes['root_prefix'], '/') . '/' . $targetFilename,
+        's3_key' => $newKey,
         'filename' => $targetFilename,
         'root_prefix' => $projRes['root_prefix'],
         'mime_type' => 'text/plain' // Se ajustará luego
     ];
     $currentContent = ''; // No hay contenido previo
+}
+
+// ===== 3.1. Contención de la key (defensa en profundidad) =====
+// Para archivos ya existentes la key viene de la BD, no del usuario, pero pudo
+// haberse insertado antes de que existiera la validación de rutas. Si una fila
+// apunta fuera del prefijo del proyecto se rechaza en vez de operar sobre ella.
+$expectedPrefix = rtrim((string) $source['root_prefix'], '/') . '/';
+if (strncmp((string) $source['s3_key'], $expectedPrefix, strlen($expectedPrefix)) !== 0) {
+    error_log("SEGURIDAD: ProjectSources#{$source['id_']} apunta fuera del prefijo del proyecto {$projectId}: {$source['s3_key']}");
+    jexit([
+        'ok' => false,
+        'error' => 'La ruta registrada del archivo está fuera del proyecto. Revisa la fuente en la base de datos.',
+        'code' => 'key_fuera_de_prefijo'
+    ], 409);
 }
 
 // ===== 3.5. Inicializar Cliente S3 (Necesario tanto para leer como para escribir) =====
@@ -328,13 +366,11 @@ function lintCode(string $code, string $filename): array {
     return ['success' => true, 'error' => '', 'type' => 'ok'];
 }
 
-// ===== 6. FUNCIÓN DE LIMPIEZA DE MARKDOWN =====
-function cleanMarkdown(string $text): string {
-    if (preg_match('/^```(?:php|js|javascript|html|css|python)?\s*(.*?)\s*```$/s', $text, $matches)) {
-        return trim($matches[1]);
-    }
-    return trim(preg_replace('/^`+|`+$/m', '', $text));
-}
+// ===== 6. LIMPIEZA DE MARKDOWN =====
+// cleanMarkdown() vive ahora en includes/FileToolkit.php. La versión que estaba
+// aquí usaba preg_replace('/^`+|`+$/m', ...): el flag /m aplicaba la limpieza al
+// inicio y fin de CADA LÍNEA, destruyendo los template literals de JavaScript y
+// los identificadores entrecomillados de MySQL que hubiera en el código.
 
 // ===== 6.5. FUNCIÓN DE CONTEXTO MULTI-ARCHIVO (RAG DE CÓDIGO) ===== 
 function fetchRelatedContext(mysqli $db, int $projectId, string $instruction, $bedrock, int $sessionId, int $newVersionId): string {
@@ -481,148 +517,6 @@ Archivo actual: $currentFile";
         return [];
     }
 }
-// ========================================================================
-// ✅ NUEVAS FUNCIONES PARA EL PATRÓN SCOUT → EXTRACT → EDIT → REASSEMBLE
-// ========================================================================
-
-function scoutCodeBlock(string $fullContent, string $instruction, $bedrock, mysqli $db, int $sessionId, int $newVersionId): array {
-    $totalLines = substr_count($fullContent, "\n") + 1;
-    $prompt = "Eres un Explorador de Código (Code Scout). Tu ÚNICA tarea es identificar el bloque exacto de código que debe ser modificado según la instrucción del usuario.
-Analiza el archivo y devuelve ÚNICAMENTE un objeto JSON válido con este formato:
-{
-  \"target_name\": \"Nombre de la función/clase (ej: function login)\",
-  \"start_line\": número_de_línea_de_inicio,
-  \"end_line\": número_de_línea_de_fin
-}
-Reglas:
-1. start_line y end_line deben ser números enteros basados en el archivo (la línea 1 es la primera).
-2. Si la modificación afecta a todo el archivo, usa start_line: 1 y end_line: $totalLines.
-3. NO incluyas markdown, ni explicaciones, solo el JSON puro.";
-
-    try {
-        $res = $bedrock->converse([
-            'modelId' => 'amazon.nova-micro-v1:0',
-            'messages' => [['role' => 'user', 'content' => [['text' => "ARCHIVO (Total líneas: $totalLines):\n" . $fullContent . "\n\nINSTRUCCIÓN: " . $instruction]]]],
-            'inferenceConfig' => ['maxTokens' => 150, 'temperature' => 0.1]
-        ]);
-        
-        // Registro de costos del Scout (trazabilidad total)
-        $inputTokens = (int)($res['usage']['inputTokens'] ?? 0);
-        $outputTokens = (int)($res['usage']['outputTokens'] ?? 0);
-        try {
-            $tcId = next_id($db, 'TokenUsage', 'id_');
-            $tcPhase = 'lint_fix';
-            $tcModel = 'amazon.nova-micro-v1:0';
-            $tcCost = ($inputTokens / 1000 * 0.000035) + ($outputTokens / 1000 * 0.00014);
-            $sqlTC = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)";
-            $stmtTC = $db->prepare($sqlTC);
-            if ($stmtTC) {
-                $durationMs = 0; // ✅ CORRECCIÓN: Variable en lugar de 0
-                $stmtTC->bind_param("iissiddi", $tcId, $sessionId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $durationMs);
-                $stmtTC->execute();
-                $stmtTC->close();
-            }
-        } catch (Throwable $e) {
-            @file_put_contents(__DIR__ . '/token_usage_debug.log', "[" . date('Y-m-d H:i:s') . "] Scout TokenUsage: " . $e->getMessage() . "\n", FILE_APPEND | LOCK_EX);
-        }
-
-        $text = '';
-        foreach (($res['output']['message']['content'] ?? []) as $block) {
-            if (isset($block['text'])) $text .= $block['text'];
-        }
-        
-        $text = preg_replace('/^```json\s*/i', '', trim($text));
-        $text = preg_replace('/\s*```$/i', '', trim($text));
-        
-        $data = json_decode($text, true);
-        if (isset($data['start_line']) && isset($data['end_line'])) {
-            return [
-                'success' => true,
-                'start_line' => max(1, (int)$data['start_line']),
-                'end_line' => min($totalLines, (int)$data['end_line']),
-                'target_name' => $data['target_name'] ?? 'unknown'
-            ];
-        }
-    } catch (Throwable $e) {
-        // Fallback silencioso
-    }
-    
-    // Fallback: Si el Scout falla, devolvemos todo el archivo (comportamiento antiguo seguro)
-    return [
-        'success' => false,
-        'start_line' => 1,
-        'end_line' => substr_count($fullContent, "\n") + 1,
-        'target_name' => 'full_file_fallback'
-    ];
-}
-
-function extractContext(string $content, int $start, int $end, int $buffer = 15): array {
-    $lines = explode("\n", $content);
-    $totalLines = count($lines);
-    
-    $extractStart = max(1, $start - $buffer);
-    $extractEnd = min($totalLines, $end + $buffer);
-    
-    $snippetLines = array_slice($lines, $extractStart - 1, ($extractEnd - $extractStart) + 1);
-    
-    return [
-        'snippet' => implode("\n", $snippetLines),
-        'absolute_start' => $extractStart,
-        'absolute_end' => $extractEnd
-    ];
-}
-
-function reassembleFile(string $originalContent, int $absStart, int $absEnd, string $newSnippet): string {
-    $lines = explode("\n", $originalContent);
-    $newSnippetLines = explode("\n", trim($newSnippet));
-    
-    // Limpiar marcadores si la IA los incluyó por error
-    $cleanNewLines = [];
-    foreach ($newSnippetLines as $line) {
-        if (strpos($line, '@@START_EDIT@@') !== false || strpos($line, '@@END_EDIT@@') !== false) {
-            continue;
-        }
-        $cleanNewLines[] = $line;
-    }
-    
-    // Reemplazar las líneas (los índices de array son 0-based, así que restamos 1)
-    $before = array_slice($lines, 0, $absStart - 1);
-    $after = array_slice($lines, $absEnd);
-    
-    $finalLines = array_merge($before, $cleanNewLines, $after);
-    return implode("\n", $finalLines);
-}
-
-function injectImports(string $originalContent, string $currentContent, array $newImports): string {
-    $uniqueImports = array_unique($newImports);
-    $importsToAdd = [];
-    
-    foreach ($uniqueImports as $import) {
-        $import = trim($import);
-        $classPath = trim(str_replace(['use ', ';'], '', $import));
-        $pattern = '/^\s*use\s+' . preg_quote($classPath, '/') . '\s*(?:as\s+\w+)?\s*;/m';
-        if (!preg_match($pattern, $originalContent)) {
-            $importsToAdd[] = $import;
-        }
-    }
-    
-    if (empty($importsToAdd)) return $currentContent;
-    
-    $importBlock = "\n" . implode("\n", $importsToAdd) . "\n";
-    
-    if (preg_match('/^(.*?)(^\s*use\s+[^;]+;\s*)$/ms', $currentContent, $matches)) {
-        $currentContent = preg_replace('/^(.*?)(^\s*use\s+[^;]+;\s*)$/ms', '$1$2' . $importBlock, $currentContent, 1);
-    } elseif (preg_match('/(^\s*namespace\s+[^;]+;\s*)/m', $currentContent)) {
-        $currentContent = preg_replace('/(^\s*namespace\s+[^;]+;\s*)/m', '$1' . $importBlock, $currentContent, 1);
-    } elseif (strpos($currentContent, '<?php') === 0) {
-        $currentContent = preg_replace('/(<\?php\s*)/', '$1' . $importBlock, $currentContent, 1);
-    } else {
-        $currentContent = $importBlock . $currentContent;
-    }
-    return $currentContent;
-}
-
-
 // ===== 7. CLASIFICADOR DE COMPLEJIDAD (usa Nova Micro) =====
 function classifyInstruction(string $instruction, $bedrock, mysqli $db, int $sessionId, int $newVersionId): string {
     $classifyPrompt = "Clasifica esta tarea de edición de código en una de estas categorías y responde SÓLO con la palabra clave:
@@ -786,12 +680,15 @@ if ($rs) {
 $diffSummary = mb_substr($instruction, 0, 100) . (mb_strlen($instruction) > 100 ? '...' : '');
 $newS3Key = rtrim($source['root_prefix'], '/') . '/' . $targetFilename . '.v' . $nextVersion;
 
+// message_id_ tiene FK a ChatMessages y siempre se insertaba NULL, así que no
+// se podía responder "qué mensaje del chat produjo este cambio". Ahora se
+// guarda si el llamador lo envía.
 $stmtInsert = $db_connection->prepare("
-    INSERT INTO FileVersions 
+    INSERT INTO FileVersions
     (id_, project_id_, session_id_, message_id_, original_filename, version, s3_path, diff_summary, is_stable)
-    VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 0)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
 ");
-$stmtInsert->bind_param('iiissss', $newVersionId, $projectId, $sessionId, $targetFilename, $nextVersion, $newS3Key, $diffSummary);
+$stmtInsert->bind_param('iiiissss', $newVersionId, $projectId, $sessionId, $messageId, $targetFilename, $nextVersion, $newS3Key, $diffSummary);
 $stmtInsert->execute();
 $stmtInsert->close();
 
@@ -894,77 +791,153 @@ if (in_array($category, ['medium', 'complex'])) {
     }
 }
 
-// ===== 12. Ejecutar Flujo: SCOUT (Edición) o GENERATE (Creación) =====
-$newContent = '';
-$lastError = '';
-$attemptLog = [];
-$success = false;
+// ===== 12. Ejecutar Flujo: CREACIÓN o EDICIÓN POR ANCLA =====
+$newContent   = '';
+$lastError    = '';
+$attemptLog   = [];
+$success      = false;
+$failureCode  = 'lint_fallido';
+$strategyUsed = null;
+
+// Cascada de la edición (ver Fase 1 del refactor):
+//   Nivel 1  apply_edit con ancla única.
+//   Nivel 2  hasta 3 intentos de ancla, devolviéndole al modelo el conteo real.
+//   Nivel 3  reescritura completa, SOLO si el archivo es pequeño y con guards.
+//   Nivel 4  fallar explícitamente. Reescribir 800 líneas a ciegas no es una opción.
+$maxAnchorAttempts   = 3;
+$fullRewriteMaxLines = 300;
+$anchorFailures      = 0;
+
+/**
+ * Registra el consumo de un modelo. Local a este flujo para no repetir el
+ * bloque de INSERT + tabla de precios en cada intento (la Fase 5 lo unifica en
+ * un único mapa MODEL_PRICING junto con el resto del archivo).
+ */
+$logModelUsage = function (string $phase, string $model, int $inTok, int $outTok, int $durationMs) use ($db_connection, $sessionId): void {
+    try {
+        $costIn = 0.000035; $costOut = 0.00014;
+        if (strpos($model, 'sonnet') !== false)        { $costIn = 0.003;   $costOut = 0.015; }
+        elseif (strpos($model, 'opus') !== false)      { $costIn = 0.015;   $costOut = 0.075; }
+        elseif (strpos($model, 'haiku') !== false)     { $costIn = 0.00025; $costOut = 0.00125; }
+        elseif (strpos($model, 'nova-pro') !== false)  { $costIn = 0.0008;  $costOut = 0.0032; }
+        $cost = ($inTok / 1000 * $costIn) + ($outTok / 1000 * $costOut);
+
+        $tcId = next_id($db_connection, 'TokenUsage', 'id_');
+        $stmt = $db_connection->prepare(
+            "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
+             VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)"
+        );
+        if ($stmt) {
+            $stmt->bind_param("iissiddi", $tcId, $sessionId, $phase, $model, $inTok, $outTok, $cost, $durationMs);
+            $stmt->execute();
+            $stmt->close();
+        }
+    } catch (Throwable $e) {
+        @file_put_contents(__DIR__ . '/token_usage_debug.log',
+            "[" . date('Y-m-d H:i:s') . "] logModelUsage: " . $e->getMessage() . "\n", FILE_APPEND | LOCK_EX);
+    }
+};
+
+/** Registra un intento en LintAttempts. */
+$logLintAttempt = function (int $attemptNum, string $model, string $error, bool $ok, int $durationMs) use ($db_connection, $newVersionId): void {
+    $stmt = $db_connection->prepare(
+        "INSERT INTO LintAttempts (file_version_id_, attempt_number, model_used, error_message, is_success, duration_ms) VALUES (?, ?, ?, ?, ?, ?)"
+    );
+    if (!$stmt) { // prepare() puede devolver false; antes se llamaba bind_param sobre false.
+        error_log('No se pudo preparar el INSERT de LintAttempts: ' . $db_connection->error);
+        return;
+    }
+    $isSuccess = $ok ? 1 : 0;
+    $stmt->bind_param("iissii", $newVersionId, $attemptNum, $model, $error, $isSuccess, $durationMs);
+    $stmt->execute();
+    $stmt->close();
+};
 
 try {
     if ($isCreation) {
         // =====================================================================
-        // ✅ MODO CREACIÓN: La IA genera el archivo completo desde cero
+        // MODO CREACIÓN: la IA genera el archivo completo desde cero
         // =====================================================================
         $systemPromptCreator = "You are an expert software engineer. Your task is to create a NEW file from scratch based on the user's instruction.
 RULES:
-1. Return ONLY the raw code. Do NOT wrap it in markdown backticks (```php).
+1. Return ONLY the raw code. Do NOT wrap it in markdown backticks.
 2. Do not add explanations, just the code.
-3. Ensure the code is syntactically perfect and ready to run.";
+3. NEVER abbreviate with comments like '// ... rest of the file'. Write every line.
+4. Ensure the code is syntactically perfect and ready to run.";
 
+        $attemptNum = 0;
         foreach ($ladder as $tier) {
             for ($i = 0; $i < $tier['max_attempts']; $i++) {
                 $userPrompt = "FILE TO CREATE: {$targetFilename}\nUSER INSTRUCTION:\n{$instruction}";
-                
                 if ($lastError !== '') {
-                    $userPrompt .= "\n⚠️ CRITICAL: Your previous code failed syntax validation with this error:\n```\n{$lastError}\n```\nPlease fix the error and return the complete corrected code.";
+                    $userPrompt .= "\n⚠️ CRITICAL: Your previous code failed validation with this error:\n```\n{$lastError}\n```\nFix it and return the complete corrected file.";
                 }
 
-                $res = $bedrock->converse([
-                    'modelId' => $tier['model'],
-                    'messages' => [['role' => 'user', 'content' => [['text' => $userPrompt]]]],
-                    'system' => [['text' => $systemPromptCreator]],
-                    'inferenceConfig' => ['maxTokens' => 4000, 'temperature' => 0.2, 'topP' => 0.9]
-                ]);
+                // Presupuesto de salida acotado por el techo real del modelo. Si
+                // se agota se reintenta UNA vez con el doble antes de escalar:
+                // truncar por presupuesto no es culpa del modelo y escalar a
+                // Opus por ello es puro gasto.
+                $budget = min(8000, maxOutputTokensFor($tier['model']));
+                $truncationRetried = false;
 
-                // Registro de costos (igual que en tu código original)
-                $inputTokens = (int)($res['usage']['inputTokens'] ?? 0);
-                $outputTokens = (int)($res['usage']['outputTokens'] ?? 0);
-                // ... (Aquí va tu bloque de INSERT INTO TokenUsage que ya tienes, cópialo tal cual) ...
-                $tcId = next_id($db_connection, 'TokenUsage', 'id_');
-                $tcPhase = 'respond';
-                $tcModel = $tier['model'];
-                $costIn = 0.000035; $costOut = 0.00014;
-                if (strpos($tcModel, 'sonnet') !== false) { $costIn = 0.003; $costOut = 0.015; }
-                elseif (strpos($tcModel, 'opus') !== false) { $costIn = 0.015; $costOut = 0.075; }
-                elseif (strpos($tcModel, 'haiku') !== false) { $costIn = 0.00025; $costOut = 0.00125; }
-                elseif (strpos($tcModel, 'nova-pro') !== false) { $costIn = 0.0008; $costOut = 0.0032; }
-                $tcCost = ($inputTokens / 1000 * $costIn) + ($outputTokens / 1000 * $costOut);
-                $stmtTC = $db_connection->prepare("INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)");
-                $durationMs = 0; // ✅ CORRECCIÓN: Variable en lugar de 0
-                if($stmtTC){ $stmtTC->bind_param("iissiddi", $tcId, $sessionId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $durationMs); $stmtTC->execute(); $stmtTC->close(); }
+                do {
+                    $t0 = hrtime(true);
+                    $res = $bedrock->converse([
+                        'modelId' => $tier['model'],
+                        'messages' => [['role' => 'user', 'content' => [['text' => $userPrompt]]]],
+                        'system' => [['text' => $systemPromptCreator]],
+                        'inferenceConfig' => ['maxTokens' => $budget, 'temperature' => 0.2, 'topP' => 0.9]
+                    ]);
+                    $durationMs = (int) round((hrtime(true) - $t0) / 1e6);
+
+                    $logModelUsage('respond', $tier['model'],
+                        (int) ($res['usage']['inputTokens'] ?? 0),
+                        (int) ($res['usage']['outputTokens'] ?? 0),
+                        $durationMs);
+
+                    $truncated = (($res['stopReason'] ?? '') === 'max_tokens');
+                    if ($truncated && !$truncationRetried) {
+                        $truncationRetried = true;
+                        $budget = min($budget * 2, maxOutputTokensFor($tier['model']));
+                        continue;
+                    }
+                    break;
+                } while (true);
+
+                $attemptNum++;
 
                 $rawResponse = '';
                 foreach (($res['output']['message']['content'] ?? []) as $block) {
                     if (isset($block['text'])) $rawResponse .= $block['text'];
                 }
-                
-                // Limpiar posibles backticks de markdown que la IA haya puesto por error
-                $newContent = cleanMarkdown($rawResponse);
 
-                // Lint del archivo completo generado
-                $lintResult = lintCode($newContent, $targetFilename);
-                $attemptLog[] = ['model' => $tier['model'], 'attempt' => $i + 1, 'success' => $lintResult['success'], 'error' => $lintResult['error'], 'scout_target' => 'NEW_FILE_CREATION'];
-                $stmtLint = $db_connection->prepare("INSERT INTO LintAttempts (file_version_id_, attempt_number, model_used, error_message, is_success, duration_ms) VALUES (?, ?, ?, ?, ?, ?)");
-                $attemptNum = $i + 1;
-                $isSuccess = $lintResult['success'] ? 1 : 0;
-                $durationMs = 0;
-                $stmtLint->bind_param("iissii", $newVersionId, $attemptNum, $tier['model'], $lintResult['error'], $isSuccess, $durationMs);
-                $stmtLint->execute(); 
-                $stmtLint->close();
-                
+                // Un archivo cortado a la mitad nunca se escribe, aunque por
+                // casualidad pasara el lint.
+                if (($res['stopReason'] ?? '') === 'max_tokens') {
+                    $lastError = 'La respuesta se cortó por límite de tokens: el archivo estaría incompleto.';
+                    $attemptLog[] = ['model' => $tier['model'], 'attempt' => $attemptNum, 'success' => false, 'error' => $lastError, 'strategy' => 'create'];
+                    $logLintAttempt($attemptNum, $tier['model'], $lastError, false, $durationMs);
+                    continue;
+                }
+
+                $candidate = cleanMarkdown($rawResponse);
+
+                if (containsElisionMarker($candidate)) {
+                    $lastError = 'El archivo generado está abreviado con un marcador tipo "... resto sin cambios".';
+                    $attemptLog[] = ['model' => $tier['model'], 'attempt' => $attemptNum, 'success' => false, 'error' => $lastError, 'strategy' => 'create'];
+                    $logLintAttempt($attemptNum, $tier['model'], $lastError, false, $durationMs);
+                    continue;
+                }
+
+                $lintResult = lintCode($candidate, $targetFilename);
+                $attemptLog[] = ['model' => $tier['model'], 'attempt' => $attemptNum, 'success' => $lintResult['success'], 'error' => $lintResult['error'], 'strategy' => 'create'];
+                $logLintAttempt($attemptNum, $tier['model'], $lintResult['error'], $lintResult['success'], $durationMs);
+
                 if ($lintResult['success']) {
-                    $success = true;
-                    break 2; // Éxito
+                    $newContent   = $candidate;
+                    $success      = true;
+                    $strategyUsed = 'create';
+                    break 2;
                 }
                 $lastError = $lintResult['error'];
                 if (preg_match('/undefined method|type mismatch|cannot resolve|fatal error/i', $lastError)) break;
@@ -972,96 +945,137 @@ RULES:
         }
     } else {
         // =====================================================================
-        // ✅ MODO EDICIÓN: Patrón SCOUT → EXTRACT → EDIT → REASSEMBLE
+        // MODO EDICIÓN: cascada apply_edit → reescritura → fallo explícito
         // =====================================================================
-        
-        // 🚀 NUEVO: Análisis de Contexto Multi-Archivo (RAG de Código)
-        $relatedContext = fetchRelatedContext($db_connection, $projectId, $instruction, $bedrock, $sessionId, $newVersionId);
-        
-        $scoutResult = scoutCodeBlock($currentContent, $instruction, $bedrock, $db_connection, $sessionId, $newVersionId);
-        $contextInfo = extractContext($currentContent, $scoutResult['start_line'], $scoutResult['end_line'], 15);
-        
-        $systemPromptEditor = "You are an expert surgical code editor. Your task is to modify ONLY the provided code snippet according to the user's instruction.
-RULES:
-1. Return ONLY the modified snippet. Do NOT return the entire file.
-2. 🚀 If your modification introduces NEW classes/interfaces that require `use` statements, list them at the VERY TOP of your response, each on a new line, prefixed with `// @@IMPORT@@ ` (e.g., `// @@IMPORT@@ use App\\Services\\UserService;`).
-3. Wrap the actual code modification EXCLUSIVELY between these markers: // @@START_EDIT@@ and // @@END_EDIT@@
-4. Preserve exact indentation, variable names, and structure of the surrounding context.
-5. Use the PROVIDED RELATED PROJECT CONTEXT to ensure your edits are compatible with existing classes, methods, or variables.";
+        $relatedContextRaw = fetchRelatedContext($db_connection, $projectId, $instruction, $bedrock, $sessionId, $newVersionId);
+        $relatedContext = $relatedContextRaw !== '' ? "\n\n📚 RELATED PROJECT CONTEXT:\n{$relatedContextRaw}" : '';
+
+        // ---------- NIVELES 1 y 2: edición por ancla única ----------
+        $feedback   = null;
+        $attemptNum = 0;
 
         foreach ($ladder as $tier) {
             for ($i = 0; $i < $tier['max_attempts']; $i++) {
-                // 🚀 Inyectamos el contexto relacionado si existe
-                $contextBlock = $relatedContext !== '' ? "\n\n📚 RELATED PROJECT CONTEXT:\n{$relatedContext}" : "";
-                
-                $userPrompt = "FILE: {$source['filename']}\nBLOQUE A MODIFICAR (Líneas {$scoutResult['start_line']} a {$scoutResult['end_line']}):\n{$contextInfo['snippet']}{$contextBlock}\nUSER INSTRUCTION:\n{$instruction}";
-                
-                if ($lastError !== '') {
-                    $userPrompt .= "\n⚠️ CRITICAL: Your previous attempt failed syntax validation with this error:\n```\n{$lastError}\n```\nPlease fix ONLY this error in the snippet and return it wrapped in // @@START_EDIT@@ and // @@END_EDIT@@ markers.";
+                if ($anchorFailures >= $maxAnchorAttempts) break 2;
+
+                $attemptNum++;
+                $edit = requestAnchoredEdit(
+                    $bedrock, $tier['model'], $source['filename'], $currentContent,
+                    $instruction, $relatedContext, $feedback
+                );
+                $logModelUsage('lint_fix', $tier['model'], $edit['input_tokens'], $edit['output_tokens'], $edit['duration_ms']);
+
+                // El modelo no produjo un JSON usable.
+                if (!$edit['ok']) {
+                    $anchorFailures++;
+                    $feedback  = $edit['error'];
+                    $lastError = $edit['error'];
+                    $attemptLog[] = ['model' => $tier['model'], 'attempt' => $attemptNum, 'success' => false, 'error' => $edit['error'], 'strategy' => 'apply_edit'];
+                    $logLintAttempt($attemptNum, $tier['model'], $edit['error'], false, $edit['duration_ms']);
+                    continue;
                 }
 
-                $res = $bedrock->converse([
-                    'modelId' => $tier['model'],
-                    'messages' => [['role' => 'user', 'content' => [['text' => $userPrompt]]]],
-                    'system' => [['text' => $systemPromptEditor]],
-                    'inferenceConfig' => ['maxTokens' => 2000, 'temperature' => 0.1, 'topP' => 0.9]
-                ]);
-
-                // Registro de costos (copia tu bloque original de TokenUsage aquí)
-                $inputTokens = (int)($res['usage']['inputTokens'] ?? 0);
-                $outputTokens = (int)($res['usage']['outputTokens'] ?? 0);
-                $tcId = next_id($db_connection, 'TokenUsage', 'id_');
-                $tcPhase = 'lint_fix'; $tcModel = $tier['model'];
-                $costIn = 0.000035; $costOut = 0.00014;
-                if (strpos($tcModel, 'sonnet') !== false) { $costIn = 0.003; $costOut = 0.015; }
-                elseif (strpos($tcModel, 'opus') !== false) { $costIn = 0.015; $costOut = 0.075; }
-                elseif (strpos($tcModel, 'haiku') !== false) { $costIn = 0.00025; $costOut = 0.00125; }
-                elseif (strpos($tcModel, 'nova-pro') !== false) { $costIn = 0.0008; $costOut = 0.0032; }
-                $tcCost = ($inputTokens / 1000 * $costIn) + ($outputTokens / 1000 * $costOut);
-                $stmtTC = $db_connection->prepare("INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)");
-                $durationMs = 0; // ✅ CORRECCIÓN: Variable en lugar de 0
-                if($stmtTC){ $stmtTC->bind_param("iissiddi", $tcId, $sessionId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $durationMs); $stmtTC->execute(); $stmtTC->close(); }
-
-                $rawResponse = '';
-                foreach (($res['output']['message']['content'] ?? []) as $block) {
-                    if (isset($block['text'])) $rawResponse .= $block['text'];
+                // El ancla debe identificar exactamente un punto del archivo.
+                $applied = applyUniqueEdit($currentContent, $edit['old_string'], $edit['new_string']);
+                if (!$applied['ok']) {
+                    $anchorFailures++;
+                    $feedback  = $applied['error'];
+                    $lastError = $applied['error'];
+                    $attemptLog[] = [
+                        'model' => $tier['model'], 'attempt' => $attemptNum, 'success' => false,
+                        'error' => $applied['error'], 'strategy' => 'apply_edit',
+                        'anchor_matches' => $applied['count'],
+                    ];
+                    $logLintAttempt($attemptNum, $tier['model'], $applied['error'], false, $edit['duration_ms']);
+                    continue;
                 }
 
-                // 🚀 NUEVO: Extraer y procesar los imports solicitados por la IA
-                $newImports = [];
-                if (preg_match_all('/\/\/\s*@@IMPORT@@\s+(use\s+[^;]+;)/i', $rawResponse, $importMatches)) {
-                    $newImports = $importMatches[1];
-                    // Limpiar la respuesta de los marcadores de importación para que no ensucien el código
-                    $rawResponse = preg_replace('/\/\/\s*@@IMPORT@@\s+use\s+[^;]+;\s*/i', '', $rawResponse);
+                $candidate = (string) $applied['content'];
+
+                if (containsElisionMarker($edit['new_string'])) {
+                    $feedback  = 'new_string contiene un marcador de elisión ("... resto sin cambios"). Escribe el código completo del fragmento.';
+                    $lastError = $feedback;
+                    $attemptLog[] = ['model' => $tier['model'], 'attempt' => $attemptNum, 'success' => false, 'error' => $feedback, 'strategy' => 'apply_edit'];
+                    $logLintAttempt($attemptNum, $tier['model'], $feedback, false, $edit['duration_ms']);
+                    continue;
                 }
 
-                $reassembledContent = reassembleFile($currentContent, $contextInfo['absolute_start'], $contextInfo['absolute_end'], $rawResponse);
-                
-                // 🚀 NUEVO: Inyectar los imports faltantes en el archivo reensamblado
-                if (!empty($newImports)) {
-                    $reassembledContent = injectImports($currentContent, $reassembledContent, $newImports);
+                if (detectSuspiciousShrink($currentContent, $candidate, $instruction)) {
+                    $feedback  = 'La edición eliminaría más del 40% del archivo y la instrucción no pedía borrar nada. Ancla en una región más pequeña.';
+                    $lastError = $feedback;
+                    $attemptLog[] = ['model' => $tier['model'], 'attempt' => $attemptNum, 'success' => false, 'error' => $feedback, 'strategy' => 'apply_edit'];
+                    $logLintAttempt($attemptNum, $tier['model'], $feedback, false, $edit['duration_ms']);
+                    continue;
                 }
 
-                
-                $lintResult = lintCode($reassembledContent, $targetFilename);
-                
-                $attemptLog[] = ['model' => $tier['model'], 'attempt' => $i + 1, 'success' => $lintResult['success'], 'error' => $lintResult['error'], 'scout_target' => $scoutResult['target_name'], 'lines_edited' => ($contextInfo['absolute_end'] - $contextInfo['absolute_start'] + 1)];
-                
-                // ✅ CORRECCIÓN: bind_param() exige variables por referencia, no expresiones
-                $attemptNum = $i + 1;
-                $isSuccess = $lintResult['success'] ? 1 : 0;
-                $durationMs = 0;
-                $stmtLint = $db_connection->prepare("INSERT INTO LintAttempts (file_version_id_, attempt_number, model_used, error_message, is_success, duration_ms) VALUES (?, ?, ?, ?, ?, ?)");
-                $stmtLint->bind_param("iissii", $newVersionId, $attemptNum, $tier['model'], $lintResult['error'], $isSuccess, $durationMs);
-                $stmtLint->execute(); $stmtLint->close();
+                $lintResult = lintCode($candidate, $targetFilename);
+                $attemptLog[] = ['model' => $tier['model'], 'attempt' => $attemptNum, 'success' => $lintResult['success'], 'error' => $lintResult['error'], 'strategy' => 'apply_edit'];
+                $logLintAttempt($attemptNum, $tier['model'], $lintResult['error'], $lintResult['success'], $edit['duration_ms']);
 
                 if ($lintResult['success']) {
-                    $success = true;
-                    $newContent = $reassembledContent;
+                    $newContent   = $candidate;
+                    $success      = true;
+                    $strategyUsed = 'apply_edit';
                     break 2;
                 }
+                $feedback  = "El código resultante no pasó la validación de sintaxis:\n" . $lintResult['error'];
                 $lastError = $lintResult['error'];
-                if (preg_match('/undefined method|type mismatch|cannot resolve|fatal error/i', $lastError)) break;
+            }
+        }
+
+        // ---------- NIVEL 3: reescritura completa (solo archivos pequeños) ----------
+        if (!$success) {
+            $totalLines = countLines($currentContent);
+
+            if ($totalLines >= $fullRewriteMaxLines) {
+                // ---------- NIVEL 4 ----------
+                // Fallar aquí es lo correcto: reescribir un archivo grande a
+                // ciegas arriesga perder código que nadie pidió tocar.
+                $failureCode = 'ancla_no_resoluble';
+                $lastError = "No se pudo localizar un ancla única tras {$anchorFailures} intentos, y el archivo tiene {$totalLines} líneas "
+                           . "(el límite para reescritura completa es {$fullRewriteMaxLines}). Acota la instrucción indicando la función o clase concreta a modificar.";
+            } else {
+                foreach ($ladder as $tier) {
+                    $attemptNum++;
+                    $rewrite = requestFullRewrite(
+                        $bedrock, $tier['model'], $source['filename'], $currentContent,
+                        $instruction, $relatedContext
+                    );
+                    $logModelUsage('respond', $tier['model'], $rewrite['input_tokens'], $rewrite['output_tokens'], $rewrite['duration_ms']);
+
+                    if (!$rewrite['ok']) {
+                        $lastError = $rewrite['error'];
+                        $attemptLog[] = ['model' => $tier['model'], 'attempt' => $attemptNum, 'success' => false, 'error' => $rewrite['error'], 'strategy' => 'full_rewrite'];
+                        $logLintAttempt($attemptNum, $tier['model'], $rewrite['error'], false, $rewrite['duration_ms']);
+                        continue;
+                    }
+
+                    // El guard de reducción es obligatorio en este nivel: es el
+                    // que impide que una reescritura abreviada borre el archivo.
+                    if (detectSuspiciousShrink($currentContent, $rewrite['content'], $instruction)) {
+                        $failureCode = 'reduccion_sospechosa';
+                        $lastError = sprintf(
+                            'La reescritura pasó de %d a %d bytes (%.0f%%) sin que la instrucción pidiera borrar nada. Se descarta.',
+                            strlen($currentContent), strlen($rewrite['content']),
+                            strlen($rewrite['content']) / max(1, strlen($currentContent)) * 100
+                        );
+                        $attemptLog[] = ['model' => $tier['model'], 'attempt' => $attemptNum, 'success' => false, 'error' => $lastError, 'strategy' => 'full_rewrite'];
+                        $logLintAttempt($attemptNum, $tier['model'], $lastError, false, $rewrite['duration_ms']);
+                        continue;
+                    }
+
+                    $lintResult = lintCode($rewrite['content'], $targetFilename);
+                    $attemptLog[] = ['model' => $tier['model'], 'attempt' => $attemptNum, 'success' => $lintResult['success'], 'error' => $lintResult['error'], 'strategy' => 'full_rewrite'];
+                    $logLintAttempt($attemptNum, $tier['model'], $lintResult['error'], $lintResult['success'], $rewrite['duration_ms']);
+
+                    if ($lintResult['success']) {
+                        $newContent   = $rewrite['content'];
+                        $success      = true;
+                        $strategyUsed = 'full_rewrite';
+                        break;
+                    }
+                    $lastError = $lintResult['error'];
+                }
             }
         }
     }
@@ -1071,12 +1085,25 @@ RULES:
 
 // ===== 13. Evaluar resultado final =====
 if (!$success) {
+    // 'ancla_no_resoluble' y 'reduccion_sospechosa' no son errores del servidor:
+    // son rechazos deliberados para no corromper el archivo. Van con 422 para
+    // que el cliente distinga "no pude" de "me rompí".
+    $isRejection = in_array($failureCode, ['ancla_no_resoluble', 'reduccion_sospechosa'], true);
+
+    $mensaje = $failureCode === 'ancla_no_resoluble'
+        ? 'No se pudo localizar de forma inequívoca la parte del archivo a modificar.'
+        : ($failureCode === 'reduccion_sospechosa'
+            ? 'El resultado se descartó porque habría eliminado una parte importante del archivo.'
+            : 'No se pudo generar código válido después de múltiples intentos.');
+
     jexit([
         'ok'          => false,
-        'error'       => 'No se pudo generar código válido después de múltiples intentos.',
+        'error'       => $mensaje,
+        'code'        => $failureCode,
         'last_error'  => $lastError,
+        'anchor_failures' => $anchorFailures,
         'attempt_log' => $attemptLog
-    ], 500);
+    ], $isRejection ? 422 : 500);
 }
 
 // ===== 14. Éxito: Subir a S3 y Registrar en BD (Incluye sync con FileS3 y S3Folders) =====
@@ -1131,7 +1158,10 @@ if ($isCreation) {
     }
 } else {
         $backupS3Key = preg_replace('/(\.[a-zA-Z0-9]+)$/i', '.ver0$1', $originalS3Key);
-        $s3->copyObject(['Bucket' => $bucket, 'CopySource' => urlencode($bucket . '/' . $originalS3Key), 'Key' => $backupS3Key]);
+        // s3CopySource() codifica cada segmento pero preserva las barras.
+        // urlencode() sobre la ruta entera convertía cada '/' en %2F, así que
+        // CopySource no era una ruta válida y el respaldo nunca se creaba.
+        $s3->copyObject(['Bucket' => $bucket, 'CopySource' => s3CopySource($bucket, $originalS3Key), 'Key' => $backupS3Key]);
         
         $updSource = $db_connection->prepare("UPDATE ProjectSources SET status = 'stale' WHERE id_ = ?");
         $updSource->bind_param('i', $source['id_']);
@@ -1254,23 +1284,45 @@ try {
 // ===== 15. Respuesta exitosa con Análisis de Impacto =====
 $downloadUrl = 'descargar.php?archivo=' . urlencode($source['s3_key']) . '&nombre=' . urlencode($targetFilename);
 
+// El análisis de impacto es SOLO informativo: detecta qué otros archivos
+// referencian los símbolos tocados, pero el sistema no aplica refactor en
+// cascada. Antes se anunciaba "se recomienda aplicar refactor en cascada",
+// prometiendo una capacidad inexistente; ahora sale como advertencia para que
+// el humano revise esos archivos.
+$warnings = [];
+if (!empty($impactAnalysis['is_multi_file'])) {
+    $warnings[] = [
+        'code'    => 'referencias_en_otros_archivos',
+        'message' => 'Otros ' . count($impactAnalysis['affected_files']) . ' archivo(s) referencian los símbolos modificados. Revísalos manualmente: este cambio no se propagó a ellos.',
+        'files'   => array_keys($impactAnalysis['affected_files']),
+    ];
+}
+if (!($indexResult['ok'] ?? false)) {
+    $warnings[] = [
+        'code'    => 'indexacion_fallida',
+        'message' => 'El archivo se guardó pero no se pudo indexar, así que aún no aparecerá en las búsquedas semánticas.',
+        'detail'  => $indexResult['error'] ?? null,
+    ];
+}
+
 jexit([
     'ok'             => true,
-    'message'        => "✅ Archivo oficial actualizado (respaldo .ver0 creado).",
+    'message'        => $isCreation
+        ? "✅ Archivo '{$targetFilename}' creado en el proyecto."
+        : "✅ Archivo '{$targetFilename}' actualizado (respaldo .ver0 creado).",
     'filename'       => $targetFilename,
     'new_version'    => $nextVersion,
     'download_url'   => $downloadUrl,
     'diff_summary'   => $diffSummary,
     'summary_model'  => $summaryResult['model'],
-    'model_used'     => $attemptLog[count($attemptLog) - 1]['model'],
+    'model_used'     => $attemptLog ? $attemptLog[count($attemptLog) - 1]['model'] : 'unknown',
+    'strategy'       => $strategyUsed,
+    'anchor_failures' => $anchorFailures,
     'complexity'     => $category ?? 'unknown',
     'indexed'        => (bool)($indexResult['ok'] ?? false),
     'index_error'    => $indexResult['ok'] ? null : ($indexResult['error'] ?? null),
     'needs_indexing' => false,
-    'scout_info'     => $scoutResult ?? null,
-    // 🚀 NUEVO: Datos para el Orquestador / Frontend
+    'attempt_log'    => $attemptLog,
     'impact_analysis' => $impactAnalysis,
-    'next_steps'      => $impactAnalysis['is_multi_file']
-        ? "⚠️ Esta edición afecta a " . count($impactAnalysis['affected_files']) . " archivos más. Se recomienda aplicar refactor en cascada."
-        : "Edición contenida en un solo archivo."
+    'warnings'       => $warnings,
 ]);
