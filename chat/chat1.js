@@ -99,6 +99,13 @@
       sourcesCount: $('#chat2SourcesCount'),
       sourcesAdd: $('#chat2SourcesAdd'),
       sourcesRefresh: $('#chat2SourcesRefresh'),
+      
+      // Session Attachments UI
+      attachmentsPanel: $('#chat2AttachmentsPanel'),
+      attachmentsList: $('#chat2AttachmentsList'),
+      attachmentsCount: $('#chat2AttachmentsCount'),
+      attachmentsAdd: $('#chat2AttachmentsAdd'),
+      attachmentsRefresh: $('#chat2AttachmentsRefresh'),
     };
 
     // ===============================
@@ -2512,4 +2519,277 @@ if (btnRefreshContext) {
   startNotifyPoller();
 })();
 });
+})();
+// ============================================================================
+// FUNCIONES PARA ADJUNTOS DE SESIÓN
+// ============================================================================
+
+async function loadSessionAttachments(sessionId) {
+  try {
+    const qs = new URLSearchParams();
+    if (sessionId && sessionId > 0) {
+      qs.set('session_id', sessionId);
+    }
+    const r = await fetch(`session_attachments.php?action=list&${qs.toString()}`, { credentials: 'same-origin' });
+    const j = toJSONorThrow(await r.text(), r.status, 'Listar adjuntos');
+    if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+    
+    sessionAttachments = Array.isArray(j.attachments) ? j.attachments : [];
+    renderSessionAttachments();
+  } catch (e) {
+    console.error('Error cargando adjuntos:', e);
+    const list = el.attachmentsList;
+    if (list) list.innerHTML = '<div class="text-danger small">Error cargando adjuntos</div>';
+  }
+}
+
+function renderSessionAttachments() {
+  const list = el.attachmentsList;
+  const countMain = el.attachmentsCount;
+  if (!list) return;
+  
+  if (sessionAttachments.length === 0) {
+    list.innerHTML = '<div class="text-muted small">Sin adjuntos agregados</div>';
+    if (countMain) countMain.textContent = '0';
+    return;
+  }
+  
+  list.innerHTML = sessionAttachments.map(a => {
+    const statusClass = a.status || 'pending';
+    const statusText = { 'pending': 'Pendiente', 'indexed': 'Indexado', 'error': 'Error' }[statusClass] || statusClass;
+    const badgeClass = statusClass === 'indexed' ? 'success' : statusClass === 'error' ? 'danger' : 'warning';
+
+    let actionsHtml = '';
+    if (a.edit_url) {
+      actionsHtml += `<a href="${esc(a.edit_url)}" target="_blank" class="btn btn-sm btn-primary" style="padding: 0 .3rem; font-size: 0.6rem;" title="Editar"><i class="fas fa-edit"></i></a>`;
+    }
+    if (a.view_url) {
+      actionsHtml += `<a href="${esc(a.view_url)}" target="_blank" class="btn btn-sm btn-info" style="padding: 0 .3rem; font-size: 0.6rem;" title="Ver"><i class="fas fa-eye"></i></a>`;
+    }
+
+    return `<div class="list-group-item attachment-item d-flex justify-content-between align-items-center py-1 px-2" data-id="${a.id}" style="font-size:0.7rem;">
+      <span class="text-truncate" style="max-width:45%;" title="${esc(a.filename)}">${esc(a.filename)}</span>
+      <span class="d-flex align-items-center" style="gap: 4px;">
+        ${actionsHtml}
+        <span class="badge badge-${badgeClass}" style="font-size:0.6rem;">${statusText}</span>
+        <button class="btn btn-sm btn-outline-danger btn-delete-attachment" data-id="${a.id}" title="Eliminar" style="padding: 0 .3rem; font-size: 0.6rem;">
+          <i class="fas fa-trash"></i>
+        </button>
+      </span>
+    </div>`;
+  }).join('');
+  
+  if (countMain) countMain.textContent = String(sessionAttachments.length);
+  
+  list.querySelectorAll('.btn-delete-attachment').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = parseInt(btn.getAttribute('data-id'), 10);
+      deleteSessionAttachment(id);
+    });
+  });
+}
+
+async function deleteSessionAttachment(attachmentId) {
+  if (!confirm('¿Eliminar este adjunto de la sesión?')) {
+    return;
+  }
+  
+  try {
+    const fd = new FormData();
+    fd.append('attachment_id', attachmentId);
+    
+    const r = await fetch('session_attachments.php?action=remove', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd
+    });
+    
+    const j = toJSONorThrow(await r.text(), r.status, 'Eliminar adjunto');
+    if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+    
+    await loadSessionAttachments(currentSessionId);
+  } catch (e) {
+    console.error('Error eliminando adjunto:', e);
+    alert('Error eliminando adjunto: ' + e.message);
+  }
+}
+
+async function uploadSessionFiles() {
+  if (!currentSessionId) {
+    alert('⚠️ No hay sesión seleccionada');
+    return;
+  }
+  
+  const fileInput = document.getElementById('sessionFilesInput');
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+    alert('⚠️ Selecciona al menos un archivo');
+    return;
+  }
+  
+  const files = fileInput.files;
+  const fd = new FormData();
+  fd.append('session_id', currentSessionId);
+  
+  for (let i = 0; i < files.length; i++) {
+    fd.append('files[]', files[i], files[i].name);
+  }
+  
+  const progress = document.getElementById('sessionUploadProgress');
+  const progressBar = document.getElementById('sessionUploadProgressBar');
+  const statusEl = document.getElementById('sessionUploadStatus');
+  const result = document.getElementById('sessionUploadResult');
+  const successMsg = document.getElementById('sessionUploadSuccessMsg');
+  
+  if (progress) progress.classList.remove('d-none');
+  if (result) result.classList.add('d-none');
+  if (progressBar) progressBar.style.width = '30%';
+  if (statusEl) statusEl.textContent = `Subiendo ${files.length} archivo(s)...`;
+  
+  try {
+    const r = await fetch('session_upload.php', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd
+    });
+    
+    if (progressBar) progressBar.style.width = '80%';
+    
+    const j = toJSONorThrow(await r.text(), r.status, 'Subir archivos');
+    
+    if (!r.ok || j.ok === false) {
+      throw new Error(j.error || `HTTP ${r.status}`);
+    }
+    
+    if (progressBar) {
+      progressBar.style.width = '100%';
+      progressBar.classList.remove('progress-bar-animated');
+    }
+    if (statusEl) statusEl.textContent = '¡Completado!';
+    
+    if (successMsg) {
+      let msg = `${j.uploaded.length} archivo(s) subido(s) correctamente.`;
+      if (j.errors && j.errors.length > 0) {
+        msg += `<br><small class="text-warning">${j.errors.length} error(es): ${j.errors.join(', ')}</small>`;
+      }
+      successMsg.innerHTML = msg;
+    }
+    if (result) result.classList.remove('d-none');
+    
+    // Recargar adjuntos de sesión
+    await loadSessionAttachments(currentSessionId);
+    
+    // Cerrar modal después de 2 segundos
+    setTimeout(() => {
+      jQuery('#modalSessionAttachments').modal('hide');
+    }, 2000);
+    
+  } catch (e) {
+    console.error('Error subiendo archivos:', e);
+    if (statusEl) statusEl.textContent = 'Error: ' + e.message;
+    if (progressBar) {
+      progressBar.classList.remove('progress-bar-animated');
+      progressBar.classList.add('bg-danger');
+    }
+    alert('Error subiendo archivos: ' + e.message);
+  }
+}
+
+function openSessionAttachmentsModal() {
+  if (!currentSessionId) { 
+    alert('⚠️ Selecciona o crea una sesión primero.'); 
+    return; 
+  }
+  
+  const modal = document.getElementById('modalSessionAttachments');
+  if (!modal) return;
+  
+  // Mostrar ruta destino
+  const userId = document.getElementById('chatUserId') ? document.getElementById('chatUserId').value : 1;
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const path = `Data/Chat/Uploads/${userId}/${year}/${month}/`;
+  const pathEl = document.getElementById('sessionUploadPath');
+  if (pathEl) pathEl.textContent = path;
+  
+  // Renderizar lista de adjuntos actuales
+  const modalList = document.getElementById('modalSessionAttachmentsList');
+  if (modalList) {
+    if (sessionAttachments.length === 0) {
+      modalList.innerHTML = '<div class="list-group-item text-muted small">No hay adjuntos aún.</div>';
+    } else {
+      modalList.innerHTML = sessionAttachments.map(a => {
+        const statusClass = a.status || 'pending';
+        const statusText = { 'pending': 'Pendiente', 'indexed': 'Indexado', 'error': 'Error' }[statusClass] || statusClass;
+        const badgeClass = statusClass === 'indexed' ? 'success' : statusClass === 'error' ? 'danger' : 'warning';
+        
+        return `<div class="list-group-item d-flex justify-content-between align-items-center py-2" data-id="${a.id}">
+          <div class="text-truncate" style="max-width: 70%;" title="${esc(a.filename)}">
+            <i class="fas fa-file mr-1 text-muted"></i> ${esc(a.filename)}
+          </div>
+          <div class="d-flex align-items-center" style="gap: 8px;">
+            <span class="badge badge-${badgeClass}" style="font-size: 0.7rem;">${statusText}</span>
+            <button class="btn btn-sm btn-outline-danger btn-delete-modal-attachment" data-id="${a.id}" title="Eliminar adjunto" style="padding: 0 .4rem;">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
+        </div>`;
+      }).join('');
+
+      modalList.querySelectorAll('.btn-delete-modal-attachment').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const id = parseInt(btn.getAttribute('data-id'), 10);
+          deleteSessionAttachment(id);
+        });
+      });
+    }
+  }
+
+  // Resetear UI de subida
+  const progress = document.getElementById('sessionUploadProgress');
+  const result = document.getElementById('sessionUploadResult');
+  if (progress) progress.classList.add('d-none');
+  if (result) result.classList.add('d-none');
+  
+  const fileInput = document.getElementById('sessionFilesInput');
+  if (fileInput) fileInput.value = '';
+  
+  // Mostrar modal
+  jQuery(modal).modal('show');
+}
+
+// Inicializar estado de adjuntos
+let sessionAttachments = [];
+
+// Event listeners para adjuntos de sesión
+(function() {
+  'use strict';
+  
+  // Botón "Agregar adjuntos" en el panel principal
+  if (el.attachmentsAdd) {
+    el.attachmentsAdd.addEventListener('click', openSessionAttachmentsModal);
+  }
+  
+  // Botón "Recargar" adjuntos
+  if (el.attachmentsRefresh) {
+    el.attachmentsRefresh.addEventListener('click', () => {
+      if (currentSessionId) loadSessionAttachments(currentSessionId);
+    });
+  }
+  
+  // Botón "Subir archivos" en el modal
+  const btnUploadSessionFiles = document.getElementById('btnUploadSessionFiles');
+  if (btnUploadSessionFiles) {
+    btnUploadSessionFiles.addEventListener('click', uploadSessionFiles);
+  }
+  
+  // Botón "Indexar pendientes" en el modal
+  const btnIndexSessionAttachments = document.getElementById('btnIndexSessionAttachments');
+  if (btnIndexSessionAttachments) {
+    btnIndexSessionAttachments.addEventListener('click', () => {
+      alert('Funcionalidad de indexación pendiente de implementar');
+    });
+  }
 })();

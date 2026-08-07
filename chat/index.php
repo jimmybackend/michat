@@ -175,6 +175,18 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <div id="chat2SourcesList" class="d-flex flex-wrap mt-1" style="max-height: 60px; overflow-y: auto; font-size:0.7rem; gap: 4px;"></div>
 </div>
 
+<div id="chat2AttachmentsPanel" class="px-3 py-2 d-none" style="border-bottom: 1px solid var(--border, #333); background: rgba(255,255,255,0.02);">
+<div class="d-flex align-items-center">
+<h6 class="mb-0 small"><i class="fas fa-paperclip"></i> Adjuntos de Sesión (<span id="chat2AttachmentsCount">0</span>)</h6>
+<button id="chat2AttachmentsAdd" class="btn btn-sm btn-outline-primary ml-auto" title="Agregar adjuntos">
+<i class="fas fa-plus"></i>
+</button><button id="chat2AttachmentsRefresh" class="btn btn-sm btn-outline-secondary ml-1" title="Recargar">
+<i class="fas fa-sync"></i>
+</button>
+</div>
+<div id="chat2AttachmentsList" class="d-flex flex-wrap mt-1" style="max-height: 60px; overflow-y: auto; font-size:0.7rem; gap: 4px;"></div>
+</div>
+
 </div>
 <!-- Contenido de Chat -->
 <div id="chat2Messages" class="card-body flex-grow-1 overflow-auto" style="padding: 1rem 1.5rem;"></div>
@@ -618,6 +630,61 @@ role="progressbar" style="width: 0%">0%</div>
 </div>
 <div class="modal-footer">
 <button type="button" class="btn btn-primary" id="btnUploadProjectFiles">
+<i class="fas fa-cloud-upload-alt"></i> Subir Archivos Seleccionados
+</button>
+<button type="button" class="btn btn-secondary" data-dismiss="modal">Cerrar</button>
+</div>
+</div>
+</div>
+</div>
+
+<!-- Modal para Adjuntos de Sesión -->
+<div class="modal fade" id="modalSessionAttachments" tabindex="-1" role="dialog" aria-hidden="true">
+<div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+<div class="modal-content">
+<div class="modal-header bg-warning text-white">
+<h5 class="modal-title"><i class="fas fa-paperclip"></i> Gestionar Adjuntos de Sesión</h5>
+<button type="button" class="close text-white" data-dismiss="modal"><span>&times;</span></button>
+</div>
+<div class="modal-body">
+<div class="mb-3">
+<div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
+<h6 class="mb-0"><i class="fas fa-list"></i> Adjuntos de la sesión</h6>
+<button type="button" id="btnIndexSessionAttachments" class="btn btn-sm btn-outline-success" title="Procesar archivos pendientes con IA">
+<i class="fas fa-sync-alt"></i> Indexar pendientes
+</button>
+</div>
+<div id="modalSessionAttachmentsList" class="list-group list-group-flush" style="max-height: 200px; overflow-y: auto;">
+<div class="list-group-item text-muted small">Cargando adjuntos...</div>
+</div>
+</div>
+<hr>
+<p class="text-muted small mb-2">
+<i class="fas fa-info-circle"></i> Los nuevos archivos se guardarán en:
+<code id="sessionUploadPath" class="bg-light px-1">Data/Chat/Uploads/{user_id}/YYYY/MM/</code>
+</p>
+<div class="form-group">
+<label for="sessionFilesInput"><i class="fas fa-upload"></i> Selecciona archivos nuevos</label>
+<input type="file" class="form-control-file" id="sessionFilesInput" multiple
+accept=".php,.js,.ts,.py,.java,.c,.cpp,.cs,.go,.rs,.rb,.html,.css,.scss,.json,.xml,.yaml,.yml,.md,.txt,.sql,.sh,.bash,.pdf,.jpg,.png,.gif,.mp4,.webm,.mp3,.wav">
+<small class="form-text text-muted">
+Puedes seleccionar múltiples archivos. Se registrarán como adjuntos de esta sesión de chat.
+</small>
+</div>
+<div id="sessionUploadProgress" class="d-none">
+<div class="progress" style="height: 20px;">
+<div id="sessionUploadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated"
+role="progressbar" style="width: 0%">0%</div>
+</div>
+<small id="sessionUploadStatus" class="text-muted d-block mt-1">Subiendo...</small>
+</div>
+<div id="sessionUploadResult" class="d-none mt-2">
+<div class="alert alert-success small mb-0">
+<i class="fas fa-check-circle"></i> <span id="sessionUploadSuccessMsg"></span>
+</div></div>
+</div>
+<div class="modal-footer">
+<button type="button" class="btn btn-primary" id="btnUploadSessionFiles">
 <i class="fas fa-cloud-upload-alt"></i> Subir Archivos Seleccionados
 </button>
 <button type="button" class="btn btn-secondary" data-dismiss="modal">Cerrar</button>
