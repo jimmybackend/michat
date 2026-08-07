@@ -327,7 +327,6 @@ body.ui-theme .badge-info    { background: rgba(88,166,255,.15) !important; colo
 #chat2Messages {
   flex: 1 1 auto;
   min-height: 0 !important;
-  max-height: 60vh !important;
   overflow-y: auto !important;
   background: var(--bg) !important;
   padding: .75rem 1rem;
