@@ -494,7 +494,7 @@ Fuentes indexadas: <span id="sbSourcesCount">0</span>
 <button id="btnRecargar" class="btn btn-sm btn-outline-secondary" onclick="recargarPagina()" type="button">
 <i class="fas fa-sync-alt mr-1"></i> Recargar página
 </button>
-<a href="https://drive.esforzados.com/s3chatstats.php" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-info">
+<a href="https://drive.esforzados.com/michat/s3chatstats.php" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-info">
 <i class="fas fa-comment-dots mr-1"></i> Ir al Stats
 </a>
 <a href="logout.php" class="btn btn-sm btn-outline-danger">
