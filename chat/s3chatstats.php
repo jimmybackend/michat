@@ -190,7 +190,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </a>
 </li>
 <li class="nav-item">
-<a class="nav-link" id="tab-Dashboard" data-toggle="tab" href="#pane-Dashboard" role="tab">
+<a class="nav-link active" id="tab-Dashboard" data-toggle="tab" href="#pane-Dashboard" role="tab">
 <i class="fas fa-chart-line"></i> Dashboard
 </a>
 </li>
@@ -261,7 +261,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 
 
 
-<div class="tab-pane fade" id="pane-Dashboard" role="tabpanel">
+<div class="tab-pane fade show active" id="pane-Dashboard" role="tabpanel">
 <div class="container-fluid py-3">
 <div class="row">
 <div class="col-md-12">
