@@ -8,11 +8,11 @@
  * posterior del frontend a index_project_sources.php).
  */
 
-// Este archivo llama a next_id() pero no la declaraba: dependía de que el
-// archivo que lo incluyera la hubiera declarado antes (hoy solo code_edit.php
-// lo hace). Cualquier otro endpoint que incluyera este archivo daba fatal
-// error. FileToolkit.php la declara con guard function_exists(), así que este
-// require hace el archivo autosuficiente sin romper a los llamadores actuales.
+// Este archivo llamaba a next_id() sin declararla: dependía de que el archivo
+// que lo incluyera la hubiera declarado antes (solo code_edit.php lo hacía),
+// así que cualquier otro endpoint que lo incluyera daba fatal error. La Fase 2
+// eliminó next_id() por completo —todas las tablas tienen AUTO_INCREMENT— y con
+// ella la dependencia oculta.
 require_once __DIR__ . '/FileToolkit.php';
 
 if (!function_exists('chunkFileContent')) {
@@ -75,10 +75,10 @@ if (!function_exists('indexProjectSourceContent')) {
         $totalInputTokens = 0;
 
         foreach ($chunks as $chunk) {
-            $chunk_id = next_id($db, 'SourceChunks', 'id_');
-            $stmtChunk = $db->prepare("INSERT INTO SourceChunks (id_, source_id_, project_id_, chunk_type, name, content, start_line, end_line) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmtChunk->bind_param('iiisssii', $chunk_id, $sourceId, $projectId, $chunk['type'], $chunk['name'], $chunk['content'], $chunk['start'], $chunk['end']);
+            $stmtChunk = $db->prepare("INSERT INTO SourceChunks (source_id_, project_id_, chunk_type, name, content, start_line, end_line) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmtChunk->bind_param('iisssii', $sourceId, $projectId, $chunk['type'], $chunk['name'], $chunk['content'], $chunk['start'], $chunk['end']);
             $stmtChunk->execute();
+            $chunk_id = (int) $db->insert_id;
             $stmtChunk->close();
 
             $body = json_encode(['inputText' => mb_substr($chunk['content'], 0, 8000)]);
@@ -93,10 +93,9 @@ if (!function_exists('indexProjectSourceContent')) {
             $embedding_json = json_encode($embedding_array);
             $totalInputTokens += (int)($emb_response['inputTextTokenCount'] ?? 0);
 
-            $emb_id = next_id($db, 'ChunkEmbeddings', 'id_');
-            $stmtEmb = $db->prepare("INSERT INTO ChunkEmbeddings (id_, chunk_id_, model_id, dimensions, embedding, embedding_json) VALUES (?, ?, ?, ?, ?, ?)");
+            $stmtEmb = $db->prepare("INSERT INTO ChunkEmbeddings (chunk_id_, model_id, dimensions, embedding, embedding_json) VALUES (?, ?, ?, ?, ?)");
             $dims = count($embedding_array);
-            $stmtEmb->bind_param('iisiss', $emb_id, $chunk_id, $embedModel, $dims, $embedding_json, $embedding_json);
+            $stmtEmb->bind_param('isiss', $chunk_id, $embedModel, $dims, $embedding_json, $embedding_json);
             $stmtEmb->execute();
             $stmtEmb->close();
         }

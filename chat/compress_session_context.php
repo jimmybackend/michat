@@ -259,14 +259,10 @@ function logTokenUsage(
     try {
         $cost = calculateCost($modelId, $inputTokens, $outputTokens);
 
-        $tcId = 0;
-        $rs = $db->query("SELECT IFNULL(MAX(id_),0)+1 AS nxt FROM TokenUsage");
-        if ($rs) { $tcId = (int)($rs->fetch_assoc()['nxt'] ?? 1); $rs->free(); }
-
-        $sqlTC = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        $sqlTC = "INSERT INTO TokenUsage (session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         $stmtTC = $db->prepare($sqlTC);
         if ($stmtTC) {
-            $stmtTC->bind_param("iiissiidi", $tcId, $sessionId, $msgId, $phase, $modelId, $inputTokens, $outputTokens, $cost, $durationMs);
+            $stmtTC->bind_param("iissiidi", $sessionId, $msgId, $phase, $modelId, $inputTokens, $outputTokens, $cost, $durationMs);
             $stmtTC->execute();
             $stmtTC->close();
         }
@@ -421,12 +417,8 @@ function compressLevel0ToLevel1(mysqli $db, $bedrock, int $sessionId): int {
         $fullSummary = $summary; 
         $sourceIdsJson = json_encode($sourceIds);
 
-        $nextId = 0;
-        $rs = $db->query("SELECT IFNULL(MAX(id_),0)+1 AS nxt FROM SessionContextBlocks");
-        if ($rs) { $nextId = (int)($rs->fetch_assoc()['nxt'] ?? 1); $rs->free(); }
-
-        $stmtInsert = $db->prepare("INSERT INTO SessionContextBlocks (id_, session_id_, block_type, content_preview, source_ids, token_count, is_locked) VALUES (?, ?, 'level_1', ?, ?, ?, 0)");
-        $stmtInsert->bind_param('iissi', $nextId, $sessionId, $fullSummary, $sourceIdsJson, $tokenCount);
+        $stmtInsert = $db->prepare("INSERT INTO SessionContextBlocks (session_id_, block_type, content_preview, source_ids, token_count, is_locked) VALUES (?, 'level_1', ?, ?, ?, 0)");
+        $stmtInsert->bind_param('issi', $sessionId, $fullSummary, $sourceIdsJson, $tokenCount);
         $stmtInsert->execute();
         $stmtInsert->close();
 
@@ -478,12 +470,8 @@ function compressLevel1ToLevel2(mysqli $db, $bedrock, int $sessionId): int {
     $fullSummary = $summary;
     $sourceIdsJson = json_encode($allSourceIds);
 
-    $nextId = 0;
-    $rs = $db->query("SELECT IFNULL(MAX(id_),0)+1 AS nxt FROM SessionContextBlocks");
-    if ($rs) { $nextId = (int)($rs->fetch_assoc()['nxt'] ?? 1); $rs->free(); }
-
-    $stmtInsert = $db->prepare("INSERT INTO SessionContextBlocks (id_, session_id_, block_type, content_preview, source_ids, token_count, is_locked) VALUES (?, ?, 'level_2', ?, ?, ?, 0)");
-    $stmtInsert->bind_param('iissi', $nextId, $sessionId, $fullSummary, $sourceIdsJson, $tokenCount);
+    $stmtInsert = $db->prepare("INSERT INTO SessionContextBlocks (session_id_, block_type, content_preview, source_ids, token_count, is_locked) VALUES (?, 'level_2', ?, ?, ?, 0)");
+    $stmtInsert->bind_param('issi', $sessionId, $fullSummary, $sourceIdsJson, $tokenCount);
     $stmtInsert->execute();
     $stmtInsert->close();
 
@@ -532,12 +520,8 @@ function compressLevel2ToLevel3(mysqli $db, $bedrock, int $sessionId): int {
     $fullSummary = $summary;
     $sourceIdsJson = json_encode($allSourceIds);
 
-    $nextId = 0;
-    $rs = $db->query("SELECT IFNULL(MAX(id_),0)+1 AS nxt FROM SessionContextBlocks");
-    if ($rs) { $nextId = (int)($rs->fetch_assoc()['nxt'] ?? 1); $rs->free(); }
-
-    $stmtInsert = $db->prepare("INSERT INTO SessionContextBlocks (id_, session_id_, block_type, content_preview, source_ids, token_count, is_locked) VALUES (?, ?, 'level_3', ?, ?, ?, 0)");
-    $stmtInsert->bind_param('iissi', $nextId, $sessionId, $fullSummary, $sourceIdsJson, $tokenCount);
+    $stmtInsert = $db->prepare("INSERT INTO SessionContextBlocks (session_id_, block_type, content_preview, source_ids, token_count, is_locked) VALUES (?, 'level_3', ?, ?, ?, 0)");
+    $stmtInsert->bind_param('issi', $sessionId, $fullSummary, $sourceIdsJson, $tokenCount);
     $stmtInsert->execute();
     $stmtInsert->close();
 
@@ -590,13 +574,9 @@ function syncPrimordialRules(mysqli $db): int {
                 $newProjectContextId = $stmtIns->insert_id;
 
                 // Encolar trabajo de embedding para este nuevo contexto
-                $jobId = 0;
-                $rsJob = $db->query("SELECT IFNULL(MAX(id_),0)+1 AS nxt FROM EmbeddingJobs");
-                if ($rsJob) { $jobId = (int)($rsJob->fetch_assoc()['nxt'] ?? 1); $rsJob->free(); }
-
-                $stmtJob = $db->prepare("INSERT INTO EmbeddingJobs (id_, target_type, target_id, model_id, status, attempts) VALUES (?, 'project_context', ?, 'amazon.titan-embed-text-v2:0', 'pending', 0)");
+                $stmtJob = $db->prepare("INSERT INTO EmbeddingJobs (target_type, target_id, model_id, status, attempts) VALUES ('project_context', ?, 'amazon.titan-embed-text-v2:0', 'pending', 0)");
                 if ($stmtJob) {
-                    $stmtJob->bind_param('ii', $jobId, $newProjectContextId);
+                    $stmtJob->bind_param('i', $newProjectContextId);
                     $stmtJob->execute();
                     $stmtJob->close();
                 }
@@ -745,16 +725,9 @@ Formato de cada objeto:
                                 $totalExtracted++;
                                 $newProjectContextId = $stmtIns->insert_id;
                                 
-                                $jobId = 0;
-                                $rsJob = $db->query("SELECT IFNULL(MAX(id_),0)+1 AS nxt FROM EmbeddingJobs");
-                                if ($rsJob) { 
-                                    $jobId = (int)($rsJob->fetch_assoc()['nxt'] ?? 1); 
-                                    $rsJob->free(); 
-                                }
-                                
-                                $stmtJob = $db->prepare("INSERT INTO EmbeddingJobs (id_, target_type, target_id, model_id, status, attempts) VALUES (?, 'project_context', ?, 'amazon.titan-embed-text-v2:0', 'pending', 0)");
+                                $stmtJob = $db->prepare("INSERT INTO EmbeddingJobs (target_type, target_id, model_id, status, attempts) VALUES ('project_context', ?, 'amazon.titan-embed-text-v2:0', 'pending', 0)");
                                 if ($stmtJob) {
-                                    $stmtJob->bind_param('ii', $jobId, $newProjectContextId);
+                                    $stmtJob->bind_param('i', $newProjectContextId);
                                     $stmtJob->execute();
                                     $stmtJob->close();
                                 }

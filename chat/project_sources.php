@@ -11,14 +11,6 @@ function jexit($arr, $code = 200) {
     exit;
 }
 
-function next_id(mysqli $db, $table, $col) {
-    $table = preg_replace('/[^A-Za-z0-9_]+/','',$table);
-    $col   = preg_replace('/[^A-Za-z0-9_]+/','',$col);
-    $rs = $db->query("SELECT COALESCE(MAX($col), 0) + 1 AS nxt FROM $table");
-    if (!$rs) return 1;
-    $row = $rs->fetch_assoc();
-    return (int)($row['nxt'] ?? 1);
-}
 
 function resolve_root_candidates(): array {
     $docRoot = isset($_SERVER['DOCUMENT_ROOT']) ? (string)$_SERVER['DOCUMENT_ROOT'] : '';
@@ -240,12 +232,11 @@ if ($action === 'add') {
         $language = $language_map[$ext] ?? 'unknown';
         
         // Insertar en ProjectSources
-        $id_ = next_id($db_connection, 'ProjectSources', 'id_');
-        $sql = "INSERT INTO ProjectSources (id_, project_id_, files3_id_, s3_key, filename, mime_type, size_bytes, language, sha256, status)
-                VALUES (?, ?, NULL, ?, ?, NULL, 0, ?, NULL, 'pending')";
+        $sql = "INSERT INTO ProjectSources (project_id_, files3_id_, s3_key, filename, mime_type, size_bytes, language, sha256, status)
+                VALUES (?, NULL, ?, ?, NULL, 0, ?, NULL, 'pending')";
         $stmt = $db_connection->prepare($sql);
         if (!$stmt) continue;
-        $stmt->bind_param('iisss', $id_, $project_id, $s3_key, $filename, $language);
+        $stmt->bind_param('isss', $project_id, $s3_key, $filename, $language);
         if ($stmt->execute()) {
             $added++;
         }

@@ -25,15 +25,6 @@ $errors = [];
 // ===== Helpers =====
 function jexit($arr, $code=200){ http_response_code($code); echo json_encode($arr, JSON_UNESCAPED_UNICODE); exit; }
 
-function next_id(mysqli $db, $table, $col){
-  $table = preg_replace('/[^A-Za-z0-9_]+/','',$table);
-  $col   = preg_replace('/[^A-Za-z0-9_]+/','',$col);
-  $rs = $db->query("SELECT IFNULL(MAX($col),0)+1 AS nxt FROM $table");
-  if(!$rs) return 1;
-  $row = $rs->fetch_assoc();
-  return (int)($row['nxt'] ?? 1);
-}
-
 function detect_content_type_from_mime($mime){
   $m = strtolower((string)$mime);
   if (strpos($m,'image/') === 0) return 'image';
@@ -397,9 +388,8 @@ function execute_tool_str_replace($args, $projectId, $db) {
         $delChunks->close();
 
         // 7. ✅ NUEVO: Crear un job de embedding urgente para este archivo modificado
-        $job_id = next_id($db, 'EmbeddingJobs', 'id_');
-        $stmtJob = $db->prepare("INSERT INTO EmbeddingJobs (id_, target_type, target_id, model_id, status, attempts) VALUES (?, 'source_chunk', ?, 'amazon.titan-embed-text-v2:0', 'pending', 0)");
-        $stmtJob->bind_param("ii", $job_id, $source_id);
+        $stmtJob = $db->prepare("INSERT INTO EmbeddingJobs (target_type, target_id, model_id, status, attempts) VALUES ('source_chunk', ?, 'amazon.titan-embed-text-v2:0', 'pending', 0)");
+        $stmtJob->bind_param("i", $source_id);
         $stmtJob->execute();
         $stmtJob->close();
 
@@ -644,7 +634,6 @@ $ocrItems     = [];
 // o si es un chat normal sin compilación ($compilation_id === 0).
 // Esto evita que se guarde DUPLICADO en la Fase 2 (respuesta final).
 if ($text !== '' && ($compile_only || $compilation_id === 0)) {
-    $idM = next_id($db_connection, 'ChatMessages', 'id_');
     $role_user   = 'user';
     $ctype       = 'text';
     $content     = $text;
@@ -656,23 +645,24 @@ if ($text !== '' && ($compile_only || $compilation_id === 0)) {
     $parent_msg_id = null;
     
     $sqlI = "INSERT INTO ChatMessages (
-        id_, session_id_, user_id_, role, content_type, content,
+        session_id_, user_id_, role, content_type, content,
         s3_key, mime_type, size_bytes, thumb_s3_key, duration_ms,
         model_id, stop_reason, prompt_tokens, completion_tokens, latency_ms, meta,
         is_primordial, phase, parent_msg_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
     
     $stmtI = $db_connection->prepare($sqlI);
     if(!$stmtI) jexit(['ok'=>false,'error'=>'Error preparando INSERT texto: '.$db_connection->error],500);
     
-    $types = "iiisssssisissiiisisi";
+    $types = "iisssssisissiiisisi";
     $stmtI->bind_param($types,
-        $idM, $session_id, $user_id, $role_user, $ctype, $content,
+        $session_id, $user_id, $role_user, $ctype, $content,
         $s3_key, $mime, $size_bytes, $thumb_key, $duration_ms, $model_msg, $stop_reason, $prompt_tok, $compl_tok, $latency_ms, $meta,
         $is_primordial, $phase, $parent_msg_id
     );
     
     if(!$stmtI->execute()){ $e=$stmtI->error; $stmtI->close(); jexit(['ok'=>false,'error'=>'Error insertando texto: '.$e],500); }
+    $idM = (int) $db_connection->insert_id;
     $stmtI->close();
     $saved_user_text_id = $idM;
 }
@@ -735,7 +725,6 @@ if (!empty($_FILES['files']) && is_array($_FILES['files']['name'])) {
       if ($s3_key && strpos($mime,'image/') === 0) $ocrItems[] = ['name'=>$name,'s3_key'=>$s3_key];
     }
 
-    $idF = next_id($db_connection, 'ChatMessages', 'id_');
     $role_user   = 'user';
     $content     = $name;
     $duration_ms = null; $model_msg = null; $stop_reason=null;
@@ -747,22 +736,23 @@ if (!empty($_FILES['files']) && is_array($_FILES['files']['name'])) {
     $parent_msg_id = null;
 
     $sqlF = "INSERT INTO ChatMessages (
-      id_, session_id_, user_id_, role, content_type, content,
+      session_id_, user_id_, role, content_type, content,
       s3_key, mime_type, size_bytes, thumb_s3_key, duration_ms,
       model_id, stop_reason, prompt_tokens, completion_tokens, latency_ms, meta,
       is_primordial, phase, parent_msg_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
     $stmtF = $db_connection->prepare($sqlF);
     if(!$stmtF) jexit(['ok'=>false,'error'=>'Error preparando INSERT file: '.$db_connection->error],500);
     
-    $typesF = "iiisssssisissiiisisi";
+    $typesF = "iisssssisissiiisisi";
     $stmtF->bind_param($typesF, 
-      $idF, $session_id, $user_id, $role_user, $ctype, $content,
+      $session_id, $user_id, $role_user, $ctype, $content,
       $s3_key, $mime, $size, $thumb_key, $duration_ms, $model_msg, $stop_reason, $prompt_tok, $compl_tok, $latency_ms, $meta,
       $is_primordial, $phase, $parent_msg_id
     );
       
     if(!$stmtF->execute()){ $e=$stmtF->error; $stmtF->close(); jexit(['ok'=>false,'error'=>'Error insertando file: '.$e],500); }
+    $idF = (int) $db_connection->insert_id;
     $stmtF->close();
     $file_ids[] = $idF;
   }
@@ -1153,7 +1143,6 @@ $compilerUserPrompt = $compilerContext . "\n" . $compilerUserPrompt;
         // ========================================================================
         if ($compilerInput > 0 || $compilerOutput > 0) {
             try {
-                $compiler_msg_id = next_id($db_connection, 'ChatMessages', 'id_');
                 $session_id = isset($_POST['session_id']) ? (int)$_POST['session_id'] : 0;
                 $role_compiler = 'system'; 
                 $ctypeA = 'text'; 
@@ -1165,36 +1154,36 @@ $compilerUserPrompt = $compilerContext . "\n" . $compilerUserPrompt;
                 $parent_msg_id = $saved_user_text_id ?: (isset($file_ids[0]) ? $file_ids[0] : null);
 
                 $sqlA = "INSERT INTO ChatMessages (
-                    id_, session_id_, user_id_, role, content_type, content,
+                    session_id_, user_id_, role, content_type, content,
                     s3_key, mime_type, size_bytes, thumb_s3_key, duration_ms,
                     model_id, stop_reason, prompt_tokens, completion_tokens, latency_ms, meta,
                     is_primordial, phase, parent_msg_id
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
                 
                 $stmtA = $db_connection->prepare($sqlA);
                 if ($stmtA) {
-                    $stmtA->bind_param("iiisssssisissiiisisi", 
-                        $compiler_msg_id, $session_id, $user_id, $role_compiler, $ctypeA, $contentA,
+                    $stmtA->bind_param("iisssssisissiiisisi", 
+                        $session_id, $user_id, $role_compiler, $ctypeA, $contentA,
                         $s3_key, $mime, $size_bytes, $thumb_key, $duration_ms, $model_msg, $stop_reason, 
                         $prompt_tok, $compl_tok, $latency_ms, $meta, $is_primordial, $phase, $parent_msg_id
                     );
                     $stmtA->execute();
+                    $compiler_msg_id = (int) $db_connection->insert_id;
                     $stmtA->close();
                 }
                 
 // ✅ CORREGIDO: Validar message_id_ antes de insertar
-$tcId = next_id($db_connection, 'TokenUsage', 'id_');
 $tcPhase = 'compile'; $tcModel = $compiler_model;
 $tcCost = ($compilerInput / 1000 * 0.000035) + ($compilerOutput / 1000 * 0.00014);
 $tcDuration = 117;
 // ✅ VALIDAR: ¿El mensaje del compilador realmente existe en ChatMessages?
 $tcMsgId = getValidMessageId($db_connection, $compiler_msg_id, $session_id);
-$sqlTC = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+$sqlTC = "INSERT INTO TokenUsage (session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
 $stmtTC = $db_connection->prepare($sqlTC);
 if ($stmtTC) {
     // ✅ CORREGIDO: Si $tcMsgId es null, bind_param lo maneja como SQL NULL
-    $stmtTC->bind_param("iiissiddi", $tcId, $session_id, $tcMsgId, $tcPhase, $tcModel, $compilerInput, $compilerOutput, $tcCost, $tcDuration);
+    $stmtTC->bind_param("iissiddi", $session_id, $tcMsgId, $tcPhase, $tcModel, $compilerInput, $compilerOutput, $tcCost, $tcDuration);
     $stmtTC->execute();
     $stmtTC->close();
 }
@@ -1212,7 +1201,6 @@ if ($stmtTC) {
 // 1.6. MODO COMPILE_ONLY: Devolver solo el prompt compilado
 // ---------------------------------------------------------
 if ($compile_only) {
-    $compilationId = next_id($db_connection, 'PromptCompilations', 'id_');
     $usedContextIds = json_encode([]);
     $usedCodeRefs = json_encode([]);
     $notesForUser = null;
@@ -1220,14 +1208,15 @@ if ($compile_only) {
     $userMsgId = $saved_user_text_id ?: 0;
     
     $sqlComp = "INSERT INTO PromptCompilations (
-        id_, session_id_, user_msg_id, compiled_prompt, used_context_ids, 
+        session_id_, user_msg_id, compiled_prompt, used_context_ids, 
         used_code_refs, notes_for_user, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)";
     $stmtComp = $db_connection->prepare($sqlComp);
     
     if ($stmtComp) {
-        $stmtComp->bind_param("iiisssss", $compilationId, $session_id, $userMsgId, $compiled_prompt, $usedContextIds, $usedCodeRefs, $notesForUser, $status);
+        $stmtComp->bind_param("iisssss", $session_id, $userMsgId, $compiled_prompt, $usedContextIds, $usedCodeRefs, $notesForUser, $status);
         if (!$stmtComp->execute()) error_log('Error insertando PromptCompilation: ' . $stmtComp->error);
+        $compilationId = (int) $db_connection->insert_id;
         $stmtComp->close();
     }
     
@@ -1285,7 +1274,6 @@ if ($compilation_id > 0 && isset($_POST['compiled_prompt']) && trim($_POST['comp
             // ✅ NO HACEMOS INSERT. El registro ya existe y conserva sus datos de tokens/modelo.
         } else {
             // CASO DE FALLBACK: No existe ningún mensaje de sistema para este usuario (por seguridad)
-            $id_system = next_id($db_connection, 'ChatMessages', 'id_');
             $role_system = 'system';
             $ctype = 'text';
             $content = $compiled_prompt;
@@ -1293,16 +1281,17 @@ if ($compilation_id > 0 && isset($_POST['compiled_prompt']) && trim($_POST['comp
             $phase = 'respond'; 
             if (!empty($parent_msg_id)) {
             $sqlSys = "INSERT INTO ChatMessages (
-                id_, session_id_, user_id_, role, content_type, content,
+                session_id_, user_id_, role, content_type, content,
                 is_primordial, phase, parent_msg_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
             $stmtSys = $db_connection->prepare($sqlSys);
             if ($stmtSys) {
-                $stmtSys->bind_param("iiisssisi",
-                    $id_system, $session_id, $user_id, $role_system, $ctype, $content,
+                $stmtSys->bind_param("iisssisi",
+                    $session_id, $user_id, $role_system, $ctype, $content,
                     $is_primordial, $phase, $parent_msg_id
                 );
                 $stmtSys->execute();
+                $id_system = (int) $db_connection->insert_id;
                 $stmtSys->close();
             }
             }
@@ -1589,7 +1578,6 @@ if ($projectId > 0) {
 }
 
 // ===== Guardar respuesta del asistente =====
-$assistant_id = next_id($db_connection,'ChatMessages','id_');
 $role_assistant = 'assistant'; $ctypeA='text'; $contentA=$reply_text;
 $s3_key=null; $mime=null; $size_bytes=null; $thumb_key=null; $duration_ms=null;
 $model_msg=$model_id; $stop_reason=null; $prompt_tok=$usage['prompt_tokens']; $compl_tok=$usage['completion_tokens']; $latency_ms=null; $meta=null;
@@ -1600,20 +1588,21 @@ $phase = 'respond';
 $parent_msg_id = null;
 
 $sqlA = "INSERT INTO ChatMessages (
-  id_, session_id_, user_id_, role, content_type, content,
+  session_id_, user_id_, role, content_type, content,
   s3_key, mime_type, size_bytes, thumb_s3_key, duration_ms,
   model_id, stop_reason, prompt_tokens, completion_tokens, latency_ms, meta,
   is_primordial, phase, parent_msg_id
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
 $stmtA=$db_connection->prepare($sqlA);
 if($stmtA){
-  $typesA = "iiisssssisissiiisisi";
+  $typesA = "iisssssisissiiisisi";
   $stmtA->bind_param($typesA, 
-    $assistant_id, $session_id, $user_id, $role_assistant, $ctypeA, $contentA,
+    $session_id, $user_id, $role_assistant, $ctypeA, $contentA,
     $s3_key, $mime, $size_bytes, $thumb_key, $duration_ms, $model_msg, $stop_reason, $prompt_tok, $compl_tok, $latency_ms, $meta,
     $is_primordial, $phase, $parent_msg_id
   );
   $stmtA->execute();
+  $assistant_id = (int) $db_connection->insert_id;
   $stmtA->close();
 }
 
@@ -1623,7 +1612,6 @@ if($stmtA){
 // ====================================================================
 try {
     $question_msg_for_block = $saved_user_text_id ?: (isset($file_ids[0]) ? $file_ids[0] : null);
-    $block_id = next_id($db_connection, 'SessionContextBlocks', 'id_');
     
     // ✅ SMART MEMORY: Nova Micro resume el Q&A de forma inteligente
     $summaryData = summarizeQAWithAI($bedrock, $text, $reply_text);
@@ -1631,28 +1619,28 @@ try {
     $token_count = (int)ceil(mb_strlen($preview) / 4);
     
     $sqlBlock = "INSERT INTO SessionContextBlocks (
-        id_, session_id_, block_type, question_msg_id, answer_msg_id,
+        session_id_, block_type, question_msg_id, answer_msg_id,
         content_preview, is_locked, token_count
-    ) VALUES (?, ?, 'level_0', ?, ?, ?, 0, ?)";
+    ) VALUES (?, 'level_0', ?, ?, ?, 0, ?)";
     
     $stmtBlock = $db_connection->prepare($sqlBlock);
     if ($stmtBlock) {
-        $stmtBlock->bind_param("iiissi", $block_id, $session_id, $question_msg_for_block, $assistant_id, $preview, $token_count);
+        $stmtBlock->bind_param("iissi", $session_id, $question_msg_for_block, $assistant_id, $preview, $token_count);
         
         // ✅ CORRECCIÓN CRÍTICA: Verificar que el INSERT fue exitoso
         if ($stmtBlock->execute()) {
+            $block_id = (int) $db_connection->insert_id;
             $affectedRows = $stmtBlock->affected_rows;
             $stmtBlock->close();
             
             // ✅ SOLO crear el job si el bloque se insertó correctamente
             if ($affectedRows > 0) {
-                $job_id = next_id($db_connection, 'EmbeddingJobs', 'id_');
                 $sqlJob = "INSERT INTO EmbeddingJobs (
-                    id_, target_type, target_id, model_id, status, attempts
-                ) VALUES (?, 'session_block', ?, 'amazon.titan-embed-text-v2:0', 'pending', 0)";
+                    target_type, target_id, model_id, status, attempts
+                ) VALUES ('session_block', ?, 'amazon.titan-embed-text-v2:0', 'pending', 0)";
                 $stmtJob = $db_connection->prepare($sqlJob);
                 if ($stmtJob) {
-                    $stmtJob->bind_param("ii", $job_id, $block_id);
+                    $stmtJob->bind_param("i", $block_id);
                     $stmtJob->execute();
                     $stmtJob->close();
                 }
@@ -1699,7 +1687,6 @@ try {
 // ✅ REGISTRAR COSTO DEL RESUMEN EN TokenUsage
 if (($summaryData['inputTokens'] ?? 0) > 0 || ($summaryData['outputTokens'] ?? 0) > 0) {
     $sumMsgId = getValidMessageId($db_connection, $assistant_id, $session_id);
-    $sumTcId = next_id($db_connection, 'TokenUsage', 'id_');
     $sumPhase = 'compile';
     
     // ✅ USAR EL MODELO REAL DETECTADO POR LA FUNCIÓN
@@ -1716,11 +1703,11 @@ if (($summaryData['inputTokens'] ?? 0) > 0 || ($summaryData['outputTokens'] ?? 0
     }
     
     $sumDuration = 0;
-    $sqlSumTC = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    $sqlSumTC = "INSERT INTO TokenUsage (session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
     $stmtSumTC = $db_connection->prepare($sqlSumTC);
     if ($stmtSumTC) {
-        $stmtSumTC->bind_param("iiissiddi", $sumTcId, $session_id, $sumMsgId, $sumPhase, $sumModel, $summaryData['inputTokens'], $summaryData['outputTokens'], $sumCost, $sumDuration);
+        $stmtSumTC->bind_param("iissiddi", $session_id, $sumMsgId, $sumPhase, $sumModel, $summaryData['inputTokens'], $summaryData['outputTokens'], $sumCost, $sumDuration);
         $stmtSumTC->execute();
         $stmtSumTC->close();
     }
@@ -1738,7 +1725,6 @@ try {
     $tuInput = (int)($usage['prompt_tokens'] ?? 0);
     $tuOutput = (int)($usage['completion_tokens'] ?? 0);
     
-    $tuId = next_id($db_connection, 'TokenUsage', 'id_');
     $tuPhase = 'respond';
     $tuModel = $model_id ?: 'unknown_model';
     
@@ -1759,15 +1745,15 @@ try {
     }
     $estimatedCost = ($tuInput / 1000 * $costPer1kInput) + ($tuOutput / 1000 * $costPer1kOutput);
     
-    $sqlTU = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    $sqlTU = "INSERT INTO TokenUsage (session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
               
     $stmtTU = $db_connection->prepare($sqlTU);
     if (!$stmtTU) {
         throw new Exception("Error preparando: " . $db_connection->error);
     }
     
-    $stmtTU->bind_param("iiissiddi", $tuId, $session_id, $tuMsgId, $tuPhase, $tuModel, $tuInput, $tuOutput, $estimatedCost, $tuDuration);
+    $stmtTU->bind_param("iissiddi", $session_id, $tuMsgId, $tuPhase, $tuModel, $tuInput, $tuOutput, $estimatedCost, $tuDuration);
     
     if (!$stmtTU->execute()) {
         throw new Exception("Error ejecutando: " . $stmtTU->error);

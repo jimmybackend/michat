@@ -103,14 +103,6 @@ if (!$aws_sdk_loaded) {
 /* ============================
    Helpers
    ============================ */
-function next_id(mysqli $db, $table, $col){
-  $table=preg_replace('/[^A-Za-z0-9_]+/','',$table);
-  $col=preg_replace('/[^A-Za-z0-9_]+/','',$col);
-  $rs=$db->query("SELECT IFNULL(MAX($col),0)+1 AS nxt FROM $table");
-  if(!$rs) return 1;
-  $row=$rs->fetch_assoc();
-  return (int)($row['nxt'] ?? 1);
-}
 function is_admin_like($r){
   $r=strtolower((string)$r);
   return in_array($r,['administración','soporte','admin','administrator','support'],true);
@@ -169,10 +161,10 @@ if(!( $owner_id===$user_id || is_admin_like($role))) jexit(['ok'=>false,'error'=
 /* ============================
    Placeholder en DB
    ============================ */
-$msg_id = next_id($db_connection,'ChatMessages','id_');
-
+// El prefijo de S3 lleva el id del mensaje dentro, y con AUTO_INCREMENT ese id
+// no se conoce hasta después del INSERT. Así que se inserta primero con meta
+// provisional y se completa el output_prefix justo después, cuando ya hay id.
 $rootPrefix = (class_exists('Config') && defined('Config::RUTA_RAIZ') && Config::RUTA_RAIZ) ? rtrim(Config::RUTA_RAIZ,'/').'/' : '';
-$relPrefix  = $rootPrefix . "Chat/GenerationsVideos/{$session_id}/msg_{$msg_id}/"; // Reel creará subfolder por invocationId
 
 $role_assistant='assistant';
 $content_type='video';
@@ -186,7 +178,7 @@ $meta = [
   'provider'       => 'bedrock-nova-reel',
   'status'         => 'queued',
   'created_at'     => date('c'),
-  'output_prefix'  => $relPrefix,  // Reel pondrá un subfolder con invocationId
+  'output_prefix'  => null,        // se rellena tras el INSERT, cuando hay id
   'invocationArn'  => null,
   'model_id'       => $model_id,
   'duration_s'     => $duration_s,
@@ -194,17 +186,25 @@ $meta = [
 $meta_json = json_encode($meta, JSON_UNESCAPED_UNICODE);
 
 $sqlI = "INSERT INTO ChatMessages (
-  id_, session_id_, user_id_, role, content_type, content,
+  session_id_, user_id_, role, content_type, content,
   s3_key, mime_type, size_bytes, thumb_s3_key, duration_ms,
   model_id, stop_reason, prompt_tokens, completion_tokens, latency_ms, meta
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
 $stmtI = $db_connection->prepare($sqlI);
 if(!$stmtI) jexit(['ok'=>false,'error'=>'INSERT placeholder: '.$db_connection->error],500);
-$types="iiisssssisissiiis";
-$stmtI->bind_param($types, $msg_id,$session_id,$owner_id,$role_assistant,$content_type,$content,
+$types="iisssssisissiiis";
+$stmtI->bind_param($types, $session_id,$owner_id,$role_assistant,$content_type,$content,
   $s3_key,$mime,$size_bytes,$thumb,$duration_ms,$model_id,$stop_reason,$prompt_tok,$compl_tok,$latency_ms,$meta_json);
 if(!$stmtI->execute()){ $e=$stmtI->error; $stmtI->close(); jexit(['ok'=>false,'error'=>'INSERT placeholder: '.$e],500); }
+$msg_id = (int) $db_connection->insert_id;
 $stmtI->close();
+
+// Ya hay id: se puede construir el prefijo definitivo y guardarlo en meta.
+$relPrefix = $rootPrefix . "Chat/GenerationsVideos/{$session_id}/msg_{$msg_id}/"; // Reel creará subfolder por invocationId
+$meta['output_prefix'] = $relPrefix;
+$meta_json = json_encode($meta, JSON_UNESCAPED_UNICODE);
+$stmtPrefix = $db_connection->prepare("UPDATE ChatMessages SET meta = ? WHERE id_ = ?");
+if($stmtPrefix){ $stmtPrefix->bind_param('si', $meta_json, $msg_id); $stmtPrefix->execute(); $stmtPrefix->close(); }
 
 /* ============================
    Preflight S3: comprobar escritura

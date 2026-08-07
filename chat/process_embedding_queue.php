@@ -286,14 +286,10 @@ function logTokenUsage(
     try {
         $cost = calculateCost($modelId, $inputTokens, $outputTokens);
 
-        $tcId = 0;
-        $rs = $db->query("SELECT IFNULL(MAX(id_),0)+1 AS nxt FROM TokenUsage");
-        if ($rs) { $tcId = (int)($rs->fetch_assoc()['nxt'] ?? 1); $rs->free(); }
-
-        $sqlTC = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        $sqlTC = "INSERT INTO TokenUsage (session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         $stmtTC = $db->prepare($sqlTC);
         if ($stmtTC) {
-            $stmtTC->bind_param("iiissiidi", $tcId, $sessionId, $msgId, $phase, $modelId, $inputTokens, $outputTokens, $cost, $durationMs);
+            $stmtTC->bind_param("iissiidi", $sessionId, $msgId, $phase, $modelId, $inputTokens, $outputTokens, $cost, $durationMs);
             $stmtTC->execute();
             $stmtTC->close();
         }
@@ -585,22 +581,16 @@ function saveEmbedding(mysqli $db, string $targetType, int $targetId, array $emb
                 $stmt->close();
                 return $affected >= 0;
             } else {
-                $nextId = 0;
-                $rs = $db->query("SELECT IFNULL(MAX(id_),0)+1 AS nxt FROM ChunkEmbeddings");
-                if ($rs) {
-                    $row = $rs->fetch_assoc();
-                    $nextId = (int)($row['nxt'] ?? 1);
-                    $rs->free();
-                }
-                
                 $stmt = $db->prepare("
                     INSERT INTO ChunkEmbeddings 
-                    (id_, chunk_id_, model_id, dimensions, embedding, embedding_json)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (chunk_id_, model_id, dimensions, embedding, embedding_json)
+                    VALUES (?, ?, ?, ?, ?)
                 ");
                 $null = $binary;
-                $stmt->bind_param('iisiis', $nextId, $targetId, $modelId, $dimensions, $null, $json);
-                $stmt->send_long_data(4, $binary);
+                $stmt->bind_param('isiis', $targetId, $modelId, $dimensions, $null, $json);
+                // send_long_data indexa por posición del placeholder: al caer id_,
+                // embedding pasó de la posición 4 a la 3.
+                $stmt->send_long_data(3, $binary);
                 $stmt->execute();
                 $affected = $stmt->affected_rows;
                 $stmt->close();

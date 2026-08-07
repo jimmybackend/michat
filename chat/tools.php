@@ -50,11 +50,10 @@ function cosineSimilarity(array $vecA, array $vecB): float {
 // ✅ Función para registrar el uso de herramientas
 function logToolCall(mysqli $db, int $sessionId, int $msgId, string $tool, array $params, string $result, string $status, int $durationMs) {
     try {
-        $id = next_id($db, 'ToolCalls', 'id_');
-        $sql = "INSERT INTO ToolCalls (id_, session_id_, message_id_, tool, params, result, status, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        $sql = "INSERT INTO ToolCalls (session_id_, message_id_, tool, params, result, status, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?)";
         $stmt = $db->prepare($sql);
         $paramsJson = json_encode($params, JSON_UNESCAPED_UNICODE);
-        $stmt->bind_param('iiissssi', $id, $sessionId, $msgId, $tool, $paramsJson, $result, $status, $durationMs);
+        $stmt->bind_param('iissssi', $sessionId, $msgId, $tool, $paramsJson, $result, $status, $durationMs);
         $stmt->execute();
         $stmt->close();
     } catch (Throwable $e) {
@@ -62,14 +61,6 @@ function logToolCall(mysqli $db, int $sessionId, int $msgId, string $tool, array
     }
 }
 
-function next_id(mysqli $db, $table, $col) {
-    $table = preg_replace('/[^A-Za-z0-9_]+/','',$table);
-    $col   = preg_replace('/[^A-Za-z0-9_]+/','',$col);
-    $rs = $db->query("SELECT COALESCE(MAX($col), 0) + 1 AS nxt FROM $table");
-    if (!$rs) return 1;
-    $row = $rs->fetch_assoc();
-    return (int)($row['nxt'] ?? 1);
-}
 
 try {
     $bootstrap = __DIR__ . '/app_bootstrap.php';
@@ -212,18 +203,17 @@ try {
 $inputTokens = (int)($embedData['inputTextTokenCount'] ?? 0);
 $outputTokens = 0; // Los modelos de embedding no generan tokens de salida de texto
 try {
-    $tcId = next_id($db_connection, 'TokenUsage', 'id_');
     $tcPhase = 'embedding';
     $tcModel = 'amazon.titan-embed-text-v2:0';
     $tcCost = ($inputTokens / 1000) * 0.0001; // Precio Titan Embed V2
     $tcDuration = 0; 
     $tcMsgId = $message_id ?: 0;
     
-    $sqlTC = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) 
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    $sqlTC = "INSERT INTO TokenUsage (session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
     $stmtTC = $db_connection->prepare($sqlTC);
     if ($stmtTC) {
-        $stmtTC->bind_param("iiissiddi", $tcId, $session_id, $tcMsgId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $tcDuration);
+        $stmtTC->bind_param("iissiddi", $session_id, $tcMsgId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $tcDuration);
         $stmtTC->execute();
         $stmtTC->close();
     }

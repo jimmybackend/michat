@@ -11,14 +11,6 @@ $errors = [];
    Helpers (salida)
    ============================ */
 function jexit($a, $c = 200) { http_response_code($c); echo json_encode($a, JSON_UNESCAPED_UNICODE); exit; }
-function next_id(mysqli $db, $t, $c){
-  $t = preg_replace('/[^A-Za-z0-9_]+/','',$t);
-  $c = preg_replace('/[^A-Za-z0-9_]+/','',$c);
-  $rs = $db->query("SELECT COALESCE(MAX($c),0)+1 AS nxt FROM $t");
-  if(!$rs) return 1;
-  $row = $rs->fetch_assoc();
-  return (int)($row['nxt'] ?? 1);
-}
 function is_admin_like($r){
   $r = strtolower((string)$r);
   return in_array($r, ['administración','soporte','admin','administrator','support'], true);
@@ -264,12 +256,11 @@ try {
   }
 
   // Guardar en ChatMessages como assistant/image
-  $idA = next_id($db_connection, 'ChatMessages', 'id_');
   $sqlA = "INSERT INTO ChatMessages (
-    id_,session_id_,user_id_,role,content_type,content,
+    session_id_,user_id_,role,content_type,content,
     s3_key,mime_type,size_bytes,thumb_s3_key,duration_ms,
     model_id,stop_reason,prompt_tokens,completion_tokens,latency_ms,meta
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
 
   $stmtA = $db_connection->prepare($sqlA);
   if (!$stmtA) jexit(['ok'=>false,'error'=>'Error preparando INSERT imagen: '.$db_connection->error], 500);
@@ -285,15 +276,16 @@ try {
   $latency_ms     = null;
   $meta           = null;
 
-  $types = "iiisssssisissiiis";
+  $types = "iisssssisissiiis";
   $stmtA->bind_param(
     $types,
-    $idA, $session_id, $owner_id, $role_assistant, $content_type, $content_txt,
+    $session_id, $owner_id, $role_assistant, $content_type, $content_txt,
     $s3_key, $mime, $size_bytes, $thumb_key, $duration_ms,
     $model_id, $stop_reason, $prompt_tok, $compl_tok, $latency_ms, $meta
   );
 
   if (!$stmtA->execute()) { $e=$stmtA->error; $stmtA->close(); jexit(['ok'=>false,'error'=>'Error insertando imagen en DB: '.$e], 500); }
+  $idA = (int) $db_connection->insert_id;
   $stmtA->close();
 
   @unlink($tmpFile);

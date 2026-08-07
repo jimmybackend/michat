@@ -25,21 +25,83 @@ if (empty($_SESSION['user_id'])) {
 }
 $userId = (int) $_SESSION['user_id'];
 
+// ===== LOCK DE EDICIÓN =====
+// Nombre del lock que tiene este request, o null. Global porque lo necesitan
+// tanto jexit() como el shutdown handler.
+$GLOBALS['edit_lock_name'] = null;
+
+/**
+ * Suelta el lock de edición si lo tenemos. Idempotente.
+ *
+ * Se llama desde jexit() y desde register_shutdown_function(). NO se usa
+ * try/finally: jexit() termina en exit, y exit NO ejecuta los bloques finally.
+ * Con ~15 jexit() repartidos por el flujo de escritura, un finally habría
+ * dejado el lock tomado en casi todas las salidas de error.
+ */
+function releaseEditLock(): void {
+    if (empty($GLOBALS['edit_lock_name'])) {
+        return;
+    }
+    $name = $GLOBALS['edit_lock_name'];
+    $GLOBALS['edit_lock_name'] = null; // antes de soltar: si algo lanza, no reentramos
+
+    $db = $GLOBALS['db_connection'] ?? null;
+    if (!($db instanceof mysqli)) {
+        return;
+    }
+    try {
+        $stmt = $db->prepare("SELECT RELEASE_LOCK(?)");
+        if ($stmt) {
+            $stmt->bind_param('s', $name);
+            $stmt->execute();
+            $stmt->close();
+        }
+    } catch (Throwable $e) {
+        error_log("No se pudo soltar el lock de edición '{$name}': " . $e->getMessage());
+    }
+}
+
 function jexit($arr, $code = 200) {
+    releaseEditLock();
     http_response_code($code);
     echo json_encode($arr, JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-// ===== FUNCIÓN AUXILIAR PARA OBTENER EL SIGUIENTE ID (Faltaba en este archivo) =====
-// @deprecated La Fase 2 la elimina: todas las tablas ya tienen AUTO_INCREMENT.
-function next_id(mysqli $db, string $table, string $col): int {
-    $table = preg_replace('/[^A-Za-z0-9_]+/', '', $table);
-    $col   = preg_replace('/[^A-Za-z0-9_]+/', '', $col);
-    $rs = $db->query("SELECT COALESCE(MAX($col), 0) + 1 AS nxt FROM $table");
-    if (!$rs) return 1;
-    $row = $rs->fetch_assoc();
-    return (int)($row['nxt'] ?? 1);
+/**
+ * Suelta cualquier instancia del lock heredada por esta conexión.
+ *
+ * Hace falta por el escenario de conexión persistente ('p:' en el host de
+ * db-s3.php, pendiente de confirmar en el servidor). Si la conexión sobrevive
+ * al request, puede llegarnos con el lock ya tomado por un request anterior que
+ * murió sin soltarlo. Y GET_LOCK en MySQL es REENTRANTE: la misma conexión
+ * puede volver a tomarlo, incrementando un contador interno, y tendría éxito
+ * aunque el lock siga lógicamente ocupado. Es decir: sin esto, la exclusión
+ * mutua se rompe justo entre requests del mismo worker de PHP-FPM, que es donde
+ * más probable es que coincidan.
+ *
+ * Con conexión NO persistente esta función no encuentra nada y no hace nada, así
+ * que el código sirve para los dos escenarios sin saber cuál está activo.
+ */
+function releaseInheritedLocks(mysqli $db, string $name): void {
+    for ($i = 0; $i < 16; $i++) {
+        $stmt = $db->prepare("SELECT IS_USED_LOCK(?) = CONNECTION_ID() AS mine");
+        if (!$stmt) return;
+        $stmt->bind_param('s', $name);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (empty($row['mine'])) {
+            return; // o está libre, o lo tiene otra conexión: no es nuestro
+        }
+
+        $rel = $db->prepare("SELECT RELEASE_LOCK(?)");
+        if (!$rel) return;
+        $rel->bind_param('s', $name);
+        $rel->execute();
+        $rel->close();
+    }
 }
 
 // ===== 1. Validar parámetros =====
@@ -193,6 +255,40 @@ try {
     jexit(['ok' => false, 'error' => 'No se pudo inicializar el cliente S3: ' . $e->getMessage()], 500);
 }
 
+// ===== 3.6. Tomar el lock de edición (solo el flujo de escritura) =====
+// Va ANTES de leer el contenido de S3, no después: si se tomara después, otro
+// request podría escribir entre nuestra lectura y nuestro lock, y estaríamos
+// editando contra una versión que ya no existe.
+if ($action === 'write') {
+    $lockName = "edit:{$projectId}:{$targetFilename}";
+
+    // Escenario de conexión persistente: soltar lo heredado antes de pedirlo.
+    releaseInheritedLocks($db_connection, $lockName);
+
+    $stmtLock = $db_connection->prepare("SELECT GET_LOCK(?, 5) AS got");
+    if (!$stmtLock) {
+        jexit(['ok' => false, 'error' => 'No se pudo solicitar el lock de edición.'], 500);
+    }
+    $stmtLock->bind_param('s', $lockName);
+    $stmtLock->execute();
+    $lockRow = $stmtLock->get_result()->fetch_assoc();
+    $stmtLock->close();
+
+    // GET_LOCK devuelve 1 si lo obtuvo, 0 si expiró el timeout y NULL si hubo error.
+    if (($lockRow['got'] ?? null) !== 1 && ($lockRow['got'] ?? null) !== '1') {
+        jexit([
+            'ok'    => false,
+            'error' => "Otra edición de '{$targetFilename}' está en curso. Inténtalo de nuevo en unos segundos.",
+            'code'  => 'edicion_en_curso',
+        ], 409);
+    }
+
+    $GLOBALS['edit_lock_name'] = $lockName;
+    // Red de seguridad: cubre fatal errors y timeouts, donde jexit() no llega a
+    // ejecutarse. register_shutdown_function SÍ corre tras exit().
+    register_shutdown_function('releaseEditLock');
+}
+
 // ===== 4. Obtener contenido actual desde S3 (SOLO si NO es creación) =====
 $currentContent = '';
 if (!$isCreation) {
@@ -242,16 +338,33 @@ if ($action === 'delete') {
         // 1. Borrar el objeto real en S3
         $s3->deleteObject(['Bucket' => $bucket, 'Key' => $source['s3_key']]);
 
-        // 2. Limpiar el registro legacy FileS3 (code_edit.php lo sincroniza por
-        // Ruta+Nombre en el paso 14c; ProjectSources.files3_id_ nunca se llena
-        // en esta ruta, así que hay que buscarlo por user_id_+Ruta+Nombre)
-        $legacyFilename = basename($source['s3_key']);
-        $legacyFolder = dirname($source['s3_key']);
-        if ($legacyFolder === '.') $legacyFolder = '';
-        $stmtDelLegacy = $db_connection->prepare("DELETE FROM FileS3 WHERE user_id_ = ? AND Ruta = ? AND Nombre = ?");
-        $stmtDelLegacy->bind_param('iss', $userId, $legacyFolder, $legacyFilename);
+        // 2. Limpiar el registro legacy FileS3 a través de la FK.
+        // El paso 14 ahora puebla ProjectSources.files3_id_, así que se puede
+        // borrar por relación en vez de reconstruir Ruta+Nombre con
+        // basename/dirname y confiar en que coincidan.
+        // El WHERE sobre user_id_ se conserva: la FK dice qué fila es, pero la
+        // propiedad la sigue mandando el usuario autenticado.
+        $stmtDelLegacy = $db_connection->prepare(
+            "DELETE f FROM FileS3 f
+             JOIN ProjectSources ps ON ps.files3_id_ = f.id_
+             WHERE ps.id_ = ? AND f.user_id_ = ?"
+        );
+        $stmtDelLegacy->bind_param('ii', $source['id_'], $userId);
         $stmtDelLegacy->execute();
+        $borradasPorFk = $stmtDelLegacy->affected_rows;
         $stmtDelLegacy->close();
+
+        // Fallback para las filas anteriores a la Fase 2, que tienen
+        // files3_id_ = NULL y por tanto no las alcanza el JOIN.
+        if ($borradasPorFk === 0) {
+            $legacyFilename = basename($source['s3_key']);
+            $legacyFolder = dirname($source['s3_key']);
+            if ($legacyFolder === '.') $legacyFolder = '';
+            $stmtDelOld = $db_connection->prepare("DELETE FROM FileS3 WHERE user_id_ = ? AND Ruta = ? AND Nombre = ?");
+            $stmtDelOld->bind_param('iss', $userId, $legacyFolder, $legacyFilename);
+            $stmtDelOld->execute();
+            $stmtDelOld->close();
+        }
 
         // 3. Borrar la fuente (cascada elimina SourceChunks + ChunkEmbeddings, ver FKs)
         $stmtDelSrc = $db_connection->prepare("DELETE FROM ProjectSources WHERE id_ = ? AND project_id_ = ?");
@@ -389,15 +502,14 @@ function fetchRelatedContext(mysqli $db, int $projectId, string $instruction, $b
         $inputTokens = (int)($res['usage']['inputTokens'] ?? 0);
         $outputTokens = (int)($res['usage']['outputTokens'] ?? 0);
         try {
-            $tcId = next_id($db, 'TokenUsage', 'id_');
             $tcPhase = 'compile'; // 'compile' es válido en el ENUM de tu tabla TokenUsage
             $tcModel = 'amazon.nova-micro-v1:0';
             $tcCost = ($inputTokens / 1000 * 0.000035) + ($outputTokens / 1000 * 0.00014);
-            $sqlTC = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)";
+            $sqlTC = "INSERT INTO TokenUsage (session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)";
             $stmtTC = $db->prepare($sqlTC);
             if ($stmtTC) {
                 $durationMs = 0;
-                $stmtTC->bind_param("iissiddi", $tcId, $sessionId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $durationMs);
+                $stmtTC->bind_param("issiddi", $sessionId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $durationMs);
                 $stmtTC->execute();
                 $stmtTC->close();
             }
@@ -535,7 +647,6 @@ Instrucción: " . $instruction;
         $inputTokens = (int)($res['usage']['inputTokens'] ?? 0);
         $outputTokens = (int)($res['usage']['outputTokens'] ?? 0);
         try {
-            $tcId = next_id($db, 'TokenUsage', 'id_');
             $tcPhase = 'lint_fix';
             $tcModel = 'amazon.nova-micro-v1:0';
             $costIn = 0.000035; 
@@ -543,12 +654,12 @@ Instrucción: " . $instruction;
             
             $tcCost = ($inputTokens / 1000 * $costIn) + ($outputTokens / 1000 * $costOut);
             
-            $sqlTC = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) 
-                      VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)";
+            $sqlTC = "INSERT INTO TokenUsage (session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
+                      VALUES (?, NULL, ?, ?, ?, ?, ?, ?)";
             $stmtTC = $db->prepare($sqlTC);
             if ($stmtTC) {
                 $durationMs = 0; // ✅ CORRECCIÓN: Variable en lugar de 0
-                $stmtTC->bind_param("iissiddi", $tcId, $sessionId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $durationMs);
+                $stmtTC->bind_param("issiddi", $sessionId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $durationMs);
                 $stmtTC->execute();
                 $stmtTC->close();
             }
@@ -606,15 +717,14 @@ REGLAS OBLIGATORIAS:
         $inputTokens = (int)($res['usage']['inputTokens'] ?? 0);
         $outputTokens = (int)($res['usage']['outputTokens'] ?? 0);
         try {
-            $tcId = next_id($db, 'TokenUsage', 'id_');
             $tcPhase = 'compile';
             $tcCost = ($inputTokens / 1000 * 0.0008) + ($outputTokens / 1000 * 0.004);
-            $sqlTC = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
-                      VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)";
+            $sqlTC = "INSERT INTO TokenUsage (session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
+                      VALUES (?, NULL, ?, ?, ?, ?, ?, ?)";
             $stmtTC = $db->prepare($sqlTC);
             if ($stmtTC) {
                 $durationMs = 0;
-                $stmtTC->bind_param("iissiddi", $tcId, $sessionId, $tcPhase, $reviewerModel, $inputTokens, $outputTokens, $tcCost, $durationMs);
+                $stmtTC->bind_param("issiddi", $sessionId, $tcPhase, $reviewerModel, $inputTokens, $outputTokens, $tcCost, $durationMs);
                 $stmtTC->execute();
                 $stmtTC->close();
             }
@@ -670,27 +780,57 @@ if (!$lastRow) {
     $nextVersion = implode('.', $parts);
 }
 
-$newVersionId = 0;
-$rs = $db_connection->query("SELECT IFNULL(MAX(id_),0)+1 AS nxt FROM FileVersions");
-if ($rs) {
-    $newVersionId = (int) ($rs->fetch_assoc()['nxt'] ?? 1);
-    $rs->free();
-}
-
 $diffSummary = mb_substr($instruction, 0, 100) . (mb_strlen($instruction) > 100 ? '...' : '');
-$newS3Key = rtrim($source['root_prefix'], '/') . '/' . $targetFilename . '.v' . $nextVersion;
 
-// message_id_ tiene FK a ChatMessages y siempre se insertaba NULL, así que no
-// se podía responder "qué mensaje del chat produjo este cambio". Ahora se
-// guarda si el llamador lo envía.
+// La key versionada cuelga de la canónica: {key}.v{n}. Antes s3_path apuntaba
+// aquí pero NADIE subía este objeto — la columna señalaba a una key inexistente
+// y el respaldo real iba a un .ver0 que se sobrescribía en cada edición, así que
+// solo se podía volver a la penúltima versión. Ahora este objeto sí se sube.
+$versionedS3Key = $source['s3_key'] . '.v' . $nextVersion;
+
+// Estado ANTES de tocar nada. Sin esto no hay forma de comprobar después que se
+// sobrescribió el archivo que creíamos.
+$sha256Before = $isCreation ? null : hash('sha256', $currentContent);
+$bytesBefore  = $isCreation ? null : strlen($currentContent);
+
+// La versión nace en 'draft'. `status` es el ciclo de vida de la ESCRITURA y lo
+// pone el sistema; `is_stable` es "un humano marcó esta versión como la buena" y
+// se queda en 0. committed != stable.
+// id_ es AUTO_INCREMENT: se omite y se lee de insert_id.
+$draftStatus = Schema::FV_DRAFT;
 $stmtInsert = $db_connection->prepare("
     INSERT INTO FileVersions
-    (id_, project_id_, session_id_, message_id_, original_filename, version, s3_path, diff_summary, is_stable)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+    (project_id_, session_id_, message_id_, original_filename, version, s3_path, diff_summary, is_stable,
+     status, sha256_before, bytes_before)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
 ");
-$stmtInsert->bind_param('iiiissss', $newVersionId, $projectId, $sessionId, $messageId, $targetFilename, $nextVersion, $newS3Key, $diffSummary);
+$stmtInsert->bind_param('iiissssssi', $projectId, $sessionId, $messageId, $targetFilename, $nextVersion,
+                        $versionedS3Key, $diffSummary, $draftStatus, $sha256Before, $bytesBefore);
 $stmtInsert->execute();
+$newVersionId = (int) $db_connection->insert_id;
 $stmtInsert->close();
+
+/**
+ * Cierra la versión como 'failed' y responde.
+ *
+ * Sin esto, cada fallo dejaba la fila en 'draft' para siempre y no había manera
+ * de distinguir "se está escribiendo ahora mismo" de "se murió a mitad hace tres
+ * semanas".
+ */
+function failVersion(mysqli $db, int $versionId, string $errorMessage, ?string $modelUsed, array $payload, int $httpCode = 500) {
+    try {
+        $failed = Schema::FV_FAILED;
+        $stmt = $db->prepare("UPDATE FileVersions SET status = ?, error_message = ?, model_used = ? WHERE id_ = ?");
+        if ($stmt) {
+            $stmt->bind_param('sssi', $failed, $errorMessage, $modelUsed, $versionId);
+            $stmt->execute();
+            $stmt->close();
+        }
+    } catch (Throwable $e) {
+        error_log('No se pudo marcar FileVersions#' . $versionId . ' como failed: ' . $e->getMessage());
+    }
+    jexit($payload, $httpCode);
+}
 
 // ===== 10. Crear cliente Bedrock =====
 try {
@@ -798,6 +938,7 @@ $attemptLog   = [];
 $success      = false;
 $failureCode  = 'lint_fallido';
 $strategyUsed = null;
+$modelUsed    = null;   // modelo que produjo el resultado bueno (FileVersions.model_used)
 
 // Cascada de la edición (ver Fase 1 del refactor):
 //   Nivel 1  apply_edit con ancla única.
@@ -822,13 +963,12 @@ $logModelUsage = function (string $phase, string $model, int $inTok, int $outTok
         elseif (strpos($model, 'nova-pro') !== false)  { $costIn = 0.0008;  $costOut = 0.0032; }
         $cost = ($inTok / 1000 * $costIn) + ($outTok / 1000 * $costOut);
 
-        $tcId = next_id($db_connection, 'TokenUsage', 'id_');
         $stmt = $db_connection->prepare(
-            "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
-             VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO TokenUsage (session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
+             VALUES (?, NULL, ?, ?, ?, ?, ?, ?)"
         );
         if ($stmt) {
-            $stmt->bind_param("iissiddi", $tcId, $sessionId, $phase, $model, $inTok, $outTok, $cost, $durationMs);
+            $stmt->bind_param("issiddi", $sessionId, $phase, $model, $inTok, $outTok, $cost, $durationMs);
             $stmt->execute();
             $stmt->close();
         }
@@ -937,6 +1077,7 @@ RULES:
                     $newContent   = $candidate;
                     $success      = true;
                     $strategyUsed = 'create';
+                    $modelUsed    = $tier['model'];
                     break 2;
                 }
                 $lastError = $lintResult['error'];
@@ -1016,6 +1157,7 @@ RULES:
                     $newContent   = $candidate;
                     $success      = true;
                     $strategyUsed = 'apply_edit';
+                    $modelUsed    = $tier['model'];
                     break 2;
                 }
                 $feedback  = "El código resultante no pasó la validación de sintaxis:\n" . $lintResult['error'];
@@ -1072,6 +1214,7 @@ RULES:
                         $newContent   = $rewrite['content'];
                         $success      = true;
                         $strategyUsed = 'full_rewrite';
+                    $modelUsed    = $tier['model'];
                         break;
                     }
                     $lastError = $lintResult['error'];
@@ -1080,7 +1223,8 @@ RULES:
         }
     }
 } catch (Throwable $e) {
-    jexit(['ok' => false, 'error' => 'Error crítico en la escalera de modelos: ' . $e->getMessage()], 500);
+    failVersion($db_connection, $newVersionId, 'Error crítico en la escalera: ' . $e->getMessage(), $modelUsed,
+        ['ok' => false, 'error' => 'Error crítico en la escalera de modelos: ' . $e->getMessage()], 500);
 }
 
 // ===== 13. Evaluar resultado final =====
@@ -1096,7 +1240,7 @@ if (!$success) {
             ? 'El resultado se descartó porque habría eliminado una parte importante del archivo.'
             : 'No se pudo generar código válido después de múltiples intentos.');
 
-    jexit([
+    failVersion($db_connection, $newVersionId, $lastError !== '' ? $lastError : $mensaje, $modelUsed, [
         'ok'          => false,
         'error'       => $mensaje,
         'code'        => $failureCode,
@@ -1106,153 +1250,206 @@ if (!$success) {
     ], $isRejection ? 422 : 500);
 }
 
-// ===== 14. Éxito: Subir a S3 y Registrar en BD (Incluye sync con FileS3 y S3Folders) =====
-// ✅ CORRECCIÓN: se envuelven todas las escrituras de este bloque en una transacción
-// para que, si algo falla a mitad de camino, no queden registros huérfanos
-// (p. ej. ProjectSources actualizado pero FileS3 sin sincronizar).
+// ===== 14. Éxito: persistir el resultado =====
+//
+// ORDEN, Y POR QUÉ ESTE Y NO OTRO
+//
+// Antes el putObject de la key canónica vivía DENTRO de begin_transaction(), así
+// que un rollback dejaba S3 adelantado respecto a la base: el archivo nuevo ya
+// estaba publicado y la BD seguía describiendo el viejo. S3 no participa en la
+// transacción y no tiene rollback, así que el orden tiene que estar pensado para
+// que el paso irreversible sea el ÚLTIMO:
+//
+//   1. Subir a la key VERSIONADA ({key}.v{n}). Objeto nuevo, nadie lo lee aún:
+//      si algo falla después, sobra pero no corrompe nada.
+//   2. COMMIT de la base.
+//   3. Actualizar la key CANÓNICA. Este es el paso que publica el cambio.
+//   4. Si el commit falló: rollback + borrar el objeto versionado (compensación).
+//
+// La ventana que queda es entre 2 y 3: si el proceso muere ahí, la BD dice
+// 'committed' y la canónica sigue teniendo el contenido viejo. Es recuperable
+// —el objeto versionado existe y FileVersions.s3_path apunta a él—, al revés no
+// lo sería.
+$originalS3Key = $source['s3_key'];
+
+// Detectar MIME type y lenguaje básico
+$ext = strtolower(pathinfo($targetFilename, PATHINFO_EXTENSION));
+$mimeMap = ['php' => 'text/x-php', 'js' => 'application/javascript', 'html' => 'text/html', 'css' => 'text/css', 'py' => 'text/x-python'];
+$mimeType = $mimeMap[$ext] ?? 'text/plain';
+$lang = $ext === 'php' ? 'php' : ($ext === 'js' ? 'javascript' : $ext);
+
+$sizeBytes    = strlen($newContent);
+$sha256After  = hash('sha256', $newContent);
+
+// ---------- 14a. Subir la versión (paso 1) ----------
+// Reemplaza al respaldo .ver0, que se sobrescribía en cada edición y por tanto
+// solo permitía volver una versión atrás.
+try {
+    $s3->putObject([
+        'Bucket'      => $bucket,
+        'Key'         => $versionedS3Key,
+        'Body'        => $newContent,
+        'ContentType' => $mimeType,
+        'ACL'         => 'private',
+    ]);
+} catch (Throwable $e) {
+    failVersion($db_connection, $newVersionId, 'No se pudo subir la versión a S3: ' . $e->getMessage(), $modelUsed,
+        ['ok' => false, 'error' => 'No se pudo guardar la versión en S3: ' . $e->getMessage()], 500);
+}
+
+// ---------- 14b. Escrituras en base (paso 2) ----------
 $db_connection->begin_transaction();
 try {
-    $originalS3Key = $source['s3_key'];
-    
-    // Detectar MIME type y lenguaje básico
-    $ext = strtolower(pathinfo($targetFilename, PATHINFO_EXTENSION));
-    $mimeMap = ['php' => 'text/x-php', 'js' => 'application/javascript', 'html' => 'text/html', 'css' => 'text/css', 'py' => 'text/x-python'];
-    $mimeType = $mimeMap[$ext] ?? 'text/plain';
-    $lang = $ext === 'php' ? 'php' : ($ext === 'js' ? 'javascript' : $ext);
+    $filename     = basename($originalS3Key);
+    $folderPrefix = dirname($originalS3Key);
+    if ($folderPrefix === '.') $folderPrefix = '';
 
-// 14a. Actualizar o Crear en ProjectSources
-if ($isCreation) {
-    // 1. Verificamos si ya existe un registro "zombie" en la BD para este proyecto y ruta
-    $stmtCheck = $db_connection->prepare("SELECT id_ FROM ProjectSources WHERE project_id_ = ? AND s3_key = ? LIMIT 1");
-    $stmtCheck->bind_param("is", $projectId, $originalS3Key);
-    $stmtCheck->execute();
-    $resCheck = $stmtCheck->get_result();
-    $existingSource = $resCheck->fetch_assoc();
-    $stmtCheck->close();
+    // El hash incluye el user_id_ porque `Encriptado` forma parte de
+    // uq_files3_user_key (user_id_, Encriptado): sin él, dos usuarios con el
+    // mismo s3_key relativo colisionarían.
+    $encriptadoVal = hash('sha256', $userId . '|' . $originalS3Key);
 
-    $sizeBytes = strlen($newContent);
+    // --- A) Carpeta en S3Folders ---
+    // PrefixHash es GENERATED: no se envía nunca.
+    if ($folderPrefix !== '') {
+        $stmtFolder = $db_connection->prepare("SELECT id_ FROM S3Folders WHERE user_id_ = ? AND Prefix = ? LIMIT 1");
+        $stmtFolder->bind_param("is", $userId, $folderPrefix);
+        $stmtFolder->execute();
+        $existeCarpeta = $stmtFolder->get_result()->num_rows > 0;
+        $stmtFolder->close();
 
-    if ($existingSource) {
-        // ✅ Es un archivo zombie: Actualizamos el registro existente en lugar de insertar uno nuevo
-        $sourceId = $existingSource['id_'];
-        $stmtUpdateSource = $db_connection->prepare("
-            UPDATE ProjectSources 
-            SET filename = ?, mime_type = ?, size_bytes = ?, language = ?, status = 'indexed', indexed_at = NOW()
-            WHERE id_ = ?
-        ");
-        $stmtUpdateSource->bind_param("ssisi", $targetFilename, $mimeType, $sizeBytes, $lang, $sourceId);
-        $stmtUpdateSource->execute();
-        $stmtUpdateSource->close();
-        $source['id_'] = $sourceId;
+        if (!$existeCarpeta) {
+            $folderName = basename($folderPrefix);
+            $parentPrefix = dirname($folderPrefix);
+            if ($parentPrefix === '.') $parentPrefix = '';
+
+            $stmtInsFolder = $db_connection->prepare("
+                INSERT INTO S3Folders (user_id_, Prefix, Nombre, ParentPrefix, Found, AccessType, CreatedAt, UpdatedAt)
+                VALUES (?, ?, ?, ?, 1, 'normal', NOW(), NOW())
+            ");
+            $stmtInsFolder->bind_param("isss", $userId, $folderPrefix, $folderName, $parentPrefix);
+            $stmtInsFolder->execute();
+            $stmtInsFolder->close();
+        }
+    }
+
+    // --- B) Archivo en FileS3, PRIMERO ---
+    // Se sincroniza antes que ProjectSources para poder guardar su id_ en
+    // ProjectSources.files3_id_. Esa FK existía desde siempre y siempre se
+    // insertaba NULL, lo que obligaba a buscar la fila legacy por
+    // basename/dirname en el borrado. Con la FK poblada, el delete es un JOIN.
+    $stmtFile = $db_connection->prepare("SELECT id_ FROM FileS3 WHERE user_id_ = ? AND Ruta = ? AND Nombre = ? LIMIT 1");
+    $stmtFile->bind_param("iss", $userId, $folderPrefix, $filename);
+    $stmtFile->execute();
+    $fileRow = $stmtFile->get_result()->fetch_assoc();
+    $stmtFile->close();
+
+    if ($fileRow) {
+        $files3Id = (int) $fileRow['id_'];
+        $stmtUpdFile = $db_connection->prepare("UPDATE FileS3 SET Tamano = ?, Fecha = NOW(), Found = 1 WHERE id_ = ?");
+        $stmtUpdFile->bind_param("ii", $sizeBytes, $files3Id);
+        $stmtUpdFile->execute();
+        $stmtUpdFile->close();
     } else {
-        // ✅ Realmente es una creación desde cero: Insertamos normal
-        $newSourceId = next_id($db_connection, 'ProjectSources', 'id_');
-        $stmtInsertSource = $db_connection->prepare("
-            INSERT INTO ProjectSources (id_, project_id_, files3_id_, s3_key, filename, mime_type, size_bytes, language, sha256, status, indexed_at)
-            VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, 'indexed', NOW())
+        $metadata = json_encode(['source' => 'ai_editor', 'project_id' => $projectId, 's3_key' => $originalS3Key]);
+        $stmtInsFile = $db_connection->prepare("
+            INSERT INTO FileS3 (Nombre, Encriptado, Tamano, Metadatos, Ruta, Found, AccessType, Fecha, user_id_)
+            VALUES (?, ?, ?, ?, ?, 1, 'normal', NOW(), ?)
         ");
-        $stmtInsertSource->bind_param("iisssis", $newSourceId, $projectId, $originalS3Key, $targetFilename, $mimeType, $sizeBytes, $lang);
-        $stmtInsertSource->execute();
-        $stmtInsertSource->close();
-        $source['id_'] = $newSourceId;
-    }
-} else {
-        $backupS3Key = preg_replace('/(\.[a-zA-Z0-9]+)$/i', '.ver0$1', $originalS3Key);
-        // s3CopySource() codifica cada segmento pero preserva las barras.
-        // urlencode() sobre la ruta entera convertía cada '/' en %2F, así que
-        // CopySource no era una ruta válida y el respaldo nunca se creaba.
-        $s3->copyObject(['Bucket' => $bucket, 'CopySource' => s3CopySource($bucket, $originalS3Key), 'Key' => $backupS3Key]);
-        
-        $updSource = $db_connection->prepare("UPDATE ProjectSources SET status = 'stale' WHERE id_ = ?");
-        $updSource->bind_param('i', $source['id_']);
-        $updSource->execute();
-        $updSource->close();
+        $stmtInsFile->bind_param("ssissi", $filename, $encriptadoVal, $sizeBytes, $metadata, $folderPrefix, $userId);
+        $stmtInsFile->execute();
+        $files3Id = (int) $db_connection->insert_id;
+        $stmtInsFile->close();
     }
 
-    // 14b. Subir el archivo oficial a S3
+    // --- C) ProjectSources ---
+    // INSERT ... ON DUPLICATE KEY UPDATE apoyado en uq_source_project_key
+    // (project_id_, s3_key_hash). Esto sustituye a la rama de "archivo zombie":
+    // aquel SELECT-y-luego-decide era una comprobación de existencia hecha a
+    // mano que el índice único ya resuelve, y además era carrera pura entre dos
+    // requests concurrentes. s3_key_hash es GENERATED: no se envía.
+    $indexedStatus = Schema::SOURCE_INDEXED;
+    $stmtSource = $db_connection->prepare("
+        INSERT INTO ProjectSources
+            (project_id_, files3_id_, s3_key, filename, mime_type, size_bytes, language, sha256, status, indexed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ON DUPLICATE KEY UPDATE
+            files3_id_  = VALUES(files3_id_),
+            filename    = VALUES(filename),
+            mime_type   = VALUES(mime_type),
+            size_bytes  = VALUES(size_bytes),
+            language    = VALUES(language),
+            sha256      = VALUES(sha256),
+            status      = VALUES(status),
+            indexed_at  = NOW(),
+            id_         = LAST_INSERT_ID(id_)
+    ");
+    $stmtSource->bind_param(
+        "iisssisss",
+        $projectId, $files3Id, $originalS3Key, $targetFilename, $mimeType, $sizeBytes, $lang, $sha256After, $indexedStatus
+    );
+    $stmtSource->execute();
+    // LAST_INSERT_ID(id_) en la rama UPDATE hace que insert_id devuelva el id_
+    // de la fila existente en vez de 0.
+    $source['id_'] = (int) $db_connection->insert_id;
+    $stmtSource->close();
+
+    // --- D) Cerrar la versión como 'committed' ---
+    $committedStatus = Schema::FV_COMMITTED;
+    $stmtCommitVer = $db_connection->prepare("
+        UPDATE FileVersions
+        SET status = ?, sha256_after = ?, bytes_after = ?, model_used = ?
+        WHERE id_ = ?
+    ");
+    $stmtCommitVer->bind_param('ssisi', $committedStatus, $sha256After, $sizeBytes, $modelUsed, $newVersionId);
+    $stmtCommitVer->execute();
+    $stmtCommitVer->close();
+
+    $db_connection->commit();
+} catch (Throwable $e) {
+    // ---------- Paso 4: compensación ----------
+    $db_connection->rollback();
+
+    // El objeto versionado ya está en S3 y la base no lo respalda: se borra.
+    // Si este borrado también falla, queda un objeto huérfano —desperdicia
+    // espacio, no corrompe nada— y se registra para poder limpiarlo.
+    try {
+        $s3->deleteObject(['Bucket' => $bucket, 'Key' => $versionedS3Key]);
+    } catch (Throwable $e2) {
+        error_log("Compensación fallida: quedó huérfano el objeto S3 '{$versionedS3Key}': " . $e2->getMessage());
+    }
+
+    error_log("Error en Paso 14 (BD): " . $e->getMessage());
+    failVersion($db_connection, $newVersionId, $e->getMessage(), $modelUsed,
+        ['ok' => false, 'error' => 'No se pudo guardar el archivo en la base de datos: ' . $e->getMessage()], 500);
+}
+
+// ---------- 14c. Publicar en la key canónica (paso 3) ----------
+// Único paso irreversible, y va después del commit a propósito.
+try {
     $s3->putObject([
         'Bucket'      => $bucket,
         'Key'         => $originalS3Key,
         'Body'        => $newContent,
         'ContentType' => $mimeType,
-        'ACL'         => 'private'
+        'ACL'         => 'private',
     ]);
-
-// =====================================================================
-// 14c. 🚀 SINCRONIZACIÓN CON TABLAS LEGACY (FileS3 y S3Folders)
-// =====================================================================
-// $userId ya viene validado y autorizado desde el paso 0/2.5
-$filename = basename($originalS3Key);
-$folderPrefix = dirname($originalS3Key);
-if ($folderPrefix === '.') $folderPrefix = '';
-$fileSize = strlen($newContent);
-
-// ✅ IMPORTANTE: Calcular el hash ANTES de cualquier INSERT
-// ✅ CORRECCIÓN: se incluye el user_id_ en el hash porque `Encriptado` tiene
-// una UNIQUE KEY global en la BD; sin esto, dos usuarios con el mismo s3_key
-// (root_prefix repetido entre proyectos de distintos dueños) chocarían entre sí.
-$encriptadoVal = hash('sha256', $userId . '|' . $originalS3Key);
-
-// A) Sincronizar Carpeta (S3Folders)
-if ($folderPrefix !== '') {
-    $stmtFolder = $db_connection->prepare("SELECT id_ FROM S3Folders WHERE user_id_ = ? AND Prefix = ? LIMIT 1");
-    $stmtFolder->bind_param("is", $userId, $folderPrefix);
-    $stmtFolder->execute();
-    $resFolder = $stmtFolder->get_result();
-    
-    if ($resFolder->num_rows === 0) {
-        $newFolderId = next_id($db_connection, 'S3Folders', 'id_');
-        $folderName = basename($folderPrefix);
-        $parentPrefix = dirname($folderPrefix);
-        if ($parentPrefix === '.') $parentPrefix = '';
-
-        // ✅ PrefixHash se calcula automáticamente (GENERATED ALWAYS AS)
-        $stmtInsFolder = $db_connection->prepare("
-            INSERT INTO S3Folders (id_, user_id_, Prefix, Nombre, ParentPrefix, Found, AccessType, CreatedAt, UpdatedAt)
-            VALUES (?, ?, ?, ?, ?, 1, 'normal', NOW(), NOW())
-        ");
-        $stmtInsFolder->bind_param("iisss", $newFolderId, $userId, $folderPrefix, $folderName, $parentPrefix);
-        $stmtInsFolder->execute();
-        $stmtInsFolder->close();
-    }
-    $stmtFolder->close();
-}
-
-// B) Sincronizar Archivo (FileS3)
-$stmtFile = $db_connection->prepare("SELECT id_, Tamano FROM FileS3 WHERE user_id_ = ? AND Ruta = ? AND Nombre = ? LIMIT 1");
-$stmtFile->bind_param("iss", $userId, $folderPrefix, $filename);
-$stmtFile->execute();
-$resFile = $stmtFile->get_result();
-$fileRow = $resFile->fetch_assoc();
-$stmtFile->close();
-
-if ($fileRow) {
-    $stmtUpdFile = $db_connection->prepare("UPDATE FileS3 SET Tamano = ?, Fecha = NOW(), Found = 1 WHERE id_ = ?");
-    $stmtUpdFile->bind_param("ii", $fileSize, $fileRow['id_']);
-    $stmtUpdFile->execute();
-    $stmtUpdFile->close();
-} else {
-    $newFileId = next_id($db_connection, 'FileS3', 'id_');
-    $metadata = json_encode(['source' => 'ai_editor', 'project_id' => $projectId, 's3_key' => $originalS3Key]);
-    
-    $stmtInsFile = $db_connection->prepare("
-        INSERT INTO FileS3 (id_, Nombre, Encriptado, Tamano, Metadatos, Ruta, Found, AccessType, Fecha, user_id_)
-        VALUES (?, ?, ?, ?, ?, ?, 1, 'normal', NOW(), ?)
-    ");
-    $stmtInsFile->bind_param("ississi", $newFileId, $filename, $encriptadoVal, $fileSize, $metadata, $folderPrefix, $userId);
-    $stmtInsFile->execute();
-    $stmtInsFile->close();
-}
-
-    // ✅ Todo salió bien: confirmamos la transacción
-    $db_connection->commit();
 } catch (Throwable $e) {
-    // ✅ CORRECCIÓN: si algo falla a mitad de camino, revertimos los cambios en BD
-    // (el archivo ya subido a S3 en el paso 14b queda huérfano, pero la BD queda consistente)
-    $db_connection->rollback();
-    error_log("Error en Paso 14 (S3/BD Sync): " . $e->getMessage());
-    jexit(['ok' => false, 'error' => 'No se pudo guardar el archivo en S3/BD: ' . $e->getMessage()], 500);
+    // La base ya está confirmada, así que esto no se puede deshacer con un
+    // rollback. La versión existe en S3 y s3_path apunta a ella: el cambio es
+    // recuperable a mano. Se marca 'failed' para que no parezca publicado.
+    error_log("La versión {$nextVersion} de {$targetFilename} quedó sin publicar en la canónica: " . $e->getMessage());
+    failVersion($db_connection, $newVersionId,
+        'Versión guardada pero no publicada en la key canónica: ' . $e->getMessage(), $modelUsed,
+        [
+            'ok'            => false,
+            'error'         => 'El cambio se guardó como versión pero no se pudo publicar el archivo.',
+            'code'          => 'publicacion_fallida',
+            'version'       => $nextVersion,
+            'versioned_key' => $versionedS3Key,
+        ], 500);
 }
+
 
 // ===== 14d. RESUMEN PROFESIONAL DEL TRABAJO (modelo revisor de código) =====
 // Se genera a partir del código YA subido a S3, no de la instrucción cruda,
@@ -1308,14 +1505,18 @@ if (!($indexResult['ok'] ?? false)) {
 jexit([
     'ok'             => true,
     'message'        => $isCreation
-        ? "✅ Archivo '{$targetFilename}' creado en el proyecto."
-        : "✅ Archivo '{$targetFilename}' actualizado (respaldo .ver0 creado).",
+        ? "✅ Archivo '{$targetFilename}' creado en el proyecto (versión {$nextVersion})."
+        : "✅ Archivo '{$targetFilename}' actualizado (versión {$nextVersion} guardada).",
     'filename'       => $targetFilename,
     'new_version'    => $nextVersion,
+    // Key del objeto versionado, que ahora existe de verdad en S3.
+    'versioned_key'  => $versionedS3Key,
     'download_url'   => $downloadUrl,
     'diff_summary'   => $diffSummary,
     'summary_model'  => $summaryResult['model'],
-    'model_used'     => $attemptLog ? $attemptLog[count($attemptLog) - 1]['model'] : 'unknown',
+    // El modelo que produjo el resultado bueno, no el del último intento
+    // registrado (que en una escalera con fallos es otro).
+    'model_used'     => $modelUsed ?? 'unknown',
     'strategy'       => $strategyUsed,
     'anchor_failures' => $anchorFailures,
     'complexity'     => $category ?? 'unknown',

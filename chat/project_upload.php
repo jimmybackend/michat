@@ -11,14 +11,6 @@ function jexit($arr, $code = 200) {
     exit;
 }
 
-function next_id(mysqli $db, $table, $col) {
-    $table = preg_replace('/[^A-Za-z0-9_]+/','',$table);
-    $col   = preg_replace('/[^A-Za-z0-9_]+/','',$col);
-    $rs = $db->query("SELECT COALESCE(MAX($col), 0) + 1 AS nxt FROM $table");
-    if (!$rs) return 1;
-    $row = $rs->fetch_assoc();
-    return (int)($row['nxt'] ?? 1);
-}
 
 function resolve_root_candidates(): array {
     $docRoot = isset($_SERVER['DOCUMENT_ROOT']) ? (string)$_SERVER['DOCUMENT_ROOT'] : '';
@@ -141,7 +133,6 @@ for ($i = 0; $i < $count; $i++) {
         $result = $manager->uploadFile($tmpPath, $originalName, $rutaDestino, $user_id, $mimeType, $fileSize);
         
         // 2. Registrar en ProjectSources
-        $sourceId = next_id($db_connection, 'ProjectSources', 'id_');
         $s3Key = $result['key_s3'];
         $filename = $originalName;
         
@@ -158,8 +149,8 @@ for ($i = 0; $i < $count; $i++) {
         ];
         $language = $language_map[$ext] ?? 'unknown';
         
-        $sqlInsert = "INSERT INTO ProjectSources (id_, project_id_, files3_id_, s3_key, filename, mime_type, size_bytes, language, sha256, status)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending')";
+        $sqlInsert = "INSERT INTO ProjectSources (project_id_, files3_id_, s3_key, filename, mime_type, size_bytes, language, sha256, status)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'pending')";
         $stmtInsert = $db_connection->prepare($sqlInsert);
         if (!$stmtInsert) {
             $errors[] = 'Error preparando INSERT ProjectSources: '.$db_connection->error;
@@ -167,8 +158,7 @@ for ($i = 0; $i < $count; $i++) {
         }
         
         $files3_id = $result['id'];
-        $stmtInsert->bind_param('iiisssis', 
-            $sourceId, 
+        $stmtInsert->bind_param('iisssis', 
             $project_id, 
             $files3_id, 
             $s3Key, 
@@ -183,6 +173,7 @@ for ($i = 0; $i < $count; $i++) {
             $stmtInsert->close();
             continue;
         }
+        $sourceId = (int) $db_connection->insert_id;
         $stmtInsert->close();
         
         $uploaded[] = [

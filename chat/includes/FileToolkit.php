@@ -14,39 +14,6 @@
  */
 
 // =====================================================================
-// next_id() — helper compartido TEMPORAL
-// =====================================================================
-// Se declara aquí, guardado con function_exists(), por dos motivos:
-//
-//  1. ProjectIndexer.php la LLAMA pero no la declaraba: dependía de que el
-//     archivo que lo incluyera (hoy solo code_edit.php) la hubiera declarado
-//     antes. Cualquier endpoint nuevo que incluyera ProjectIndexer sin
-//     declararla daba fatal error. Al requerir FileToolkit desde
-//     ProjectIndexer, esa dependencia oculta desaparece.
-//
-//  2. El guard evita colisión con las declaraciones que ya existen en
-//     code_edit.php, tools.php, projects.php, index_project_sources.php y
-//     bedrock_chat2.php. PHP declara las funciones de nivel superior al
-//     compilar el archivo, antes de ejecutar sus require(), así que cuando
-//     esto corre la función del llamador ya existe y aquí no se redeclara.
-//
-// @deprecated Fase 2 del refactor la elimina: TODAS las tablas del esquema ya
-// tienen AUTO_INCREMENT (verificado en adbbmis1_Cloud.sql), así que este
-// SELECT MAX(id)+1 no solo es innecesario, además produce duplicate key bajo
-// concurrencia. El reemplazo es omitir la columna id_ en el INSERT y leer
-// $db->insert_id.
-if (!function_exists('next_id')) {
-    function next_id(mysqli $db, string $table, string $col): int {
-        $table = preg_replace('/[^A-Za-z0-9_]+/', '', $table);
-        $col   = preg_replace('/[^A-Za-z0-9_]+/', '', $col);
-        $rs = $db->query("SELECT COALESCE(MAX($col), 0) + 1 AS nxt FROM $table");
-        if (!$rs) return 1;
-        $row = $rs->fetch_assoc();
-        return (int)($row['nxt'] ?? 1);
-    }
-}
-
-// =====================================================================
 // sanitizeRelativePath()
 // =====================================================================
 /**

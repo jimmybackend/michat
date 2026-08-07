@@ -10,15 +10,6 @@ function jexit($arr, $code = 200) {
     exit;
 }
 
-// ✅ FUNCIÓN: Generar siguiente ID manual
-function next_id(mysqli $db, $table, $col) {
-    $table = preg_replace('/[^A-Za-z0-9_]+/','',$table);
-    $col   = preg_replace('/[^A-Za-z0-9_]+/','',$col);
-    $rs = $db->query("SELECT COALESCE(MAX($col), 0) + 1 AS nxt FROM $table");
-    if (!$rs) return 1;
-    $row = $rs->fetch_assoc();
-    return (int)($row['nxt'] ?? 1);
-}
 
 function resolve_root_candidates(): array {
     $docRoot = isset($_SERVER['DOCUMENT_ROOT']) ? (string)$_SERVER['DOCUMENT_ROOT'] : '';
@@ -195,11 +186,11 @@ foreach ($sources as $source) {
         try {
             foreach ($chunks as $idx => $chunk) {
                 // Insertar chunk
-                $chunk_id = next_id($db_connection, 'SourceChunks', 'id_');
-                $sqlChunk = "INSERT INTO SourceChunks (id_, source_id_, project_id_, chunk_type, name, content, start_line, end_line) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                $sqlChunk = "INSERT INTO SourceChunks (source_id_, project_id_, chunk_type, name, content, start_line, end_line) VALUES (?, ?, ?, ?, ?, ?, ?)";
                 $stmtChunk = $db_connection->prepare($sqlChunk);
-                $stmtChunk->bind_param('iiisssii', $chunk_id, $source['id_'], $project_id, $chunk['type'], $chunk['name'], $chunk['content'], $chunk['start'], $chunk['end']);
+                $stmtChunk->bind_param('iisssii', $source['id_'], $project_id, $chunk['type'], $chunk['name'], $chunk['content'], $chunk['start'], $chunk['end']);
                 $stmtChunk->execute();
+                $chunk_id = (int) $db_connection->insert_id;
                 $stmtChunk->close();
 
                 // Generar Embedding con Bedrock
@@ -219,11 +210,10 @@ foreach ($sources as $source) {
                 $totalInputTokens += (int)($emb_response['inputTextTokenCount'] ?? 0);
 
                 // Insertar Embedding
-                $emb_id = next_id($db_connection, 'ChunkEmbeddings', 'id_');
-                $sqlEmb = "INSERT INTO ChunkEmbeddings (id_, chunk_id_, model_id, dimensions, embedding, embedding_json) VALUES (?, ?, ?, ?, ?, ?)";
+                $sqlEmb = "INSERT INTO ChunkEmbeddings (chunk_id_, model_id, dimensions, embedding, embedding_json) VALUES (?, ?, ?, ?, ?)";
                 $stmtEmb = $db_connection->prepare($sqlEmb);
                 $dims = count($embedding_array);
-                $stmtEmb->bind_param('iisiss', $emb_id, $chunk_id, $model_id, $dims, $embedding_json, $embedding_json);
+                $stmtEmb->bind_param('isiss', $chunk_id, $model_id, $dims, $embedding_json, $embedding_json);
                 $stmtEmb->execute();
                 $stmtEmb->close();
             }
@@ -237,7 +227,6 @@ foreach ($sources as $source) {
             // Solo registramos si conseguimos un session_id_ válido
             if ($sessionIdForLog) {
                 try {
-                    $tcId = next_id($db_connection, 'TokenUsage', 'id_');
                     $tcPhase = 'embedding';
                     $tcModel = $model_id;
                     $tcCost = ($inputTokens / 1000) * 0.0001;
@@ -245,21 +234,21 @@ foreach ($sources as $source) {
                     
                     if ($tcMsgId === null) {
                         // Si por alguna razón extrema no hay mensajes en la BD, omitimos la columna para usar DEFAULT NULL
-                        $sqlTC = "INSERT INTO TokenUsage (id_, session_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) 
-                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                        $sqlTC = "INSERT INTO TokenUsage (session_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
+                                  VALUES (?, ?, ?, ?, ?, ?, ?)";
                         $stmtTC = $db_connection->prepare($sqlTC);
                         if ($stmtTC) {
-                            $stmtTC->bind_param("iissiddi", $tcId, $sessionIdForLog, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $tcDuration);
+                            $stmtTC->bind_param("issiddi", $sessionIdForLog, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $tcDuration);
                             $stmtTC->execute();
                             $stmtTC->close();
                         }
                     } else {
                         // ✅ CORREGIDO: Usamos el ID real del mensaje del proyecto, NUNCA 0
-                        $sqlTC = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) 
-                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                        $sqlTC = "INSERT INTO TokenUsage (session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
+                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
                         $stmtTC = $db_connection->prepare($sqlTC);
                         if ($stmtTC) {
-                            $stmtTC->bind_param("iiissiddi", $tcId, $sessionIdForLog, $tcMsgId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $tcDuration);
+                            $stmtTC->bind_param("iissiddi", $sessionIdForLog, $tcMsgId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $tcDuration);
                             $stmtTC->execute();
                             $stmtTC->close();
                         }

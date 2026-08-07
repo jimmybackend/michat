@@ -91,16 +91,6 @@ function infer_provider($model_id) {
     return null;
 }
 
-function next_id(mysqli $db, $table, $col) {
-    $table = preg_replace('/[^A-Za-z0-9_]+/','',$table);
-    $col   = preg_replace('/[^A-Za-z0-9_]+/','',$col);
-
-    $sql = "SELECT COALESCE(MAX($col), 0) + 1 AS nxt FROM $table";
-    $rs  = $db->query($sql);
-    if (!$rs) return 1;
-    $row = $rs->fetch_assoc();
-    return (int)($row['nxt'] ?? 1);
-}
 
 /* ============================
    Parámetros
@@ -154,17 +144,16 @@ $error = null;
 while ($attempts < $maxAttempts) {
     $attempts++;
 
-    $id_ = next_id($db_connection, 'ChatSessions', 'id_');
-
-$sql = "INSERT INTO ChatSessions (id_, user_id_, project_id_, title, model_id, provider, status, meta)
-        VALUES (?, ?, ?, ?, ?, ?, 'open', NULL)";
+$sql = "INSERT INTO ChatSessions (user_id_, project_id_, title, model_id, provider, status, meta)
+        VALUES (?, ?, ?, ?, ?, 'open', NULL)";
 $stmt = $db_connection->prepare($sql);
 if (!$stmt) {
     $error = 'Error preparando SQL: ' . $db_connection->error;
     break;
 }
-$stmt->bind_param('iiisss', $id_, $user_id, $project_id, $title, $model_id, $provider);
+$stmt->bind_param('iisss', $user_id, $project_id, $title, $model_id, $provider);
     $ok = $stmt->execute();
+    $id_ = (int) $db_connection->insert_id;
 
     if ($ok) {
         $created_id = $id_;
