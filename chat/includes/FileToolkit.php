@@ -396,3 +396,85 @@ function s3CopySource(string $bucket, string $key): string {
     $segments = array_map('rawurlencode', explode('/', ltrim($key, '/')));
     return $bucket . '/' . implode('/', $segments);
 }
+
+// =====================================================================
+// syntaxCheckPlan() — qué verificador de sintaxis usar, si es que hay uno
+// =====================================================================
+// Función PURA: no ejecuta nada, solo decide. Recibe qué herramientas están
+// disponibles en lugar de comprobarlo ella, para poder probar la decisión sin
+// depender de la máquina donde corre la suite.
+//
+// EL BUG QUE ARREGLA
+// `node --check` se aplicaba a .ts, .tsx y .jsx. Node no parsea TypeScript ni
+// JSX, así que esos archivos fallaban SIEMPRE la comprobación de sintaxis. Y
+// como el fallo de sintaxis es lo que dispara el reintento, cada edición de un
+// .ts recorría la escalera entera —Nova, Haiku, Nova Pro, Sonnet, Opus— para
+// terminar fallando igual. Se pagaba Opus para no conseguir nada.
+//
+// La regla ahora: si no hay un verificador que ENTIENDA el lenguaje, no se
+// verifica. Un 'skipped' honesto es mejor que un fallo inventado.
+//
+// @param array $tools ['tsc' => bool, 'tsconfig' => bool] — herramientas locales.
+//                     Nunca npx: descarga de la red en frío y en un servidor sin
+//                     salida se queda colgado hasta el timeout.
+// @return array{checker:string, reason:string}
+//         checker: 'php' | 'node' | 'tsc' | 'python' | 'sql-heuristic' | 'none'
+function syntaxCheckPlan(string $filename, array $tools = []): array {
+    $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    $tieneTsc      = !empty($tools['tsc']);
+    $tieneTsconfig = !empty($tools['tsconfig']);
+
+    switch ($ext) {
+        case 'php':
+            return ['checker' => 'php', 'reason' => 'php -l'];
+
+        case 'js':
+        case 'mjs':
+        case 'cjs':
+            // JavaScript liso sí lo parsea Node.
+            return ['checker' => 'node', 'reason' => 'node --check'];
+
+        case 'ts':
+        case 'tsx':
+        case 'jsx':
+            // Node NO entiende ninguno de estos tres. Solo tsc local sirve, y
+            // solo si además hay tsconfig.json: sin él tsc aplica sus valores
+            // por defecto y marca errores que el proyecto no tiene.
+            if ($tieneTsc && $tieneTsconfig) {
+                return ['checker' => 'tsc', 'reason' => 'tsc local con tsconfig.json'];
+            }
+            return [
+                'checker' => 'none',
+                'reason'  => $tieneTsc
+                    ? 'hay tsc local pero falta tsconfig.json'
+                    : 'no hay node_modules/.bin/tsc en el proyecto',
+            ];
+
+        case 'py':
+            return ['checker' => 'python', 'reason' => 'python3 -m py_compile'];
+
+        case 'sql':
+            return ['checker' => 'sql-heuristic', 'reason' => 'heurística mínima'];
+
+        default:
+            return ['checker' => 'none', 'reason' => "no hay verificador de sintaxis para .{$ext}"];
+    }
+}
+
+/**
+ * Presupuesto de tokens para reintentar tras un truncamiento.
+ *
+ * Cuando la respuesta se corta por `max_tokens`, escalar de modelo no arregla
+ * nada: el siguiente también se va a cortar, porque el problema es el techo, no
+ * la capacidad. Se reintenta con el MISMO modelo y el doble de presupuesto,
+ * hasta donde el modelo permita.
+ *
+ * Devuelve 0 si ya estábamos en el techo del modelo: ahí sí toca escalar.
+ */
+function doubledTokenBudget(int $currentBudget, string $modelId): int {
+    $techo = maxOutputTokensFor($modelId);
+    if ($currentBudget >= $techo) {
+        return 0; // sin margen: reintentar con lo mismo daría lo mismo
+    }
+    return min($currentBudget * 2, $techo);
+}

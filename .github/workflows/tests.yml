@@ -12,6 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Se necesita el histórico para comparar finales de línea contra la
+          # rama base. Con el checkout superficial por defecto no hay con qué.
+          fetch-depth: 0
 
       - name: Instalar PHP
         uses: shivammathur/setup-php@v2
@@ -37,3 +41,9 @@ jobs:
             echo "schema.sql contiene $inserts INSERT INTO; es estructura únicamente." >&2
             exit 1
           fi
+
+      # Un script de sustitución escrito en modo texto reescribe el archivo
+      # entero con LF y convierte un cambio de 15 líneas en un diff de 600.
+      # Ya pasó una vez con ocho archivos. Esto lo detecta antes de la revisión.
+      - name: Los finales de línea no pueden cambiar respecto a la base
+        run: bash .github/scripts/check-line-endings.sh "${{ github.event.pull_request.base.sha || github.event.before }}"

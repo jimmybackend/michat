@@ -393,90 +393,215 @@ if ($action === 'delete') {
 }
 
 // ===== 5. FUNCIÓN DE LINTING AVANZADO + MULTI-LENGUAJE + SEGURIDAD =====
+/**
+ * Escribe $code en un temporal con la extensión correcta y ejecuta $fn sobre él.
+ *
+ * ARREGLA UNA FUGA REAL: la versión anterior hacía
+ *     $tmp = tempnam(sys_get_temp_dir(), 'lint_') . '.' . $ext;
+ * tempnam() CREA un archivo y devuelve su ruta; al concatenarle la extensión se
+ * escribía en OTRO archivo distinto, y el que tempnam había creado no lo borraba
+ * nadie. Cada intento de lint dejaba un archivo vacío en /tmp, y hay hasta cinco
+ * intentos por edición.
+ *
+ * La limpieza va en finally y borra los DOS archivos, así que ni una excepción
+ * ni un return temprano dejan basura.
+ */
+function withTempSource(string $code, string $filename, callable $fn) {
+    $ext  = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    $base = tempnam(sys_get_temp_dir(), 'lint_');
+    if ($base === false) {
+        throw new RuntimeException('No se pudo crear el archivo temporal para el lint.');
+    }
+    $ruta = $ext !== '' ? $base . '.' . $ext : $base;
+
+    try {
+        file_put_contents($ruta, $code);
+        return $fn($ruta);
+    } finally {
+        // El de tempnam() y el que realmente usamos: pueden ser distintos.
+        @unlink($base);
+        if ($ruta !== $base) {
+            @unlink($ruta);
+        }
+    }
+}
+
+/** ¿Existe tsc local? Nunca npx: tira de red y en frío se cuelga. */
+function localToolAvailability(): array {
+    $raices = [__DIR__, dirname(__DIR__)];
+    $tsc = false;
+    $tsconfig = false;
+    foreach ($raices as $raiz) {
+        if (is_file($raiz . '/node_modules/.bin/tsc')) $tsc = true;
+        if (is_file($raiz . '/tsconfig.json'))         $tsconfig = true;
+    }
+    return ['tsc' => $tsc, 'tsconfig' => $tsconfig];
+}
+
+/** Ruta al binario local de tsc, o null. */
+function localTscPath(): ?string {
+    foreach ([__DIR__, dirname(__DIR__)] as $raiz) {
+        $p = $raiz . '/node_modules/.bin/tsc';
+        if (is_file($p)) return $p;
+    }
+    return null;
+}
+
+// =====================================================================
+// NIVEL 1 — GATE DE SINTAXIS. Lo único que bloquea y reintenta.
+// =====================================================================
+// PHPStan y Semgrep salieron de aquí a propósito (ver advisoryAnalysis()).
+// Un aviso de estilo o una heurística de seguridad no son motivo para tirar el
+// resultado y escalar a un modelo cinco veces más caro; un error de sintaxis sí.
+//
+// @return array{success:bool, error:string, type:string}
+//         type: 'ok' | 'syntax' | 'skipped'
 function lintCode(string $code, string $filename): array {
+    $plan = syntaxCheckPlan($filename, localToolAvailability());
+
+    if ($plan['checker'] === 'none') {
+        // No hay con qué verificar: se acepta. Antes esto era un fallo, y para
+        // los .ts/.tsx/.jsx era un fallo IMPOSIBLE de arreglar por el modelo.
+        return ['success' => true, 'error' => '', 'type' => 'skipped', 'reason' => $plan['reason']];
+    }
+
+    if ($plan['checker'] === 'sql-heuristic') {
+        $pareceSql = stripos($code, 'SELECT') !== false
+                  || stripos($code, 'INSERT') !== false
+                  || stripos($code, 'UPDATE') !== false
+                  || stripos($code, 'CREATE') !== false
+                  || stripos($code, 'ALTER')  !== false;
+        return $pareceSql
+            ? ['success' => true, 'error' => '', 'type' => 'ok']
+            : ['success' => false, 'error' => 'Posible sintaxis SQL inválida o incompleta.', 'type' => 'syntax'];
+    }
+
+    return withTempSource($code, $filename, function (string $tmp) use ($plan): array {
+        $salida = [];
+        $codigo = 0;
+
+        switch ($plan['checker']) {
+            case 'php':
+                exec('php -l ' . escapeshellarg($tmp) . ' 2>&1', $salida, $codigo);
+                break;
+
+            case 'node':
+                exec('node --check ' . escapeshellarg($tmp) . ' 2>&1', $salida, $codigo);
+                break;
+
+            case 'tsc':
+                $tsc = localTscPath();
+                if ($tsc === null) {
+                    return ['success' => true, 'error' => '', 'type' => 'skipped', 'reason' => 'tsc desapareció entre la decisión y la ejecución'];
+                }
+                exec(escapeshellarg($tsc) . ' --noEmit ' . escapeshellarg($tmp) . ' 2>&1', $salida, $codigo);
+                break;
+
+            case 'python':
+                exec('python3 -m py_compile ' . escapeshellarg($tmp) . ' 2>&1', $salida, $codigo);
+                break;
+        }
+
+        // 127 = binario no encontrado. No es culpa del código: no se puede
+        // pedir al modelo que arregle que falte php en el PATH.
+        if ($codigo === 127) {
+            return ['success' => true, 'error' => '', 'type' => 'skipped', 'reason' => 'el verificador no está instalado'];
+        }
+
+        if ($codigo !== 0) {
+            return ['success' => false, 'error' => trim(implode("\n", $salida)), 'type' => 'syntax'];
+        }
+
+        return ['success' => true, 'error' => '', 'type' => 'ok'];
+    });
+}
+
+// =====================================================================
+// ANÁLISIS ADVISORY — PHPStan y Semgrep. No bloquean, no reintentan.
+// =====================================================================
+// Se ejecuta UNA SOLA VEZ sobre el resultado ganador, no en cada intento de la
+// escalera. Antes corría en todos: con cinco intentos eran cinco invocaciones de
+// Semgrep, cada una descargando su ruleset por red.
+//
+// Los hallazgos salen en warnings[] de la respuesta para que los mire un humano.
+//
+// @return array lista de warnings [{code, message, detail}]
+function advisoryAnalysis(string $code, string $filename): array {
     $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
-    $tmpFile = tempnam(sys_get_temp_dir(), 'lint_') . '.' . $ext;
-    file_put_contents($tmpFile, $code);
-
-    $output = [];
-    $returnCode = 0;
-    $advancedErrors = [];
-
-    // =====================================================================
-    // NIVEL 1: VERIFICACIÓN BÁSICA DE SINTAXIS (Gatekeeper)
-    // =====================================================================
-    if ($ext === 'php') {
-        exec("php -l " . escapeshellarg($tmpFile) . " 2>&1", $output, $returnCode);
-    } elseif (in_array($ext, ['js', 'ts', 'tsx', 'jsx'])) {
-        exec("node --check " . escapeshellarg($tmpFile) . " 2>&1", $output, $returnCode);
-    } elseif ($ext === 'py') {
-        exec("python3 -m py_compile " . escapeshellarg($tmpFile) . " 2>&1", $output, $returnCode);
-    } elseif ($ext === 'sql') {
-        // Validación básica de SQL (puedes integrar sqlflint si lo tienes)
-        $returnCode = (stripos($code, 'SELECT') === false && stripos($code, 'INSERT') === false && stripos($code, 'UPDATE') === false) ? 1 : 0;
-        if ($returnCode !== 0) $output[] = "Posible sintaxis SQL inválida o incompleta.";
+    if (!in_array($ext, ['php', 'js', 'py'], true)) {
+        return [];
     }
 
-    if ($returnCode !== 0) {
-        unlink($tmpFile);
-        $errorMsg = implode("\n", $output);
-        return ['success' => false, 'error' => trim($errorMsg), 'type' => 'syntax'];
-    }
+    return withTempSource($code, $filename, function (string $tmp) use ($ext): array {
+        $warnings = [];
 
-    // =====================================================================
-    // NIVEL 2: LINTING ESPECÍFICO POR LENGUAJE
-    // =====================================================================
-    if ($ext === 'php') {
-        $phpstanPath = file_exists(__DIR__ . '/vendor/bin/phpstan') ? __DIR__ . '/vendor/bin/phpstan' : 'phpstan';
-        $autoloadArg = file_exists(__DIR__ . '/vendor/autoload.php') ? ' --autoload-file=' . escapeshellarg(__DIR__ . '/vendor/autoload.php') : '';
-        exec($phpstanPath . " analyse --no-progress --level=5 --error-format=raw" . $autoloadArg . " " . escapeshellarg($tmpFile) . " 2>&1", $phpstanOut, $phpstanRet);
-        if ($phpstanRet !== 0 && $phpstanRet !== 127) {
-               $filtered = array_filter($phpstanOut, function($l) {
-    return !preg_match('/(Project config|Autoloader|bootstrap)/i', $l);
-});
-            if (!empty($filtered)) $advancedErrors[] = "PHPStan (Nivel 5):\n" . implode("\n", $filtered);
-        }
-    } elseif (in_array($ext, ['js', 'jsx'])) {
-        $eslintPath = file_exists(__DIR__ . '/node_modules/.bin/eslint') ? __DIR__ . '/node_modules/.bin/eslint' : 'npx eslint';
-        exec($eslintPath . " --no-eslintrc --parser-options=ecmaVersion:2020 --env browser,node " . escapeshellarg($tmpFile) . " 2>&1", $eslintOut, $eslintRet);
-        if ($eslintRet !== 0 && $eslintRet !== 127 && $eslintRet !== 2) {
-            $advancedErrors[] = "ESLint:\n" . implode("\n", $eslintOut);
-        }
-    } elseif ($ext === 'ts' || $ext === 'tsx') {
-        exec("npx tsc --noEmit " . escapeshellarg($tmpFile) . " 2>&1", $tsOut, $tsRet);
-        if ($tsRet !== 0 && $tsRet !== 127) $advancedErrors[] = "TypeScript:\n" . implode("\n", $tsOut);
-    } elseif ($ext === 'py') {
-        exec("ruff check " . escapeshellarg($tmpFile) . " 2>&1", $ruffOut, $ruffRet);
-        if ($ruffRet !== 0 && $ruffRet !== 127) $advancedErrors[] = "Ruff (Python):\n" . implode("\n", $ruffOut);
-    }
+        // ---- PHPStan ----
+        // Nivel 0, no 5. Analizamos UN archivo aislado, fuera del proyecto: en
+        // nivel 5 PHPStan marca como "unknown class" cada clase del repo, porque
+        // no puede verlas. Eran cientos de líneas de ruido que además tiraban el
+        // resultado y disparaban la escalera. Nivel 0 se queda en errores reales
+        // de ese archivo.
+        if ($ext === 'php') {
+            $phpstan = null;
+            foreach ([__DIR__ . '/vendor/bin/phpstan', dirname(__DIR__) . '/vendor/bin/phpstan'] as $p) {
+                if (is_file($p)) { $phpstan = $p; break; }
+            }
+            if ($phpstan !== null) {
+                $autoload = '';
+                foreach ([__DIR__ . '/vendor/autoload.php', dirname(__DIR__) . '/vendor/autoload.php'] as $a) {
+                    if (is_file($a)) { $autoload = ' --autoload-file=' . escapeshellarg($a); break; }
+                }
+                $out = []; $ret = 0;
+                exec(escapeshellarg($phpstan) . ' analyse --no-progress --level=0 --error-format=raw'
+                     . $autoload . ' ' . escapeshellarg($tmp) . ' 2>&1', $out, $ret);
 
-    // =====================================================================
-    // NIVEL 3: DETECCIÓN DE PROBLEMAS DE SEGURIDAD (Semgrep)
-    // =====================================================================
-    if (in_array($ext, ['php', 'js', 'py'])) {
-        // Semgrep detecta SQLi, XSS, Hardcoded Secrets, eval(), etc.
-        $semgrepCmd = "semgrep scan --config auto --quiet --disable-version-check " . escapeshellarg($tmpFile) . " 2>&1";
-        exec($semgrepCmd, $secOut, $secRet);
-        
-        // 127 = comando no encontrado. 1 = encontró vulnerabilidades. 0 = limpio.
-        if ($secRet === 1) { 
-            // Filtramos el ruido de "configuring" para mostrar solo los hallazgos reales
-               $findings = array_filter($secOut, function($l) {
-    return preg_match('/(rule-id|severity|line|found)/i', $l) || strpos($l, '===') !== false;
-});
-            if (!empty($findings)) {
-                $advancedErrors[] = "⚠️ PROBLEMAS DE SEGURIDAD DETECTADOS (Semgrep):\n" . implode("\n", array_slice($findings, 0, 15)); // Máx 15 líneas para no saturar
+                if ($ret !== 0 && $ret !== 127) {
+                    $filtrado = array_values(array_filter($out, function ($l) {
+                        return trim($l) !== '' && !preg_match('/(Project config|Autoloader|bootstrap)/i', $l);
+                    }));
+                    if ($filtrado) {
+                        $warnings[] = [
+                            'code'    => 'phpstan',
+                            'message' => 'PHPStan (nivel 0) encontró ' . count($filtrado) . ' aviso(s). No bloquean el guardado.',
+                            'detail'  => implode("\n", array_slice($filtrado, 0, 20)),
+                        ];
+                    }
+                }
             }
         }
-    }
 
-    unlink($tmpFile);
+        // ---- Semgrep ----
+        // Sin --config auto: eso descarga el ruleset por red EN CADA invocación,
+        // lo que en un servidor sin salida se traduce en un cuelgue hasta el
+        // timeout. Se usa un ruleset local; si no hay, no se ejecuta.
+        $reglas = null;
+        foreach ([__DIR__ . '/semgrep-rules.yml', dirname(__DIR__) . '/semgrep-rules.yml',
+                  __DIR__ . '/.semgrep.yml', dirname(__DIR__) . '/.semgrep.yml'] as $r) {
+            if (is_file($r)) { $reglas = $r; break; }
+        }
+        if ($reglas !== null) {
+            $out = []; $ret = 0;
+            exec('semgrep scan --config ' . escapeshellarg($reglas)
+                 . ' --quiet --disable-version-check --metrics=off --timeout=20 '
+                 . escapeshellarg($tmp) . ' 2>&1', $out, $ret);
 
-    if (!empty($advancedErrors)) {
-        return ['success' => false, 'error' => implode("\n\n---\n\n", $advancedErrors), 'type' => 'advanced_lint'];
-    }
+            // 0 = limpio, 1 = encontró algo, 127 = no instalado.
+            if ($ret === 1) {
+                $hallazgos = array_values(array_filter($out, function ($l) {
+                    return trim($l) !== '';
+                }));
+                if ($hallazgos) {
+                    $warnings[] = [
+                        'code'    => 'semgrep',
+                        'message' => 'Semgrep señaló posibles problemas de seguridad. Revísalos: no bloquean el guardado.',
+                        'detail'  => implode("\n", array_slice($hallazgos, 0, 20)),
+                    ];
+                }
+            }
+        }
 
-    return ['success' => true, 'error' => '', 'type' => 'ok'];
+        return $warnings;
+    });
 }
 
 // ===== 6. LIMPIEZA DE MARKDOWN =====
@@ -1390,9 +1515,23 @@ try {
     );
     $stmtSource->execute();
     // LAST_INSERT_ID(id_) en la rama UPDATE hace que insert_id devuelva el id_
-    // de la fila existente en vez de 0.
+    // de la fila existente en vez de 0. Es el idioma que documenta MySQL para
+    // recuperar el id en un upsert, y la asignación tiene que estar SIEMPRE en
+    // la lista del ON DUPLICATE KEY UPDATE: sin ella insert_id vale 0 cuando la
+    // fila ya existía.
     $source['id_'] = (int) $db_connection->insert_id;
     $stmtSource->close();
+
+    // Guard duro. Si el id sale 0, la indexación posterior escribiría chunks
+    // contra la fuente equivocada (o contra ninguna) sin que nada fallara a la
+    // vista. Preferimos abortar y compensar: la transacción todavía no ha
+    // hecho commit y el objeto versionado se borra en el catch.
+    if ($source['id_'] <= 0) {
+        throw new RuntimeException(
+            'ProjectSources devolvió insert_id = 0 tras el upsert. '
+            . 'Revisa que el ON DUPLICATE KEY UPDATE conserve id_ = LAST_INSERT_ID(id_).'
+        );
+    }
 
     // --- D) Cerrar la versión como 'committed' ---
     $committedStatus = Schema::FV_COMMITTED;
@@ -1487,6 +1626,29 @@ $downloadUrl = 'descargar.php?archivo=' . urlencode($source['s3_key']) . '&nombr
 // prometiendo una capacidad inexistente; ahora sale como advertencia para que
 // el humano revise esos archivos.
 $warnings = [];
+
+// Análisis advisory (PHPStan + Semgrep) sobre el resultado GANADOR, una sola
+// vez. Antes corría dentro del bucle de la escalera: con cinco intentos eran
+// cinco pasadas de Semgrep, cada una descargando su ruleset por red, y un
+// hallazgo suyo tiraba el resultado y disparaba la escalada a un modelo más
+// caro. Ahora no bloquea nada: sale aquí para que lo mire un humano.
+try {
+    foreach (advisoryAnalysis($newContent, $targetFilename) as $aviso) {
+        $warnings[] = $aviso;
+    }
+} catch (Throwable $e) {
+    error_log('Análisis advisory falló (no bloquea): ' . $e->getMessage());
+}
+
+// Si el gate de sintaxis no pudo verificar el archivo, se dice. Es honesto:
+// 'skipped' significa que nadie comprobó que esto compile.
+if (($lintResult['type'] ?? '') === 'skipped') {
+    $warnings[] = [
+        'code'    => 'sintaxis_no_verificada',
+        'message' => 'No se verificó la sintaxis de este archivo: ' . ($lintResult['reason'] ?? 'no hay verificador disponible') . '.',
+    ];
+}
+
 if (!empty($impactAnalysis['is_multi_file'])) {
     $warnings[] = [
         'code'    => 'referencias_en_otros_archivos',

@@ -142,31 +142,54 @@ RULES:
     $budget = min((int) ceil(estimateTokens($fileContent) * 2.5), maxOutputTokensFor($modelId));
     $budget = max($budget, 1024);
 
-    $t0 = hrtime(true);
-    $res = $bedrock->converse([
-        'modelId' => $modelId,
-        'messages' => [['role' => 'user', 'content' => [['text' => $userPrompt]]]],
-        'system' => [['text' => $system]],
-        'inferenceConfig' => ['maxTokens' => $budget, 'temperature' => 0.2, 'topP' => 0.9]
-    ]);
-    $durationMs = (int) round((hrtime(true) - $t0) / 1e6);
+    // Reintento por truncamiento: si la respuesta se corta por `max_tokens`,
+    // escalar de modelo no arregla nada —el siguiente se cortará igual, porque
+    // el problema es el techo, no la capacidad— y además cuesta más. Se
+    // reintenta con el MISMO modelo y el doble de presupuesto, hasta agotar el
+    // techo del modelo. Solo entonces se devuelve el fallo y la escalera escala.
+    $intentos = 0;
+    $reintentosPorTruncamiento = 0;
 
-    $raw = '';
-    foreach (($res['output']['message']['content'] ?? []) as $block) {
-        if (isset($block['text'])) $raw .= $block['text'];
-    }
+    while (true) {
+        $intentos++;
+        $t0 = hrtime(true);
+        $res = $bedrock->converse([
+            'modelId' => $modelId,
+            'messages' => [['role' => 'user', 'content' => [['text' => $userPrompt]]]],
+            'system' => [['text' => $system]],
+            'inferenceConfig' => ['maxTokens' => $budget, 'temperature' => 0.2, 'topP' => 0.9]
+        ]);
+        $durationMs = (int) round((hrtime(true) - $t0) / 1e6);
 
-    $out = [
-        'ok' => false, 'content' => '', 'error' => '',
-        'stop_reason'   => (string) ($res['stopReason'] ?? ''),
-        'input_tokens'  => (int) ($res['usage']['inputTokens'] ?? 0),
-        'output_tokens' => (int) ($res['usage']['outputTokens'] ?? 0),
-        'duration_ms'   => $durationMs,
-    ];
+        $raw = '';
+        foreach (($res['output']['message']['content'] ?? []) as $block) {
+            if (isset($block['text'])) $raw .= $block['text'];
+        }
 
-    if ($out['stop_reason'] === 'max_tokens') {
-        $out['error'] = 'La reescritura se cortó por límite de tokens: el resultado se descarta entero.';
-        return $out;
+        $out = [
+            'ok' => false, 'content' => '', 'error' => '',
+            'stop_reason'   => (string) ($res['stopReason'] ?? ''),
+            'input_tokens'  => (int) ($res['usage']['inputTokens'] ?? 0),
+            'output_tokens' => (int) ($res['usage']['outputTokens'] ?? 0),
+            'duration_ms'   => $durationMs,
+            'token_budget'  => $budget,
+            'truncation_retries' => $reintentosPorTruncamiento,
+        ];
+
+        if ($out['stop_reason'] !== 'max_tokens') {
+            break;
+        }
+
+        $nuevoBudget = doubledTokenBudget($budget, $modelId);
+        if ($nuevoBudget === 0) {
+            // Ya estábamos en el techo del modelo: reintentar daría lo mismo.
+            $out['error'] = 'La reescritura se cortó por límite de tokens y el modelo ya estaba en su techo ('
+                          . $budget . '): el resultado se descarta entero.';
+            return $out;
+        }
+
+        $budget = $nuevoBudget;
+        $reintentosPorTruncamiento++;
     }
 
     $content = cleanMarkdown($raw);

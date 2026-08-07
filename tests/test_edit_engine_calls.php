@@ -103,10 +103,42 @@ $r = requestFullRewrite($bedrock, 'modelo.x', 'A.php', $archivo, 'cambia a 2', '
 t_ok(!$r['ok'], 'descarta una reescritura abreviada con marcador de elisión');
 t_ok(str_contains($r['error'], 'abrevi'), 'el error explica que se abrevió el archivo');
 
-$bedrock = new FakeBedrock([['text' => "<?php\nclass A {\n  public function un", 'stop' => 'max_tokens']]);
+// =====================================================================
+t_section('requestFullRewrite — truncamiento: reintentar antes de escalar');
+// =====================================================================
+// Escalar de modelo por un corte de max_tokens no arregla nada: el siguiente se
+// corta igual, porque el problema es el techo de salida y no la capacidad. Y
+// además cuesta más. Se reintenta con el MISMO modelo y el doble de tokens.
+
+$bedrock = new FakeBedrock([
+    ['text' => "<?php\nclass A {\n  public function un", 'stop' => 'max_tokens'],
+    ['text' => "<?php\nclass A {\n    public function uno() { return 2; }\n}\n"],
+]);
 $r = requestFullRewrite($bedrock, 'modelo.x', 'A.php', $archivo, 'x', '');
-t_ok(!$r['ok'], 'descarta la reescritura cortada por max_tokens');
-t_ok(str_contains($r['error'], 'descarta'), 'el error deja claro que el resultado se tira entero');
+t_ok($r['ok'], 'tras un corte por max_tokens reintenta y acepta el segundo resultado');
+t_eq(2, count($bedrock->llamadas), 'hizo exactamente dos llamadas');
+t_eq('modelo.x', $bedrock->llamadas[1]['modelId'], 'el reintento usa el MISMO modelo, no escala');
+$presupuesto1 = $bedrock->llamadas[0]['inferenceConfig']['maxTokens'];
+$presupuesto2 = $bedrock->llamadas[1]['inferenceConfig']['maxTokens'];
+t_ok($presupuesto2 > $presupuesto1, 'el reintento pide más tokens que el intento anterior');
+t_eq(1, $r['truncation_retries'], 'informa de cuántos reintentos por truncamiento hubo');
+
+// Si el modelo ya estaba en su techo, reintentar daría exactamente lo mismo:
+// ahí sí toca rendirse y dejar que la escalera escale.
+$bedrock = new FakeBedrock(array_fill(0, 12, ['text' => 'cortado', 'stop' => 'max_tokens']));
+$r = requestFullRewrite($bedrock, 'modelo.x', 'A.php', $archivo, 'x', '');
+t_ok(!$r['ok'], 'se rinde cuando el truncamiento persiste hasta el techo del modelo');
+t_ok(str_contains($r['error'], 'techo'), 'el error explica que se agotó el techo del modelo');
+t_ok(count($bedrock->llamadas) < 12, 'no reintenta indefinidamente (' . count($bedrock->llamadas) . ' llamadas)');
+
+// =====================================================================
+t_section('doubledTokenBudget — duplica hasta el techo, luego se rinde');
+// =====================================================================
+
+t_eq(2048, doubledTokenBudget(1024, 'anthropic.claude-3-5-haiku-x'), 'duplica dentro del margen');
+t_eq(8192, doubledTokenBudget(5000, 'anthropic.claude-3-5-haiku-x'), 'el doble se recorta al techo del modelo');
+t_eq(0, doubledTokenBudget(8192, 'anthropic.claude-3-5-haiku-x'), 'devuelve 0 cuando ya está en el techo');
+t_eq(0, doubledTokenBudget(99999, 'amazon.nova-micro-v1:0'), 'devuelve 0 si se pidió por encima del techo');
 
 $bedrock = new FakeBedrock([['text' => '   ']]);
 $r = requestFullRewrite($bedrock, 'modelo.x', 'A.php', $archivo, 'x', '');
