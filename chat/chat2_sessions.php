@@ -94,14 +94,14 @@ if (isset($_SESSION['user_id']) && is_numeric($_SESSION['user_id'])) {
 
 // 2. Si no, intentar obtenerlo desde $_SESSION['usuario'] (nombre de usuario)
 if (!$user_id && isset($_SESSION['usuario']) && !empty($_SESSION['usuario'])) {
-  $username = (string)$_SESSION['usuario'];
+  $email = (string)$_SESSION['usuario'];
   
-  // Buscar el ID en la tabla de usuarios (ajusta el nombre de tabla y columna)
-  // Suponiendo que tienes una tabla 'usuarios' con columnas 'id' y 'username'
+  // Buscar el ID en la tabla Users (ajusta el nombre de tabla y columna)
+  // La tabla 'Users' tiene columnas 'id' y 'email'
   if ($isMysqli) {
-    $stmt = $db_connection->prepare("SELECT id FROM usuarios WHERE username = ?");
+    $stmt = $db_connection->prepare("SELECT id FROM Users WHERE email = ?");
     if ($stmt) {
-      $stmt->bind_param("s", $username);
+      $stmt->bind_param("s", $email);
       $stmt->execute();
       $res = $stmt->get_result();
       if ($row = $res->fetch_assoc()) {
@@ -110,8 +110,8 @@ if (!$user_id && isset($_SESSION['usuario']) && !empty($_SESSION['usuario'])) {
       $stmt->close();
     }
   } elseif ($isPdo) {
-    $stmt = $pdo->prepare("SELECT id FROM usuarios WHERE username = ?");
-    $stmt->execute([$username]);
+    $stmt = $pdo->prepare("SELECT id FROM Users WHERE email = ?");
+    $stmt->execute([$email]);
     if ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
       $user_id = (int)$row['id'];
     }
