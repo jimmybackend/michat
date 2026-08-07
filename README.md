@@ -4,17 +4,24 @@ Chat con asistente de código sobre proyectos almacenados en S3.
 
 ## Base de datos
 
-### El volcado de la raíz es **estructura únicamente**
+### `schema.sql` — estructura únicamente
 
-El volcado de estructura de la raíz (`adbbmis1_Cloud.sql`, a renombrar como
-`schema.sql`) es la **única fuente de verdad** del esquema. Contiene **solo
-estructura: cero datos y cero credenciales**. Cualquier otro `.sql` del repo o
-del historial está obsoleto y no debe usarse para deducir el esquema.
+`schema.sql`, en la raíz, es la **única fuente de verdad** del esquema: 23
+tablas, 30 claves foráneas, **cero datos y cero credenciales**. Cualquier otro
+`.sql` del repo o del historial está obsoleto y no debe usarse para deducir el
+esquema.
 
 Regla que no se negocia: nunca lleva `INSERT`.
 
 ```bash
-grep -c "^INSERT INTO" adbbmis1_Cloud.sql   # tiene que devolver 0
+grep -c "^INSERT INTO" schema.sql   # tiene que devolver 0
+```
+
+Se carga **solo contra una base vacía ya creada** — no incluye `CREATE DATABASE`
+ni `DROP TABLE`, así que aplicarlo sobre una base con tablas falla:
+
+```bash
+mysql -u USUARIO -p BASEDEDATOS < schema.sql
 ```
 
 Para regenerarlo desde producción:
@@ -27,11 +34,13 @@ mysqldump --no-data --skip-comments --skip-add-drop-table \
 Los volcados **con datos** están ignorados por `.gitignore`
 (`*.dump.sql`, `*-data.sql`, `backup*.sql`, …). No los fuerces con `git add -f`.
 
-### Hook de pre-commit
+### CI y hook de pre-commit
 
-Hay un hook que bloquea el commit si el volcado trae datos, si alguien intenta
-colar un volcado con filas, o si los tests están rojos. Actívalo una vez por
-clon:
+`.github/workflows/tests.yml` ejecuta `php -l` sobre todo el PHP y
+`php tests/run.php` en cada push y cada PR. Eso es lo obligatorio.
+
+El hook de `.githooks/` hace lo mismo antes de commitear, más bloquear volcados
+con datos, pero **solo protege a quien lo activa**:
 
 ```bash
 git config core.hooksPath .githooks
@@ -39,9 +48,9 @@ git config core.hooksPath .githooks
 
 ### `migrations/` — el historial
 
-El volcado refleja el **estado actual**; `migrations/` guarda **cómo se llegó
+`schema.sql` refleja el **estado actual**; `migrations/` guarda **cómo se llegó
 hasta ahí**. Ninguna migración se ejecuta desde PHP: se aplican a mano y luego se
-regenera el volcado. Ver `migrations/README.md`.
+regenera `schema.sql`. Ver `migrations/README.md`.
 
 ### `chat/includes/Schema.php` — constantes espejo de los ENUM
 

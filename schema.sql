@@ -1,11 +1,13 @@
--- phpMyAdmin SQL Dump
--- version 5.2.3
--- https://www.phpmyadmin.net/
+-- schema.sql — estructura únicamente, sin datos.
+-- Migraciones aplicadas: 001, 002, 003 (2026-08-06)
+-- 23 tablas · 30 FKs · 0 INSERT
 --
--- Servidor: localhost:3306
--- Tiempo de generación: 06-08-2026 a las 14:10:36
--- Versión del servidor: 8.0.46-37
--- Versión de PHP: 8.4.24
+-- Carga SOLO contra una base vacía ya creada:
+--   mysql -u USUARIO -p BASEDEDATOS < schema.sql
+--
+-- Regenerar:
+--   mysqldump --no-data --skip-comments --skip-add-drop-table \
+--             --single-transaction -u USUARIO -p BASEDEDATOS > schema.sql
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -16,10 +18,6 @@ SET time_zone = "+00:00";
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
 /*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
 /*!40101 SET NAMES utf8mb4 */;
-
---
--- Base de datos: `adbbmis1_Cloud`
---
 
 -- --------------------------------------------------------
 

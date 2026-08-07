@@ -1,0 +1,39 @@
+name: tests
+
+# El hook de .githooks/pre-commit solo protege a quien lo activó a mano
+# (git config core.hooksPath .githooks). Esto lo hace obligatorio: si alguien
+# toca un ENUM y no actualiza chat/includes/Schema.php, el PR se pone rojo.
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      # No hay composer.json: las dependencias viven en el servidor, fuera del
+      # webroot. La suite solo ejercita funciones puras, así que no hace falta
+      # instalar nada más.
+      - name: Comprobar sintaxis de todo el PHP
+        run: |
+          find . -name '*.php' -not -path './vendor/*' -print0 \
+            | xargs -0 -n1 -P4 php -l
+
+      - name: Ejecutar la suite
+        run: php tests/run.php
+
+      - name: schema.sql no puede contener datos
+        run: |
+          inserts=$(grep -c '^INSERT INTO' schema.sql || true)
+          if [ "$inserts" -ne 0 ]; then
+            echo "schema.sql contiene $inserts INSERT INTO; es estructura únicamente." >&2
+            exit 1
+          fi

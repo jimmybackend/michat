@@ -3,7 +3,7 @@
  * test_schema_constants.php
  *
  * Compara las constantes de chat/includes/Schema.php contra los ENUM reales
- * declarados en el volcado de estructura de la raíz.
+ * declarados en /schema.sql.
  *
  * Existe para que una divergencia entre el código y la base rompa la suite en
  * lugar de fallar en silencio en producción — que es exactamente lo que pasó
@@ -16,34 +16,24 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../chat/includes/Schema.php';
 
-// ---------------------------------------------------------------------
-// Localizar el volcado de estructura.
-//
-// El nombre definitivo es schema.sql (lo coloca el humano en la raíz). Hasta
-// que llegue, el volcado vigente del repo es adbbmis1_Cloud.sql, que tiene el
-// mismo contenido. Se prueba contra el que exista, con preferencia por
-// schema.sql, para que el día que aparezca la suite cambie sola.
-// ---------------------------------------------------------------------
-$root = dirname(__DIR__);
-$schemaPath = null;
-foreach (['schema.sql', 'adbbmis1_Cloud.sql'] as $candidate) {
-    if (is_file($root . '/' . $candidate)) {
-        $schemaPath = $root . '/' . $candidate;
-        break;
-    }
-}
+$schemaFile = 'schema.sql';
+$schemaPath = dirname(__DIR__) . '/' . $schemaFile;
 
 t_section('Schema.php — espejo de los ENUM de la base');
 
-if ($schemaPath === null) {
-    t_fail('existe un volcado de estructura en la raíz',
-           'no se encontró ni schema.sql ni adbbmis1_Cloud.sql');
+if (!is_file($schemaPath)) {
+    t_fail("existe {$schemaFile} en la raíz del repositorio",
+           'sin él no hay nada contra lo que contrastar las constantes');
     return;
 }
 
-$schemaFile = basename($schemaPath);
 $schema = (string) file_get_contents($schemaPath);
 t_pass("volcado de estructura localizado ({$schemaFile})");
+
+// La cabecera declara 23 tablas y 30 FKs. Si el volcado se regenera y esas
+// cifras cambian, la cabecera miente y hay que actualizarla a mano.
+t_eq(23, preg_match_all('/^CREATE TABLE /m', $schema), 'schema.sql declara 23 tablas');
+t_eq(30, preg_match_all('/ADD CONSTRAINT /', $schema), 'schema.sql declara 30 claves foráneas');
 
 // ---------------------------------------------------------------------
 // Helpers de parseo

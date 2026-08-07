@@ -121,6 +121,46 @@ final class Schema
         'read_chunk'      => self::TOOL_READ_CHUNK,
     ];
 
+    /*
+     * =================================================================
+     * DETECCIÓN DE BUCLES — corrección a la Tarea B.4 del prompt original
+     * =================================================================
+     *
+     * La consulta que traía B.4 no habría disparado nunca:
+     *
+     *     AND params_hash = SHA2(CAST(? AS CHAR CHARSET utf8mb4), 256)
+     *
+     * `params_hash` se genera sobre `cast(params as char charset utf8mb4)`,
+     * es decir sobre el JSON YA normalizado por MySQL al guardarlo
+     * (separadores y orden de claves canónicos). El lado de la consulta, en
+     * cambio, hashea el JSON crudo que serializó PHP. Los dos hashes no
+     * coinciden salvo por casualidad, así que la detección parece funcionar
+     * y no detecta nada — que es peor que no tenerla.
+     *
+     * En vez de normalizar el lado de la consulta, la Fase 4 registra
+     * primero y compara después contra la propia columna generada de la fila
+     * recién insertada. Así los dos lados salen de MySQL y no dependen de que
+     * PHP mande un JSON parseable ni de cómo lo serialice:
+     *
+     *   1) INSERT de la fila en ToolCalls; guardar $db->insert_id.
+     *   2) Detección:
+     *
+     *      SELECT COUNT(*) FROM ToolCalls t
+     *      JOIN ToolCalls self ON self.id_ = ?
+     *      WHERE t.session_id_ = self.session_id_
+     *        AND t.tool = self.tool
+     *        AND t.params_hash = self.params_hash
+     *        AND t.created_at > NOW() - INTERVAL 5 MINUTE;
+     *
+     *      > 3  ->  warning 'bucle_detectado' en la respuesta
+     *
+     * El índice idx_tc_loop_detect (session_id_, tool, params_hash,
+     * created_at) cubre exactamente ese WHERE.
+     *
+     * Nota: la fila propia entra en el conteo, así que el umbral > 3 cuenta
+     * la llamada actual como la cuarta repetición.
+     */
+
     // =================================================================
     // ToolCalls.status
     // =================================================================

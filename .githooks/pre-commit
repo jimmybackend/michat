@@ -7,19 +7,17 @@
 # =====================================================================
 set -e
 
-# 1. El volcado de estructura es estructura y nada más.
-for f in schema.sql adbbmis1_Cloud.sql; do
-    if git diff --cached --name-only | grep -qx "$f"; then
-        inserts=$(git show ":$f" | grep -c "^INSERT INTO" || true)
-        if [ "$inserts" -ne 0 ]; then
-            echo "ABORTADO: $f contiene $inserts sentencias INSERT INTO." >&2
-            echo "Ese archivo es estructura únicamente. Regeneralo con:" >&2
-            echo "  mysqldump --no-data --skip-comments --skip-add-drop-table \\" >&2
-            echo "            --single-transaction -u USUARIO -p BASEDEDATOS > schema.sql" >&2
-            exit 1
-        fi
+# 1. schema.sql es estructura y nada más.
+if git diff --cached --name-only | grep -qx "schema.sql"; then
+    inserts=$(git show ":schema.sql" | grep -c "^INSERT INTO" || true)
+    if [ "$inserts" -ne 0 ]; then
+        echo "ABORTADO: schema.sql contiene $inserts sentencias INSERT INTO." >&2
+        echo "Ese archivo es estructura únicamente. Regeneralo con:" >&2
+        echo "  mysqldump --no-data --skip-comments --skip-add-drop-table \\" >&2
+        echo "            --single-transaction -u USUARIO -p BASEDEDATOS > schema.sql" >&2
+        exit 1
     fi
-done
+fi
 
 # 2. Los volcados con datos no entran ni forzando el add.
 if git diff --cached --name-only | grep -qE '(\.dump\.sql|-data\.sql|_data\.sql|^backup.*\.sql|^dump.*\.sql)$'; then
