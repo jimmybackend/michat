@@ -924,6 +924,9 @@ function renderSessionsList() {
         setStatus('');
       }
     }
+    
+    // Exponer función para index.php
+    window.selectSessionChat1 = selectSession;
 
     function renderMessages(msgs) {
       el.messages.innerHTML = '';

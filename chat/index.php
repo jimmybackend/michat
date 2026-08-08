@@ -482,6 +482,12 @@ window.UPLOAD_API = "api/upload.php";
 
     // Seleccionar sesión
     function selectSession(sessionId) {
+        // Delegar a la función de chat1.js si está disponible
+        if (typeof window.selectSessionChat1 === 'function') {
+            window.selectSessionChat1(sessionId);
+            return;
+        }
+        
         currentSessionId = sessionId;
         currentProjectId = null;
 
