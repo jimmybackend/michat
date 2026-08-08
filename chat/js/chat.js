@@ -502,6 +502,13 @@ function wireMessageActions(msgDiv) {
     });
   });
 }
+
+function wireAllMessageActions(container) {
+  if (!container) return;
+  container.querySelectorAll('.chat-msg.assistant').forEach(msgDiv => {
+    wireMessageActions(msgDiv);
+  });
+}
 function wireCodeCopyButtons(container) {
   if (!container) return;
   container.querySelectorAll('.chat-code-copy-btn').forEach(btn => {
@@ -762,7 +769,10 @@ function renderSessionsList() {
           created_at: m.created_at || null,
         });
       });
-      setTimeout(() => wireCodeCopyButtons(el.messages), 0);
+      setTimeout(() => {
+        wireCodeCopyButtons(el.messages);
+        wireAllMessageActions(el.messages);
+      }, 0);
     }
     window.renderChatMessages = renderMessages;
 function showPromptApprovalModal(compiledPrompt, compilationId) {
@@ -2617,13 +2627,24 @@ function openSessionAttachmentsModal() {
                             const vidUrl = `descargar.php?archivo=${encodeURIComponent(m.s3_key)}`;
                             html += `<video controls style="max-width:420px; margin-top:.5rem;"><source src="${vidUrl}"></video>`;
                         } else if (content) {
-                            // Convertir markdown básico a HTML
-                            html += `<div class="mt-2">${convertMarkdownToHtml(content)}</div>`;
+                            // Convertir markdown básico a HTML con bloques de código
+                            html += `<div class="mt-2 chat-md">${convertMarkdownToHtmlWithCode(content)}</div>`;
+                        }
+                        
+                        // Agregar botones de acción para mensajes del asistente
+                        if (!isUser && content) {
+                            html += renderMessageActionsHtml();
                         }
                         
                         msgDiv.innerHTML = html;
                         chat2Messages.appendChild(msgDiv);
                     });
+                    
+                    // Wire up los event listeners después de renderizar
+                    setTimeout(() => {
+                        wireAllMessageActions(chat2Messages);
+                        wireCodeCopyButtons(chat2Messages);
+                    }, 0);
                     
                     // Scroll al final
                     chat2Messages.scrollTop = chat2Messages.scrollHeight;
@@ -2653,6 +2674,38 @@ function openSessionAttachmentsModal() {
             .replace(/\*(.+?)\*/g, '<em>$1</em>')
             .replace(/`(.+?)`/g, '<code>$1</code>')
             .replace(/\n/g, '<br>');
+        return html;
+    }
+
+    // Conversión de Markdown a HTML con soporte para bloques de código
+    function convertMarkdownToHtmlWithCode(text) {
+        if (!text) return '';
+        
+        // Extraer y procesar bloques de código primero
+        let codeBlocks = [];
+        let processedText = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+            const index = codeBlocks.length;
+            const cleanCode = mdSafe(code.trim());
+            const langLabel = lang || 'text';
+            codeBlocks.push(`<div class="chat-code-wrapper"><pre class="chat-code-block" data-lang="${langLabel}"><code>${cleanCode}</code></pre><button class="chat-code-copy-btn" title="Copiar código"><i class="fas fa-copy"></i> <span>Copiar</span></button></div>`);
+            return `\n___CODE_BLOCK_${index}___\n`;
+        });
+        
+        // Ahora procesar el markdown restante
+        let html = processedText
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.+?)\*/g, '<em>$1</em>')
+            .replace(/`(.+?)`/g, '<code>$1</code>')
+            .replace(/\n/g, '<br>');
+        
+        // Reinsertar los bloques de código
+        codeBlocks.forEach((block, i) => {
+            html = html.replace(`___CODE_BLOCK_${i}___`, block);
+        });
+        
         return html;
     }
 
