@@ -3,27 +3,27 @@
   window.addEventListener('DOMContentLoaded', () => {
     if (!document.getElementById('pane-Chat2')) return;
     const API = {
-      send: '../bedrock_chat2.php',
-      sessions: '../chat2_sessions.php',
-      createSession: '../chat2_session_create.php',
-      renameSession: '../chat2_session_title.php',
-      archiveSession: '../chat2_session_archive.php',
-      restoreSession: '../chat2_session_restore.php',
-      messages: '../chat2_messages.php',
-      genImage: '../chat_gen_image.php',
-      genVideoStart: '../chat_gen_video_start.php',
-      genVideoStatus: '../chat_gen_video_status.php',
-      notifyPoll: '../chat_notify_poll.php',
-      markPrimordial: '../chat_mark_primordial.php', 
-      getContext: '../get_context.php'
+      send: 'bedrock_chat2.php',
+      sessions: 'chat2_sessions.php',
+      createSession: 'chat2_session_create.php',
+      renameSession: 'chat2_session_title.php',
+      archiveSession: 'chat2_session_archive.php',
+      restoreSession: 'chat2_session_restore.php',
+      messages: 'chat2_messages.php',
+      genImage: 'chat_gen_image.php',
+      genVideoStart: 'chat_gen_video_start.php',
+      genVideoStatus: 'chat_gen_video_status.php',
+      notifyPoll: 'chat_notify_poll.php',
+      markPrimordial: 'chat_mark_primordial.php', 
+      getContext: 'get_context.php'
     };
     const PROJECT_API = {
-      list: '../projects.php',
-      create: '../projects.php',
-      update: '../projects.php',
-      delete: '../projects.php',
-      sources: '../project_sources.php',
-      tools: '../tools.php'
+      list: 'projects.php',
+      create: 'projects.php',
+      update: 'projects.php',
+      delete: 'projects.php',
+      sources: 'project_sources.php',
+      tools: 'tools.php'
     };
     const $ = (s) => document.querySelector(s);
     const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -2093,7 +2093,7 @@ async function loadSessionAttachments(sessionId) {
     if (sessionId && sessionId > 0) {
       qs.set('session_id', sessionId);
     }
-    const r = await fetch(`../session_attachments.php?action=list&${qs.toString()}`, { credentials: 'same-origin' });
+    const r = await fetch(`session_attachments.php?action=list&${qs.toString()}`, { credentials: 'same-origin' });
     const j = toJSONorThrow(await r.text(), r.status, 'Listar adjuntos');
     if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
     sessionAttachments = Array.isArray(j.attachments) ? j.attachments : [];
@@ -2181,7 +2181,7 @@ async function deleteSessionAttachment(attachmentId) {
   try {
     const fd = new FormData();
     fd.append('attachment_id', attachmentId);
-    const r = await fetch('../session_attachments.php?action=remove', {
+    const r = await fetch('session_attachments.php?action=remove', {
       method: 'POST',
       credentials: 'same-origin',
       body: fd
@@ -2220,7 +2220,7 @@ async function uploadSessionFiles() {
   if (progressBar) progressBar.style.width = '30%';
   if (statusEl) statusEl.textContent = `Subiendo ${files.length} archivo(s)...`;
   try {
-    const r = await fetch('../session_upload.php', {
+    const r = await fetch('session_upload.php', {
       method: 'POST',
       credentials: 'same-origin',
       body: fd
@@ -2411,7 +2411,7 @@ function openSessionAttachmentsModal() {
             const uid = getUserId();
             if (uid) qs.set('user_id', uid);
 
-            const r = await fetch(`../chat2_sessions.php?${qs.toString()}`, { credentials: 'same-origin' });
+            const r = await fetch(`chat2_sessions.php?${qs.toString()}`, { credentials: 'same-origin' });
             const j = await r.json();
             if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
             sessions = Array.isArray(j.sessions) ? j.sessions : [];
@@ -2491,7 +2491,7 @@ function openSessionAttachmentsModal() {
             const qs = new URLSearchParams();
             if (uid) qs.set('user_id', uid);
 
-            const r = await fetch(`../projects.php?${qs.toString()}`, { credentials: 'same-origin' });
+            const r = await fetch(`projects.php?${qs.toString()}`, { credentials: 'same-origin' });
             const j = await r.json();
             if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
             projects = Array.isArray(j.projects) ? j.projects : [];
@@ -2588,7 +2588,7 @@ function openSessionAttachmentsModal() {
             chat2Messages.innerHTML = '<div class="text-muted text-center mt-5"><i class="fas fa-spinner fa-spin"></i> Cargando mensajes...</div>';
             
             const qs = new URLSearchParams({ session_id: String(sessionId) });
-            const r = await fetch(`../chat2_messages.php?${qs.toString()}`, { credentials: 'same-origin' });
+            const r = await fetch(`chat2_messages.php?${qs.toString()}`, { credentials: 'same-origin' });
             const j = await r.json();
             
             if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
@@ -2744,7 +2744,7 @@ function openSessionAttachmentsModal() {
                 const uid = getUserId();
                 if (uid) fd.append('user_id', uid);
                 
-                const r = await fetch('../chat2_session_create.php', { method: 'POST', credentials: 'same-origin', body: fd });
+                const r = await fetch('chat2_session_create.php', { method: 'POST', credentials: 'same-origin', body: fd });
                 const j = await r.json();
                 if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
                 
@@ -2796,7 +2796,7 @@ function openSessionAttachmentsModal() {
             const uid = getUserId();
             if (uid) fd.append('user_id', uid);
             
-            const r = await fetch('../projects.php', { method: 'POST', credentials: 'same-origin', body: fd });
+            const r = await fetch('projects.php', { method: 'POST', credentials: 'same-origin', body: fd });
             const j = await r.json();
             if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
             
