@@ -186,6 +186,11 @@ function mdToHtml(md) {
     codeBlocks.push(`<div class="chat-code-wrapper"><pre class="chat-code-block" data-lang="${langLabel}"><code>${cleanCode}</code></pre><button class="chat-code-copy-btn" title="Copiar código"><i class="fas fa-copy"></i> <span>Copiar</span></button></div>`);
     return `\n___CODE_BLOCK_${index}___\n`;
   });
+  // Procesar bloques de instrucciones o código inline con contenedor especial
+  tempMd = tempMd.replace(/\[INSTRUCTION\]([\s\S]*?)\[\/INSTRUCTION\]/gi, (match, content) => {
+    const safeContent = mdSafe(content.trim());
+    return `<div class="chat-instruction-block" style="background:rgba(255,193,7,0.1);border-left:3px solid #ffc107;padding:8px;margin:8px 0;border-radius:4px;"><strong>Instrucción:</strong><br>${safeContent.replace(/\n/g, '<br>')}</div>`;
+  });
   const lines = mdSafe(tempMd).split('\n');
   const out = [];
   let inUl = false, inOl = false, inBlockquote = false;
@@ -275,67 +280,83 @@ function pushLocal(role, content, opts = {}) {
   const ct = opts.content_type || 'text';
   const timeHtml = opts.created_at ? `<div class="msg-time">${esc(fmtDate(opts.created_at))}</div>` : '';
   let html = '';
+  const msgId = opts.message_id || '';
+  const isPrimordial = opts.is_primordial == 1 || opts.is_primordial === true;
+  
+  // Botón primordial solo para asistente
+  const primordialBtn = (role === 'assistant' && msgId) ? `
+    <button class="btn-primordial ${isPrimordial ? 'active' : ''}" 
+            data-msg-id="${msgId}" 
+            title="${isPrimordial ? 'Quitar de primordiales (verdad absoluta)' : 'Marcar como primordial (verdad absoluta)'}"
+            style="float:right; background:none; border:1px solid #ffc107; color:${isPrimordial ? '#ffc107' : '#ccc'}; 
+                   padding:2px 8px; font-size:0.7rem; border-radius:4px; cursor:pointer; margin-bottom: 4px; transition: all 0.2s;">
+      <i class="fas fa-${isPrimordial ? 'star' : 'star-o'}"></i> ${isPrimordial ? 'Primordial' : 'Marcar'}
+    </button>
+  ` : '';
+  
+  // Botones de acción solo para asistente
+  const actionsHtml = (role === 'assistant') ? renderMessageActionsHtml(msgId) : '';
+  
  if (ct === 'image' && (opts.s3_key || opts.thumb_s3_key)) {
     const imgUrl = buildS3Url(opts.thumb_s3_key || opts.s3_key);
     const fullUrl = buildS3Url(opts.s3_key || opts.thumb_s3_key);
-    html = `<div class="chat-msg ${role === 'assistant' ? 'assistant chat-assistant' : 'user chat-user'}">
-      <div><strong>${role === 'assistant' ? 'Asistente' : 'Tú'}</strong></div>
-      ${content ? `<div>${esc(content)}</div>` : ''}
+    const alignClass = role === 'assistant' ? 'align-right' : 'align-left';
+    html = `<div class="chat-msg ${role === 'assistant' ? 'assistant chat-assistant' : 'user chat-user'} ${alignClass}">
+      <div class="msg-header"><strong>${role === 'assistant' ? 'Asistente' : 'Tú'}</strong></div>
+      ${content ? `<div class="msg-content">${esc(content)}</div>` : ''}
       <a href="${fullUrl}" target="_blank" rel="noopener"><img src="${imgUrl}" alt="imagen" style="max-width:320px; border-radius:8px; margin-top:.35rem;"></a>
       ${timeHtml}
+      ${actionsHtml}
     </div>`;
   } else if (ct === 'video' && opts.s3_key) {
     const vidUrl = buildS3Url(opts.s3_key);
-    html = `<div class="chat-msg ${role === 'assistant' ? 'assistant chat-assistant' : 'user chat-user'}">
-      <div><strong>${role === 'assistant' ? 'Asistente' : 'Tú'}</strong></div>
-      ${content ? `<div>${esc(content)}</div>` : ''}
+    const alignClass = role === 'assistant' ? 'align-right' : 'align-left';
+    html = `<div class="chat-msg ${role === 'assistant' ? 'assistant chat-assistant' : 'user chat-user'} ${alignClass}">
+      <div class="msg-header"><strong>${role === 'assistant' ? 'Asistente' : 'Tú'}</strong></div>
+      ${content ? `<div class="msg-content">${esc(content)}</div>` : ''}
       <video controls style="max-width:420px; margin-top:.35rem;" preload="metadata">
         <source src="${vidUrl}" type="${esc(opts.mime_type || 'video/mp4')}">
         Tu navegador no soporta video embebido. <a href="${vidUrl}" target="_blank" rel="noopener">Descargar</a>
       </video>
       ${timeHtml}
+      ${actionsHtml}
     </div>`;
   } else if (ct === 'audio' && opts.s3_key) {
     const aUrl = buildS3Url(opts.s3_key);
-    html = `<div class="chat-msg ${role === 'assistant' ? 'assistant chat-assistant' : 'user chat-user'}">
-      <div><strong>${role === 'assistant' ? 'Asistente' : 'Tú'}</strong></div>
-      ${content ? `<div>${esc(content)}</div>` : ''}
+    const alignClass = role === 'assistant' ? 'align-right' : 'align-left';
+    html = `<div class="chat-msg ${role === 'assistant' ? 'assistant chat-assistant' : 'user chat-user'} ${alignClass}">
+      <div class="msg-header"><strong>${role === 'assistant' ? 'Asistente' : 'Tú'}</strong></div>
+      ${content ? `<div class="msg-content">${esc(content)}</div>` : ''}
       <audio controls style="width:320px; margin-top:.35rem;">
         <source src="${aUrl}" type="${esc(opts.mime_type || 'audio/mpeg')}">
         <a href="${aUrl}" target="_blank" rel="noopener">Descargar audio</a>
       </audio>
       ${timeHtml}
+      ${actionsHtml}
     </div>`;
   } else {
     if (role === 'assistant') {
-      const msgId = opts.message_id || '';
-      const isPrimordial = opts.is_primordial == 1 || opts.is_primordial === true;
-      const primordialBtn = msgId ? `
-        <button class="btn-primordial ${isPrimordial ? 'active' : ''}" 
-                data-msg-id="${msgId}" 
-                title="${isPrimordial ? 'Quitar de primordiales (verdad absoluta)' : 'Marcar como primordial (verdad absoluta)'}"
-                style="float:right; background:none; border:1px solid #ffc107; color:${isPrimordial ? '#ffc107' : '#ccc'}; 
-                       padding:2px 8px; font-size:0.7rem; border-radius:4px; cursor:pointer; margin-bottom: 4px; transition: all 0.2s;">
-          <i class="fas fa-${isPrimordial ? 'star' : 'star-o'}"></i> ${isPrimordial ? 'Primordial' : 'Marcar'}
-        </button>
-      ` : '';
-      html = `<div class="chat-msg assistant chat-assistant">
+      html = `<div class="chat-msg assistant chat-assistant align-right">
         ${primordialBtn}
         <div class="chat-md">${mdToHtml(content || '')}</div>${timeHtml}
-        ${renderMessageActionsHtml()}
+        ${actionsHtml}
       </div>`;
     }
     else if (role === 'system') {
-      html = `<div class="chat-msg system chat-system" style="background: rgba(255, 193, 7, 0.08); border-left: 3px solid #ffc107; padding: 10px; border-radius: 6px; margin: 10px 0; font-size: 0.9em; color: #e0e0e0;">
-        <div style="font-weight: bold; color: #ffc107; margin-bottom: 6px; font-size: 0.85rem;">
+      html = `<div class="chat-msg system chat-system align-left" style="background: rgba(255, 193, 7, 0.08); border-left: 3px solid #ffc107; padding: 10px; border-radius: 6px; margin: 10px 0; font-size: 0.9em; color: #e0e0e0;">
+        <div class="msg-header" style="font-weight: bold; color: #ffc107; margin-bottom: 6px; font-size: 0.85rem;">
           <i class="fas fa-magic"></i> Prompt optimizado por IA:
         </div>
-        <div style="font-style: italic; opacity: 0.9;">${mdToHtml(content || '')}</div>
+        <div class="msg-content" style="font-style: italic; opacity: 0.9;">${mdToHtml(content || '')}</div>
         ${timeHtml}
       </div>`;
     } 
     else {
-      html = `<div class="chat-msg user chat-user"><div>${esc(content || '').replace(/\n/g, '<br>')}</div>${timeHtml}</div>`;
+      html = `<div class="chat-msg user chat-user align-left">
+        <div class="msg-header"><strong>Tú</strong></div>
+        <div class="msg-content">${esc(content || '').replace(/\n/g, '<br>')}</div>
+        ${timeHtml}
+      </div>`;
     }
   }
   el.messages.insertAdjacentHTML('beforeend', html);
@@ -345,7 +366,8 @@ function pushLocal(role, content, opts = {}) {
   wireCodeCopyButtons(el.messages);
   scrollMessagesToBottom();
 }
-function renderMessageActionsHtml() {
+function renderMessageActionsHtml(msgId = '') {
+  const branchAttr = msgId ? `data-msg-id="${esc(msgId)}"` : '';
   return `<div class="message-actions">
     <button class="action-btn" data-action="copy" title="Copiar">
       <i class="fas fa-copy"></i> <span class="action-btn-label">Copiar</span>
@@ -356,7 +378,7 @@ function renderMessageActionsHtml() {
     <button class="action-btn" data-action="share" title="Compartir">
       <i class="fas fa-share-alt"></i> <span class="action-btn-label">Compartir</span>
     </button>
-    <button class="action-btn" data-action="branch" title="Crear rama desde aquí">
+    <button class="action-btn" data-action="branch" ${branchAttr} title="Crear rama desde aquí">
       <i class="fas fa-code-branch"></i> <span class="action-btn-label">Rama</span>
     </button>
   </div>`;
@@ -444,6 +466,7 @@ async function shareMessageText(text) {
   }
 }
 async function branchFromMessage(msgDiv) {
+  const msgId = msgDiv.querySelector('[data-msg-id]')?.dataset?.msgId || '';
   const allMessages = Array.from(el.messages.children);
   const cutIndex = allMessages.indexOf(msgDiv);
   const upTo = cutIndex === -1 ? allMessages : allMessages.slice(0, cutIndex + 1);
@@ -451,7 +474,7 @@ async function branchFromMessage(msgDiv) {
     const isUser = m.classList.contains('chat-user');
     const isAssistant = m.classList.contains('chat-assistant');
     if (!isUser && !isAssistant) return null;
-    const textNode = isAssistant ? m.querySelector('.chat-md') : m.firstElementChild;
+    const textNode = isAssistant ? m.querySelector('.chat-md') : (m.querySelector('.msg-content') || m.firstElementChild);
     const text = (textNode ? textNode.innerText : '').trim();
     if (!text) return null;
     return { role: isUser ? 'user' : 'assistant', content: text };
@@ -464,6 +487,7 @@ async function branchFromMessage(msgDiv) {
   try {
     const fd = new FormData();
     fd.append('title', newTitle);
+    fd.append('parent_message_id', msgId);
     const uid = getUserId();
     if (uid) fd.append('user_id', uid);
     fd.append('model', model);
