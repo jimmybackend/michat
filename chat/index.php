@@ -209,7 +209,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <div class="d-flex align-items-center mt-2">
 <div class="ml-2">
 <input id="chat2File" type="file" style="display:none" multiple accept="image/*,video/*,audio/*,text/plain,.txt,.md,.csv,.json,.xml,.log,application/pdf">
-<button id="chat2Attach" class="btn btn-sm btn-outline-secondary" title="Adjuntar">
+<button id="chat2Attach" class="btn btn-sm btn-outline-secondary" title="Adjuntar archivos a la sesión">
 <i class="fas fa-paperclip"></i>
 </button>
 </div>

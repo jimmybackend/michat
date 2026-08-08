@@ -855,6 +855,9 @@ function renderSessionsList() {
         if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
         renderMessages(j.messages || []);
         renderSessionsList();
+        
+        // Cargar adjuntos de la sesión seleccionada
+        await loadSessionAttachments(id);
       } catch (e) {
         console.error(e);
         el.messages.innerHTML = `<div class="text-danger">Error cargando mensajes: ${e.message}</div>`;
@@ -2191,7 +2194,13 @@ if (btnIndexPending) {
   btnIndexPending.addEventListener('click', indexPendingSources);
 }
 
-    if (el.attach && el.file) el.attach.addEventListener('click', () => el.file.click());
+    // Botón Adjuntar: abre modal de gestión de adjuntos de sesión
+    if (el.attach) {
+      el.attach.addEventListener('click', (e) => {
+        e.preventDefault();
+        openSessionAttachmentsModal();
+      });
+    }
     if (el.file) el.file.addEventListener('change', (ev) => addFilesFromInput(el.file.files));
     if (el.send) el.send.addEventListener('click', sendMessage);
     if (el.input) {
@@ -2536,6 +2545,40 @@ async function loadSessionAttachments(sessionId) {
     
     sessionAttachments = Array.isArray(j.attachments) ? j.attachments : [];
     renderSessionAttachments();
+    
+    // También actualizar la lista dentro del modal si está abierto
+    const modalList = document.getElementById('modalSessionAttachmentsList');
+    if (modalList) {
+      if (sessionAttachments.length === 0) {
+        modalList.innerHTML = '<div class="list-group-item text-muted small">No hay adjuntos aún.</div>';
+      } else {
+        modalList.innerHTML = sessionAttachments.map(a => {
+          const statusClass = a.status || 'pending';
+          const statusText = { 'pending': 'Pendiente', 'indexed': 'Indexado', 'error': 'Error' }[statusClass] || statusClass;
+          const badgeClass = statusClass === 'indexed' ? 'success' : statusClass === 'error' ? 'danger' : 'warning';
+          
+          return `<div class="list-group-item d-flex justify-content-between align-items-center py-2" data-id="${a.id}">
+            <div class="text-truncate" style="max-width: 70%;" title="${esc(a.filename)}">
+              <i class="fas fa-file mr-1 text-muted"></i> ${esc(a.filename)}
+            </div>
+            <div class="d-flex align-items-center" style="gap: 8px;">
+              <span class="badge badge-${badgeClass}" style="font-size: 0.7rem;">${statusText}</span>
+              <button class="btn btn-sm btn-outline-danger btn-delete-modal-attachment" data-id="${a.id}" title="Eliminar adjunto" style="padding: 0 .4rem;">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+          </div>`;
+        }).join('');
+
+        modalList.querySelectorAll('.btn-delete-modal-attachment').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id = parseInt(btn.getAttribute('data-id'), 10);
+            deleteSessionAttachment(id);
+          });
+        });
+      }
+    }
   } catch (e) {
     console.error('Error cargando adjuntos:', e);
     const list = el.attachmentsList;
