@@ -499,10 +499,102 @@ window.UPLOAD_API = "api/upload.php";
         if (sbCurrentSession) sbCurrentSession.textContent = `ID: ${sessionId}`;
         if (sbCurrentProject) sbCurrentProject.textContent = 'Ninguno';
 
+        // Cargar mensajes del chat seleccionado
+        loadMessagesForSession(sessionId);
+        
         // Recargar contexto (si existe la función)
         if (typeof loadContextForSession === 'function') {
             loadContextForSession(sessionId);
         }
+    }
+
+    // Cargar mensajes para una sesión
+    async function loadMessagesForSession(sessionId) {
+        const chat2Messages = document.getElementById('chat2Messages');
+        const chat2Title = document.getElementById('chat2Title');
+        
+        if (!chat2Messages) return;
+        
+        try {
+            chat2Messages.innerHTML = '<div class="text-muted text-center mt-5"><i class="fas fa-spinner fa-spin"></i> Cargando mensajes...</div>';
+            
+            const qs = new URLSearchParams({ session_id: String(sessionId) });
+            const r = await fetch(`chat2_messages.php?${qs.toString()}`, { credentials: 'same-origin' });
+            const j = await r.json();
+            
+            if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+            
+            const messages = Array.isArray(j.messages) ? j.messages : [];
+            
+            // Renderizar mensajes usando la función de chat1.js si está disponible
+            if (typeof window.renderChatMessages === 'function') {
+                window.renderChatMessages(messages);
+            } else {
+                // Renderizado fallback
+                chat2Messages.innerHTML = '';
+                if (messages.length === 0) {
+                    chat2Messages.innerHTML = '<div class="text-muted text-center mt-5"><i class="fas fa-comments"></i><br>No hay mensajes aún. ¡Comienza la conversación!</div>';
+                } else {
+                    messages.forEach(m => {
+                        const role = m.role || 'assistant';
+                        const content = m.content || '';
+                        const time = m.created_at ? new Date(m.created_at).toLocaleString() : '';
+                        const isUser = role === 'user';
+                        
+                        const msgDiv = document.createElement('div');
+                        msgDiv.className = `chat-msg ${isUser ? 'user' : 'assistant'} mb-3 p-3 rounded`;
+                        msgDiv.style.cssText = `background: ${isUser ? 'rgba(0,123,255,0.1)' : 'rgba(255,255,255,0.05)'}; border-left: 3px solid ${isUser ? '#007bff' : '#28a745'};`;
+                        
+                        let html = `<div class="d-flex justify-content-between">
+                            <strong>${isUser ? 'Tú' : 'Asistente'}</strong>
+                            <small class="text-muted">${time}</small>
+                        </div>`;
+                        
+                        // Manejar diferentes tipos de contenido
+                        if (m.content_type === 'image' && m.s3_key) {
+                            const imgUrl = `descargar.php?archivo=${encodeURIComponent(m.s3_key)}`;
+                            html += `<img src="${imgUrl}" alt="imagen" style="max-width:320px; border-radius:8px; margin-top:.5rem;">`;
+                        } else if (m.content_type === 'video' && m.s3_key) {
+                            const vidUrl = `descargar.php?archivo=${encodeURIComponent(m.s3_key)}`;
+                            html += `<video controls style="max-width:420px; margin-top:.5rem;"><source src="${vidUrl}"></video>`;
+                        } else if (content) {
+                            // Convertir markdown básico a HTML
+                            html += `<div class="mt-2">${convertMarkdownToHtml(content)}</div>`;
+                        }
+                        
+                        msgDiv.innerHTML = html;
+                        chat2Messages.appendChild(msgDiv);
+                    });
+                    
+                    // Scroll al final
+                    chat2Messages.scrollTop = chat2Messages.scrollHeight;
+                }
+            }
+            
+            // Actualizar título
+            const session = sessions.find(s => s.id === sessionId);
+            if (chat2Title && session) {
+                chat2Title.textContent = session.title || `Sesión #${sessionId}`;
+            }
+            
+        } catch (e) {
+            console.error('Error cargando mensajes:', e);
+            chat2Messages.innerHTML = `<div class="text-danger text-center mt-5">Error cargando mensajes: ${e.message}</div>`;
+        }
+    }
+    
+    // Conversión básica de Markdown a HTML
+    function convertMarkdownToHtml(text) {
+        if (!text) return '';
+        let html = text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.+?)\*/g, '<em>$1</em>')
+            .replace(/`(.+?)`/g, '<code>$1</code>')
+            .replace(/\n/g, '<br>');
+        return html;
     }
 
     // Seleccionar proyecto

@@ -943,6 +943,9 @@ function renderSessionsList() {
       // Wire code copy buttons after rendering all messages
       setTimeout(() => wireCodeCopyButtons(el.messages), 0);
     }
+    
+    // Exponer función para index.php
+    window.renderChatMessages = renderMessages;
 
 function showPromptApprovalModal(compiledPrompt, compilationId) {
     return new Promise((resolve) => {
