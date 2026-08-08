@@ -242,7 +242,8 @@ function mdToHtml(md) {
   tempMd = tempMd.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
     const index = codeBlocks.length;
     const cleanCode = mdSafe(code.trim());
-    codeBlocks.push(`<pre class="chat-code-block" data-lang="${lang || 'text'}"><code>${cleanCode}</code></pre>`);
+    const langLabel = lang || 'text';
+    codeBlocks.push(`<div class="chat-code-wrapper"><pre class="chat-code-block" data-lang="${langLabel}"><code>${cleanCode}</code></pre><button class="chat-code-copy-btn" title="Copiar código"><i class="fas fa-copy"></i> <span>Copiar</span></button></div>`);
     return `\n___CODE_BLOCK_${index}___\n`;
   });
 
@@ -440,6 +441,7 @@ function pushLocal(role, content, opts = {}) {
   if (role === 'assistant' && ct === 'text') {
     wireMessageActions(el.messages.lastElementChild);
   }
+  wireCodeCopyButtons(el.messages);
   scrollMessagesToBottom();
 }
 
@@ -624,6 +626,60 @@ function wireMessageActions(msgDiv) {
       else if (action === 'speak') speakMessageText(text, btn);
       else if (action === 'share') shareMessageText(text);
       else if (action === 'branch') branchFromMessage(msgDiv);
+    });
+  });
+}
+
+// ===============================
+// 📋 Copiar código en bloques de código
+// ===============================
+function wireCodeCopyButtons(container) {
+  if (!container) return;
+  container.querySelectorAll('.chat-code-copy-btn').forEach(btn => {
+    // Evitar múltiples listeners en el mismo botón
+    if (btn.dataset.wired === 'true') return;
+    btn.dataset.wired = 'true';
+    
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const pre = btn.closest('.chat-code-wrapper').querySelector('pre.chat-code-block code');
+      if (!pre) return;
+      
+      const codeText = pre.innerText;
+      const originalHtml = btn.innerHTML;
+      
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(codeText);
+        } else {
+          throw new Error('clipboard no disponible');
+        }
+        // Éxito: mostrar "¡Copiado!"
+        btn.innerHTML = '<i class="fas fa-check"></i> <span>¡Copiado!</span>';
+        btn.classList.add('copied');
+      } catch (err) {
+        // Fallback con textarea
+        const ta = document.createElement('textarea');
+        ta.value = codeText;
+        ta.className = 'clipboard-fallback';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        if (ok) {
+          btn.innerHTML = '<i class="fas fa-check"></i> <span>¡Copiado!</span>';
+          btn.classList.add('copied');
+        } else {
+          btn.innerHTML = '<i class="fas fa-times"></i> <span>Error</span>';
+        }
+      }
+      
+      // Restaurar el botón después de 2 segundos
+      setTimeout(() => {
+        btn.innerHTML = originalHtml;
+        btn.classList.remove('copied');
+      }, 2000);
     });
   });
 }
@@ -858,6 +914,9 @@ function renderSessionsList() {
         
         // Cargar adjuntos de la sesión seleccionada
         await loadSessionAttachments(id);
+        
+        // Wire code copy buttons after loading messages
+        setTimeout(() => wireCodeCopyButtons(el.messages), 0);
       } catch (e) {
         console.error(e);
         el.messages.innerHTML = `<div class="text-danger">Error cargando mensajes: ${e.message}</div>`;
@@ -881,6 +940,8 @@ function renderSessionsList() {
           created_at: m.created_at || null,
         });
       });
+      // Wire code copy buttons after rendering all messages
+      setTimeout(() => wireCodeCopyButtons(el.messages), 0);
     }
 
 function showPromptApprovalModal(compiledPrompt, compilationId) {
