@@ -367,6 +367,60 @@ body.ui-theme .badge-info    { background: rgba(88,166,255,.15) !important; colo
   font-family: var(--font-mono);
   font-size: .8rem;
 }
+
+/* Contenedor de bloques de código con botón de copiar */
+.chat-code-wrapper {
+  position: relative;
+  margin: 0.5rem 0;
+}
+
+.chat-code-wrapper .chat-code-block {
+  background: var(--bg) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  padding: 0.8rem;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.chat-code-wrapper .chat-code-copy-btn {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  transition: all 0.2s ease;
+  z-index: 10;
+}
+
+.chat-code-wrapper .chat-code-copy-btn:hover {
+  background: rgba(0, 0, 0, 0.8);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.chat-code-wrapper .chat-code-copy-btn.copied {
+  background: rgba(34, 197, 94, 0.8);
+  border-color: rgba(34, 197, 94, 1);
+}
+
+.chat-code-wrapper .chat-code-copy-btn i {
+  font-size: 0.7rem;
+}
+
+.chat-code-wrapper .chat-code-copy-btn span {
+  white-space: nowrap;
+}
+
 #chat2Messages .chat-md code {
   font-family: var(--font-mono);
   background: var(--bg3) !important;
