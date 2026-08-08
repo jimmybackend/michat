@@ -410,8 +410,8 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dropzone/5.9.3/min/dropzone.min.js"></script>
 <script src="js/actualizar-hora.js"></script>
 <script src="js/recargarPagina.js"></script>
-<script src="chat2.js"></script>
-<script src="chat2-enhancements.js"></script>
+<script src="chat1.js"></script>
+<script src="chat1-enhancements.js"></script>
 <script src="js/sincronizar.js"></script>
 <script src="js/estilo.js"></script>
 <script>
