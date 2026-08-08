@@ -842,53 +842,9 @@ role="progressbar" style="width: 0%">0%</div>
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
 
-    // 5. UTILIDADES
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    function showToast(title, message, type = 'info') {
-        const container = document.getElementById('chatToasts') || document.getElementById('incomingToasts');
-        if (!container) {
-            alert(`${title}: ${message}`);
-            return;
-        }
-
-        const toast = document.createElement('div');
-        toast.className = 'chat-toast';
-        toast.innerHTML = `
-            <div class="ct-title">${title}</div>
-            <div class="small">${message}</div>
-            <div class="ct-actions">
-                <button class="ct-close" onclick="this.closest('.chat-toast').remove()">✕</button>
-            </div>
-        `;
-        
-        if (type === 'success') toast.style.borderLeftColor = '#00ff66';
-        if (type === 'warning') toast.style.borderLeftColor = '#ffd861';
-        if (type === 'danger') toast.style.borderLeftColor = '#ff5a5a';
-        
-        container.appendChild(toast);
-        setTimeout(() => { if (toast.parentNode) toast.remove(); }, 8000);
-    }
-
     // 6. OBTENER SESSION_ID Y PROJECT_ID ACTUALES
-    function getCurrentSessionId() {
-        if (typeof window.currentSessionId !== 'undefined' && window.currentSessionId) return parseInt(window.currentSessionId);
-        if (typeof window.currentSession !== 'undefined' && window.currentSession && window.currentSession.id_) return parseInt(window.currentSession.id_);
-        const badge = document.getElementById('chat2SessionBadge');
-        if (badge && badge.dataset.sessionId) return parseInt(badge.dataset.sessionId);
-        return 0;
-    }
-
-    function getCurrentProjectId() {
-        const projectSelect = document.getElementById('chat2Project');
-        if (projectSelect && projectSelect.value) return parseInt(projectSelect.value);
-        if (typeof window.currentProjectId !== 'undefined') return parseInt(window.currentProjectId);
-        return 0;
-    }
+    // NOTA: getCurrentSessionId() solo se usa en código de tests que será removido
+    // Se mantiene getCurrentProjectId() pero la versión mejorada está al final del archivo (línea 1155)
 
     // 7. INYECCIÓN DEL BOTÓN MANUAL EN LA BARRA DE HERRAMIENTAS (FALLBACK GARANTIZADO)
     function injectManualTestButton() {
