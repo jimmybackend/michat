@@ -1,27 +1,36 @@
 ```
-# Compiled and build artifacts
-*.pyc
-__pycache__/
+# SQL dump files
+*.sql
 
-# Dependencies
-vendor/
-node_modules/
-
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-
-# Environment
+# Environment variables
 .env
 .env.local
-*.env.*
+.env.*
 
-# Editors
-.vscode/
-.idea/
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
 
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dependencies (if any)
+node_modules/
+__pycache__/
+*.egg-info/
+
+# Build artifacts (if any)
+dist/
+build/
+target/
 ```
