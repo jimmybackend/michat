@@ -2321,3 +2321,864 @@ function openSessionAttachmentsModal() {
     });
   }
 })();
+
+// =====================================================================
+// 📋 CARGA DE SESIONES Y PROYECTOS PARA EL SIDEBAR
+// =====================================================================
+(function() {
+    'use strict';
+
+    const $ = (s) => document.querySelector(s);
+    const esc = (s) => (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');
+
+    // Elementos del sidebar
+    const sbChatList = $('#sbChatList');
+    const sbChatSearch = $('#sbChatSearch');
+    const sbNewChat = $('#sbNewChat');
+    const sbProjectList = $('#sbProjectList');
+    const sbNewProject = $('#sbNewProject');
+    const sbManageProjects = $('#sbManageProjects');
+    const sbCurrentProject = $('#sbCurrentProject');
+    const sbCurrentSession = $('#sbCurrentSession');
+
+    let currentSessionId = null;
+    let currentProjectId = null;
+    let sessions = [];
+    let projects = [];
+
+    // Obtener ID del usuario desde el hidden input si existe
+    function getUserId() {
+        const hid = document.getElementById('chatUserId');
+        if (hid && hid.value) {
+            const n = parseInt(hid.value, 10);
+            if (Number.isFinite(n) && n > 0) return String(n);
+        }
+        return '';
+    }
+
+    // Formato de fecha compacto
+    function formatSessionMeta(dtStr) {
+        if (!dtStr) return '';
+        const d = new Date(String(dtStr).replace(' ', 'T'));
+        if (isNaN(d.getTime())) return esc(dtStr);
+        const now = new Date();
+        const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+        const today = startOfDay(now);
+        const diffDays = Math.round((today - startOfDay(d)) / 86400000);
+        if (diffDays === 0) return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+        if (diffDays === 1) return 'Ayer';
+        if (diffDays > 1 && diffDays < 7) return d.toLocaleDateString('es-ES', { weekday: 'short' });
+        return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+    }
+
+    // Agrupar sesiones por fecha
+    function groupSessionsByDate(list) {
+        const now = new Date();
+        const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+        const today = startOfDay(now);
+        const groups = { 'Hoy': [], 'Ayer': [], 'Últimos 7 días': [], 'Anteriores': [] };
+        list.forEach(s => {
+            const raw = s.updated_at || s.created_at;
+            const d = raw ? new Date(String(raw).replace(' ', 'T')) : null;
+            if (!d || isNaN(d.getTime())) { groups['Anteriores'].push(s); return; }
+            const diffDays = Math.round((today - startOfDay(d)) / 86400000);
+            if (diffDays <= 0) groups['Hoy'].push(s);
+            else if (diffDays === 1) groups['Ayer'].push(s);
+            else if (diffDays < 7) groups['Últimos 7 días'].push(s);
+            else groups['Anteriores'].push(s);
+        });
+        return Object.entries(groups).filter(([, arr]) => arr.length > 0);
+    }
+
+    // Cargar sesiones desde API
+    async function loadSessions() {
+        if (!sbChatList) return;
+        sbChatList.innerHTML = '<div class="text-muted small">Cargando...</div>';
+        try {
+            const qs = new URLSearchParams();
+            const q = (sbChatSearch && sbChatSearch.value.trim()) || '';
+            if (q) qs.set('q', q);
+            const uid = getUserId();
+            if (uid) qs.set('user_id', uid);
+
+            const r = await fetch(`chat2_sessions.php?${qs.toString()}`, { credentials: 'same-origin' });
+            const j = await r.json();
+            if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+            sessions = Array.isArray(j.sessions) ? j.sessions : [];
+            renderSessionsList();
+        } catch (e) {
+            console.error('Error cargando sesiones:', e);
+            sbChatList.innerHTML = `<div class="text-danger small">${esc(e.message)}</div>`;
+        }
+    }
+
+    // Renderizar lista de sesiones
+    function renderSessionsList() {
+        if (!sbChatList) return;
+
+        // Separar sesiones libres (sin proyecto) y sesiones de proyecto
+        const freeSessions = sessions.filter(s => !s.project_id && !s.project_id_);
+        const projectSessions = sessions.filter(s => s.project_id || s.project_id_);
+
+        const renderItem = (s) => {
+            const sid = s.id || s.id_;
+            const title = esc(s.title || `Sesión #${sid}`);
+            const meta = formatSessionMeta(s.updated_at || s.created_at || '');
+            const isArchived = s.archived || s.status === 'archived';
+            const badge = isArchived ? `<span class="badge badge-secondary ml-1" style="font-size:0.6rem;">arch</span>` : '';
+            const active = (sid === currentSessionId) ? ' active' : '';
+
+            return `<div class="sb-item${active}" data-id="${sid}" data-type="session" title="${title}"
+                    style="cursor: pointer; padding: 6px 8px; border-radius: 4px; margin-bottom: 2px;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="text-truncate" style="max-width: 85%; font-size: 0.8rem;">
+                        <i class="fas fa-comment-dots mr-1" style="font-size:0.65rem;"></i>${title} ${badge}
+                    </span>
+                </div>
+                <small class="text-muted d-block" style="font-size: 0.65rem;">${esc(meta)}</small>
+            </div>`;
+        };
+
+        // Renderizar sesiones agrupadas por fecha
+        const groups = groupSessionsByDate(freeSessions);
+        let html = '';
+
+        if (groups.length > 0) {
+            html += '<div class="mb-2"><small class="text-muted" style="font-size: 0.7rem;"><i class="fas fa-comments mr-1"></i>Chats Libres</small></div>';
+            groups.forEach(([label, arr]) => {
+                html += `<div class="mb-2"><small class="text-muted" style="font-size: 0.7rem; padding-left: 8px;">${esc(label)}</small></div>`;
+                arr.forEach(s => { html += renderItem(s); });
+            });
+        }
+
+        // Sesiones de proyectos
+        if (projectSessions.length > 0) {
+            html += '<div class="mb-2 mt-2"><small class="text-muted" style="font-size: 0.7rem;"><i class="fas fa-briefcase mr-1"></i>Chats de Proyectos</small></div>';
+            projectSessions.forEach(s => { html += renderItem(s); });
+        }
+
+        if (freeSessions.length === 0 && projectSessions.length === 0) {
+            html = '<div class="text-muted small" style="font-size: 0.75rem;"><i class="fas fa-info-circle mr-1"></i>Sin chats</div>';
+        }
+
+        sbChatList.innerHTML = html;
+
+        // Eventos de clic en sesiones
+        sbChatList.querySelectorAll('.sb-item[data-type="session"]').forEach(item => {
+            item.addEventListener('click', () => {
+                const sid = parseInt(item.getAttribute('data-id'), 10);
+                selectSession(sid);
+            });
+        });
+    }
+
+    // Cargar proyectos desde API
+    async function loadProjects() {
+        if (!sbProjectList) return;
+        sbProjectList.innerHTML = '<div class="text-muted small">Cargando...</div>';
+        try {
+            const uid = getUserId();
+            const qs = new URLSearchParams();
+            if (uid) qs.set('user_id', uid);
+
+            const r = await fetch(`projects.php?${qs.toString()}`, { credentials: 'same-origin' });
+            const j = await r.json();
+            if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+            projects = Array.isArray(j.projects) ? j.projects : [];
+            renderProjectList();
+        } catch (e) {
+            console.error('Error cargando proyectos:', e);
+            sbProjectList.innerHTML = `<div class="text-danger small">${esc(e.message)}</div>`;
+        }
+    }
+
+    // Renderizar lista de proyectos
+    function renderProjectList() {
+        if (!sbProjectList) return;
+
+        if (projects.length === 0) {
+            sbProjectList.innerHTML = '<div class="text-muted small" style="font-size: 0.75rem;"><i class="fas fa-info-circle mr-1"></i>Sin proyectos</div>';
+            return;
+        }
+
+        let html = '';
+        projects.forEach(p => {
+            const pid = p.id || p.id_;
+            const isActive = (pid === currentProjectId) ? ' active' : '';
+            const pname = esc(p.name || `Proyecto #${pid}`);
+
+            // Contar sesiones de este proyecto
+            const projSessions = sessions.filter(s => (s.project_id == pid) || (s.project_id_ == pid));
+            const sessCount = projSessions.length;
+
+            html += `<div class="sb-item project-item${isActive}" data-id="${pid}" data-type="project"
+                     style="cursor: pointer; padding: 6px 8px; border-radius: 4px; margin-bottom: 4px; border-left: 3px solid var(--accent, #00ff88); background: rgba(0,255,136,0.05);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="text-truncate" style="max-width: 70%; font-weight: 600; font-size: 0.8rem;">
+                        <i class="fas fa-briefcase mr-1" style="font-size:0.7rem;"></i>${pname}
+                    </span>
+                    <span class="badge badge-secondary" style="font-size: 0.65rem;">${sessCount} chats</span>
+                </div>
+            </div>`;
+        });
+
+        sbProjectList.innerHTML = html;
+
+        // Eventos de clic en proyectos
+        sbProjectList.querySelectorAll('.sb-item[data-type="project"]').forEach(item => {
+            item.addEventListener('click', () => {
+                const pid = parseInt(item.getAttribute('data-id'), 10);
+                selectProject(pid);
+            });
+        });
+    }
+
+    // Seleccionar sesión
+    function selectSession(sessionId) {
+        // Delegar a la función de chat1.js si está disponible
+        if (typeof window.selectSessionChat1 === 'function') {
+            window.selectSessionChat1(sessionId);
+            return;
+        }
+        
+        currentSessionId = sessionId;
+        currentProjectId = null;
+
+        // Actualizar UI
+        if (sbChatList) {
+            sbChatList.querySelectorAll('.sb-item').forEach(el => el.classList.remove('active'));
+            const item = sbChatList.querySelector(`.sb-item[data-id="${sessionId}"]`);
+            if (item) item.classList.add('active');
+        }
+        if (sbProjectList) {
+            sbProjectList.querySelectorAll('.sb-item').forEach(el => el.classList.remove('active'));
+        }
+
+        // Actualizar panel de contexto
+        if (sbCurrentSession) sbCurrentSession.textContent = `ID: ${sessionId}`;
+        if (sbCurrentProject) sbCurrentProject.textContent = 'Ninguno';
+
+        // Cargar mensajes del chat seleccionado
+        loadMessagesForSession(sessionId);
+        
+        // Recargar contexto (si existe la función)
+        if (typeof loadContextForSession === 'function') {
+            loadContextForSession(sessionId);
+        }
+    }
+
+    // Cargar mensajes para una sesión
+    async function loadMessagesForSession(sessionId) {
+        const chat2Messages = document.getElementById('chat2Messages');
+        const chat2Title = document.getElementById('chat2Title');
+        
+        if (!chat2Messages) return;
+        
+        try {
+            chat2Messages.innerHTML = '<div class="text-muted text-center mt-5"><i class="fas fa-spinner fa-spin"></i> Cargando mensajes...</div>';
+            
+            const qs = new URLSearchParams({ session_id: String(sessionId) });
+            const r = await fetch(`chat2_messages.php?${qs.toString()}`, { credentials: 'same-origin' });
+            const j = await r.json();
+            
+            if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+            
+            const messages = Array.isArray(j.messages) ? j.messages : [];
+            
+            // Renderizar mensajes usando la función de chat1.js si está disponible
+            if (typeof window.renderChatMessages === 'function') {
+                window.renderChatMessages(messages);
+            } else {
+                // Renderizado fallback
+                chat2Messages.innerHTML = '';
+                if (messages.length === 0) {
+                    chat2Messages.innerHTML = '<div class="text-muted text-center mt-5"><i class="fas fa-comments"></i><br>No hay mensajes aún. ¡Comienza la conversación!</div>';
+                } else {
+                    messages.forEach(m => {
+                        const role = m.role || 'assistant';
+                        const content = m.content || '';
+                        const time = m.created_at ? new Date(m.created_at).toLocaleString() : '';
+                        const isUser = role === 'user';
+                        
+                        const msgDiv = document.createElement('div');
+                        msgDiv.className = `chat-msg ${isUser ? 'user' : 'assistant'} mb-3 p-3 rounded`;
+                        msgDiv.style.cssText = `background: ${isUser ? 'rgba(0,123,255,0.1)' : 'rgba(255,255,255,0.05)'}; border-left: 3px solid ${isUser ? '#007bff' : '#28a745'};`;
+                        
+                        let html = `<div class="d-flex justify-content-between">
+                            <strong>${isUser ? 'Tú' : 'Asistente'}</strong>
+                            <small class="text-muted">${time}</small>
+                        </div>`;
+                        
+                        // Manejar diferentes tipos de contenido
+                        if (m.content_type === 'image' && m.s3_key) {
+                            const imgUrl = `descargar.php?archivo=${encodeURIComponent(m.s3_key)}`;
+                            html += `<img src="${imgUrl}" alt="imagen" style="max-width:320px; border-radius:8px; margin-top:.5rem;">`;
+                        } else if (m.content_type === 'video' && m.s3_key) {
+                            const vidUrl = `descargar.php?archivo=${encodeURIComponent(m.s3_key)}`;
+                            html += `<video controls style="max-width:420px; margin-top:.5rem;"><source src="${vidUrl}"></video>`;
+                        } else if (content) {
+                            // Convertir markdown básico a HTML
+                            html += `<div class="mt-2">${convertMarkdownToHtml(content)}</div>`;
+                        }
+                        
+                        msgDiv.innerHTML = html;
+                        chat2Messages.appendChild(msgDiv);
+                    });
+                    
+                    // Scroll al final
+                    chat2Messages.scrollTop = chat2Messages.scrollHeight;
+                }
+            }
+            
+            // Actualizar título
+            const session = sessions.find(s => s.id === sessionId);
+            if (chat2Title && session) {
+                chat2Title.textContent = session.title || `Sesión #${sessionId}`;
+            }
+            
+        } catch (e) {
+            console.error('Error cargando mensajes:', e);
+            chat2Messages.innerHTML = `<div class="text-danger text-center mt-5">Error cargando mensajes: ${e.message}</div>`;
+        }
+    }
+    
+    // Conversión básica de Markdown a HTML
+    function convertMarkdownToHtml(text) {
+        if (!text) return '';
+        let html = text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.+?)\*/g, '<em>$1</em>')
+            .replace(/`(.+?)`/g, '<code>$1</code>')
+            .replace(/\n/g, '<br>');
+        return html;
+    }
+
+    // Seleccionar proyecto
+    function selectProject(projectId) {
+        currentProjectId = projectId;
+        currentSessionId = null;
+
+        // Actualizar UI
+        if (sbProjectList) {
+            sbProjectList.querySelectorAll('.sb-item').forEach(el => el.classList.remove('active'));
+            const item = sbProjectList.querySelector(`.sb-item[data-id="${projectId}"]`);
+            if (item) item.classList.add('active');
+        }
+        if (sbChatList) {
+            sbChatList.querySelectorAll('.sb-item').forEach(el => el.classList.remove('active'));
+        }
+
+        // Actualizar panel de contexto
+        const proj = projects.find(p => (p.id == projectId) || (p.id_ == projectId));
+        if (sbCurrentProject) sbCurrentProject.textContent = proj ? proj.name : `ID: ${projectId}`;
+        if (sbCurrentSession) sbCurrentSession.textContent = 'Ninguna';
+
+        // Recargar contexto (si existe la función)
+        if (typeof loadContextForProject === 'function') {
+            loadContextForProject(projectId);
+        }
+    }
+
+    // Event listeners
+    if (sbNewChat) {
+        sbNewChat.addEventListener('click', async () => {
+            try {
+                const fd = new FormData();
+                fd.append('title', 'Nueva conversación');
+                const uid = getUserId();
+                if (uid) fd.append('user_id', uid);
+                
+                const r = await fetch('chat2_session_create.php', { method: 'POST', credentials: 'same-origin', body: fd });
+                const j = await r.json();
+                if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+                
+                currentSessionId = j.id;
+                await loadSessions();
+                selectSession(currentSessionId);
+                
+                // Recargar la página para iniciar el chat
+                window.location.reload();
+            } catch (e) {
+                console.error('Error creando sesión:', e);
+                alert('No se pudo crear la sesión: ' + e.message);
+            }
+        });
+    }
+
+    if (sbChatSearch) {
+        sbChatSearch.addEventListener('input', () => loadSessions());
+    }
+
+    if (sbNewProject) {
+        sbNewProject.addEventListener('click', () => {
+            // Abrir modal de nuevo proyecto (si existe)
+            if (typeof openProjectManager === 'function') {
+                openProjectManager();
+            } else {
+                const name = prompt('Nombre del proyecto:');
+                if (name) {
+                    // Crear proyecto directamente
+                    createProject(name);
+                }
+            }
+        });
+    }
+
+    if (sbManageProjects) {
+        sbManageProjects.addEventListener('click', () => {
+            if (typeof openProjectManager === 'function') {
+                openProjectManager();
+            }
+        });
+    }
+
+    // Función para crear proyecto
+    async function createProject(name) {
+        try {
+            const fd = new FormData();
+            fd.append('name', name);
+            const uid = getUserId();
+            if (uid) fd.append('user_id', uid);
+            
+            const r = await fetch('projects.php', { method: 'POST', credentials: 'same-origin', body: fd });
+            const j = await r.json();
+            if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+            
+            await loadProjects();
+        } catch (e) {
+            console.error('Error creando proyecto:', e);
+            alert('No se pudo crear el proyecto: ' + e.message);
+        }
+    }
+
+    // Inicializar
+    console.log('🚀 Inicializando sidebar de chats...');
+    loadSessions();
+    loadProjects();
+
+})();
+
+// =====================================================================
+// 🧪 INTEGRACIÓN DE RUN_TESTS.PHP - EJECUCIÓN DE TESTS DESDE EL CHAT
+// =====================================================================
+(function() {
+    'use strict';
+
+    // 1. INTERCEPTAR RESPUESTAS DEL CHAT QUE CONTENGAN "test_command" (MODO AUTOMÁTICO)
+    const messagesContainer = document.getElementById('chat2Messages');
+    if (messagesContainer) {
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                mutation.addedNodes.forEach((node) => {
+                    if (node.nodeType === 1 && node.classList && node.classList.contains('chat-assistant')) {
+                        const testCmdMatch = node.innerHTML.match(/data-test-command="([^"]+)"/);
+                        if (testCmdMatch && !node.querySelector('.btn-run-tests')) {
+                            injectTestButton(node, testCmdMatch[1]);
+                        }
+                    }
+                });
+            });
+        });
+        observer.observe(messagesContainer, { childList: true, subtree: true });
+    }
+
+    // 2. INYECTAR EL BOTÓN EN EL MENSAJE DEL ASISTENTE
+    function injectTestButton(messageNode, testCommand) {
+        const btnContainer = document.createElement('div');
+        btnContainer.className = 'mt-2 d-flex align-items-center gap-2';
+        btnContainer.innerHTML = `
+            <button class="btn btn-sm btn-outline-success btn-run-tests" data-command="${escapeHtml(testCommand)}">
+                <i class="fas fa-vial"></i> 🧪 Correr Tests
+            </button>
+            <small class="text-muted ml-2">
+                <code style="font-size:0.7rem;">${escapeHtml(testCommand)}</code>
+            </small>
+        `;
+        messageNode.appendChild(btnContainer);
+
+        const btn = btnContainer.querySelector('.btn-run-tests');
+        btn.addEventListener('click', () => executeTests(btn, testCommand));
+    }
+
+    // 3. FUNCIÓN PRINCIPAL: EJECUTAR TESTS VÍA AJAX
+    async function executeTests(button, testCommand) {
+        const originalHtml = button.innerHTML || '<i class="fas fa-vial"></i>';
+        const sessionId = getCurrentSessionId();
+        const projectId = getCurrentProjectId();
+
+        if (!projectId) {
+            showToast('⚠️ Atención', 'Debes seleccionar un proyecto primero.', 'warning');
+            // Restaurar botón si era el manual
+            if (button.id === 'btnRunTestsManual') {
+                button.disabled = false;
+                button.innerHTML = originalHtml;
+            }
+            return;
+        }
+
+        // Estado: Cargando
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Ejecutando...';
+        button.classList.remove('btn-outline-success');
+        button.classList.add('btn-outline-warning');
+
+        try {
+            const formData = new FormData();
+            formData.append('session_id', sessionId || 0);
+            formData.append('project_id', projectId);
+            formData.append('test_command', testCommand);
+
+            const response = await fetch('chat/run_tests.php', {
+                method: 'POST',
+                body: formData,
+                credentials: 'same-origin'
+            });
+
+            const result = await response.json();
+
+            if (result.ok) {
+                button.innerHTML = '<i class="fas fa-check"></i> Completado';
+                button.classList.remove('btn-outline-warning');
+                button.classList.add('btn-outline-info');
+                
+                appendTestResultToChat(result, testCommand);
+                
+                const statusIcon = result.status === 'ok' ? '✅' : '⚠️';
+                showToast(
+                    `${statusIcon} Tests ${result.status === 'ok' ? 'Exitosos' : 'Fallaron'}`,
+                    `${result.files_processed} archivos en ${(result.duration_ms / 1000).toFixed(2)}s`,
+                    result.status === 'ok' ? 'success' : 'warning'
+                );
+            } else {
+                throw new Error(result.error || 'Error desconocido');
+            }
+        } catch (error) {
+            button.innerHTML = '<i class="fas fa-times"></i> Error';
+            button.classList.remove('btn-outline-warning');
+            button.classList.add('btn-outline-danger');
+            showToast('❌ Error ejecutando tests', error.message, 'danger');
+        } finally {
+            button.disabled = false;
+            setTimeout(() => {
+                button.innerHTML = originalHtml;
+                button.classList.remove('btn-outline-info', 'btn-outline-danger');
+                button.classList.add('btn-outline-success');
+            }, 5000);
+        }
+    }
+
+    // 4. MOSTRAR RESULTADO DE TESTS EN EL CHAT
+    function appendTestResultToChat(result, command) {
+        if (!messagesContainer) return;
+
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'chat-msg assistant';
+        
+        const formattedOutput = escapeHtml(result.output)
+            .replace(/\n/g, '<br>')
+            .replace(/(✅|OK|PASS)/gi, '<span style="color:#00ff66; font-weight:bold;">$1</span>')
+            .replace(/(❌|FAIL|ERROR)/gi, '<span style="color:#ff5a5a; font-weight:bold;">$1</span>');
+
+        const statusBadge = result.status === 'ok' 
+            ? '<span class="badge badge-success">✅ PASSED</span>'
+            : result.status === 'timeout'
+            ? '<span class="badge badge-warning">⏱️ TIMEOUT</span>'
+            : '<span class="badge badge-danger">❌ FAILED</span>';
+
+        msgDiv.innerHTML = `
+            <div class="chat-md">
+                <div class="d-flex align-items-center mb-2">
+                    <i class="fas fa-vial text-info mr-2"></i>
+                    <strong>Resultado de Ejecución de Tests</strong>
+                    ${statusBadge}
+                    <small class="text-muted ml-auto">${(result.duration_ms / 1000).toFixed(2)}s</small>
+                </div>
+                <div class="small text-muted mb-2">
+                    <code>${escapeHtml(command)}</code>
+                </div>
+                <pre style="background:#050505; color:#dbe4ee; padding:0.75rem; border-radius:6px; max-height:300px; overflow-y:auto; font-size:0.75rem; border:1px solid rgba(0,255,102,0.2);">${formattedOutput}</pre>
+                <div class="mt-2 small text-muted">
+                    📁 ${result.files_processed} archivos procesados desde S3
+                </div>
+            </div>
+        `;
+        
+        messagesContainer.appendChild(msgDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    // 6. OBTENER SESSION_ID Y PROJECT_ID ACTUALES
+    // NOTA: getCurrentSessionId() solo se usa en código de tests que será removido
+    // Se mantiene getCurrentProjectId() pero la versión mejorada está al final del archivo (línea 1155)
+
+    // 7. INYECCIÓN DEL BOTÓN MANUAL EN LA BARRA DE HERRAMIENTAS (FALLBACK GARANTIZADO)
+    function injectManualTestButton() {
+        // Buscamos el grupo de botones de herramientas en el footer del chat
+        const toolGroup = document.querySelector('.card-footer .btn-group[role="group"]');
+        if (!toolGroup) return;
+
+        // Evitar duplicados
+        if (document.getElementById('btnRunTestsManual')) return;
+
+        const btn = document.createElement('button');
+        btn.id = 'btnRunTestsManual';
+        btn.className = 'btn btn-sm btn-outline-success';
+        btn.title = 'Ejecutar Tests del Proyecto';
+        btn.innerHTML = '<i class="fas fa-vial"></i>';
+        
+        btn.addEventListener('click', () => {
+            const projectId = getCurrentProjectId();
+            if (!projectId) {
+                showToast('⚠️ Atención', 'Debes seleccionar un proyecto primero.', 'warning');
+                return;
+            }
+
+            const defaultCmd = 'vendor/bin/phpunit';
+            const testCommand = prompt("Ingresa el comando de tests a ejecutar:", defaultCmd);
+            
+            if (!testCommand || testCommand.trim() === '') return;
+
+            // Creamos un botón "falso" para reutilizar la función executeTests
+            const fakeBtn = document.createElement('button');
+            executeTests(fakeBtn, testCommand.trim());
+        });
+
+        toolGroup.appendChild(btn);
+    }
+
+    // Ejecutar la inyección del botón manual al cargar el script
+    injectManualTestButton();
+
+})();
+
+// =====================================================================
+// ↩️ ROLLBACK / DESHACER ÚLTIMA EDICIÓN DE ARCHIVO
+// =====================================================================
+(function() {
+    'use strict';
+
+    const btnRollback = document.getElementById('btnRollbackEdit');
+    if (!btnRollback) return;
+
+    btnRollback.addEventListener('click', async () => {
+        const projectId = getCurrentProjectId();
+        
+        if (!projectId) {
+            showToast('⚠️ Atención', 'Debes seleccionar un proyecto primero.', 'warning');
+            return;
+        }
+
+        // 1. Obtener los últimos archivos editados de este proyecto para mostrar un selector
+        try {
+            const formData = new FormData();
+            formData.append('project_id', projectId);
+            formData.append('action', 'get_recent_edits');
+
+            const res = await fetch('chat/rollback_edit.php', {
+                method: 'POST',
+                body: formData,
+                credentials: 'same-origin'
+            });
+            const data = await res.json();
+
+            if (!data.ok || !data.recent_files || data.recent_files.length === 0) {
+                showToast('ℹ️ Sin historial', 'No hay ediciones recientes para deshacer en este proyecto.', 'info');
+                return;
+            }
+
+            // 2. Mostrar modal de selección de archivo
+            showRollbackModal(data.recent_files, projectId);
+
+        } catch (error) {
+            console.error('Error obteniendo historial:', error);
+            showToast('❌ Error', 'No se pudo cargar el historial de ediciones.', 'danger');
+        }
+    });
+
+    // =====================================================================
+    // MODAL DE SELECCIÓN DE ROLLBACK
+    // =====================================================================
+    function showRollbackModal(files, projectId) {
+        // Crear modal dinámicamente si no existe
+        let modal = document.getElementById('rollbackModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'rollbackModal';
+            modal.className = 'modal fade';
+            modal.tabIndex = -1;
+            modal.innerHTML = `
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title"><i class="fas fa-undo-alt mr-2"></i> Deshacer Edición</h5>
+                            <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+                        </div>
+                        <div class="modal-body">
+                            <p class="small text-muted mb-3">
+                                Selecciona el archivo que deseas revertir a su versión anterior. 
+                                Esto restaurará el contenido desde S3 y marcará la versión actual como obsoleta.
+                            </p>
+                            <div id="rollbackFileList" class="list-group" style="max-height: 300px; overflow-y: auto;">
+                                <!-- Se llena dinámicamente -->
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary btn-sm" data-dismiss="modal">Cancelar</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        // Llenar la lista de archivos
+        const listContainer = modal.querySelector('#rollbackFileList');
+        listContainer.innerHTML = '';
+
+        files.forEach(file => {
+            const item = document.createElement('a');
+            item.href = '#';
+            item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+            item.innerHTML = `
+                <div>
+                    <strong class="text-info"><i class="fas fa-file-code mr-1"></i> ${escapeHtml(file.filename)}</strong>
+                    <small class="text-muted d-block">Versión actual: ${escapeHtml(file.current_version)}</small>
+                </div>
+                <span class="badge badge-warning badge-pill">${escapeHtml(file.edit_count)} ediciones</span>
+            `;
+            item.addEventListener('click', (e) => {
+                e.preventDefault();
+                executeRollback(file.filename, projectId, modal);
+            });
+            listContainer.appendChild(item);
+        });
+
+        // Mostrar modal
+        $(modal).modal('show');
+    }
+
+    // =====================================================================
+    // EJECUTAR ROLLBACK
+    // =====================================================================
+    async function executeRollback(filename, projectId, modal) {
+        // Cerrar modal
+        $(modal).modal('hide');
+
+        // Mostrar toast de progreso
+        showToast('⏳ Revertiendo...', `Restaurando ${filename} a su versión anterior...`, 'info');
+
+        try {
+            const formData = new FormData();
+            formData.append('project_id', projectId);
+            formData.append('target_filename', filename);
+
+            const res = await fetch('chat/rollback_edit.php', {
+                method: 'POST',
+                body: formData,
+                credentials: 'same-origin'
+            });
+
+            const result = await res.json();
+
+            if (result.ok) {
+                showToast(
+                    '✅ Rollback Exitoso', 
+                    `${filename} revertido a la versión ${result.restored_version}.`, 
+                    'success'
+                );
+
+                // Agregar mensaje al chat informando del rollback
+                appendRollbackMessageToChat(filename, result);
+
+                // Recargar la lista de fuentes del proyecto si existe la función
+                if (typeof loadProjectSources === 'function') {
+                    loadProjectSources();
+                }
+            } else {
+                throw new Error(result.error || 'Error desconocido en el rollback');
+            }
+        } catch (error) {
+            showToast('❌ Error en Rollback', error.message, 'danger');
+        }
+    }
+
+    // =====================================================================
+    // MENSAJE EN EL CHAT
+    // =====================================================================
+    function appendRollbackMessageToChat(filename, result) {
+        const messagesContainer = document.getElementById('chat2Messages');
+        if (!messagesContainer) return;
+
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'chat-msg assistant';
+        msgDiv.innerHTML = `
+            <div class="chat-md">
+                <div class="d-flex align-items-center mb-2">
+                    <i class="fas fa-undo-alt text-warning mr-2"></i>
+                    <strong>Rollback Ejecutado</strong>
+                    <span class="badge badge-success ml-2">✅ REVERTIDO</span>
+                </div>
+                <div class="small text-muted mb-2">
+                    <i class="fas fa-file-code mr-1"></i> <code>${escapeHtml(filename)}</code>
+                </div>
+                <ul class="small mb-0">
+                    <li>Versión restaurada: <strong class="text-success">${escapeHtml(result.restored_version)}</strong></li>
+                    <li>Versión descartada: <span class="text-danger text-decoration-line-through">${escapeHtml(result.previous_version)}</span></li>
+                </ul>
+                <div class="mt-2 small text-muted">
+                    <i class="fas fa-info-circle mr-1"></i> El archivo ha sido restaurado desde S3. La versión anterior fue marcada como obsoleta.
+                </div>
+            </div>
+        `;
+        
+        messagesContainer.appendChild(msgDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    // =====================================================================
+    // UTILIDADES
+    // =====================================================================
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function showToast(title, message, type = 'info') {
+        const container = document.getElementById('chatToasts') || document.getElementById('incomingToasts');
+        if (!container) {
+            alert(`${title}: ${message}`);
+            return;
+        }
+
+        const toast = document.createElement('div');
+        toast.className = 'chat-toast';
+        toast.innerHTML = `
+            <div class="ct-title">${title}</div>
+            <div class="small">${message}</div>
+            <div class="ct-actions">
+                <button class="ct-close" onclick="this.closest('.chat-toast').remove()">✕</button>
+            </div>
+        `;
+        
+        if (type === 'success') toast.style.borderLeftColor = '#00ff66';
+        if (type === 'warning') toast.style.borderLeftColor = '#ffd861';
+        if (type === 'danger') toast.style.borderLeftColor = '#ff5a5a';
+        if (type === 'info') toast.style.borderLeftColor = '#17a2b8';
+        
+        container.appendChild(toast);
+        setTimeout(() => { if (toast.parentNode) toast.remove(); }, 8000);
+    }
+
+    function getCurrentProjectId() {
+        const projectSelect = document.getElementById('chat2Project');
+        if (projectSelect && projectSelect.value) return parseInt(projectSelect.value);
+        if (typeof window.currentProjectId !== 'undefined') return parseInt(window.currentProjectId);
+        return 0;
+    }
+
+})();
