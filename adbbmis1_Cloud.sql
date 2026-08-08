@@ -112,6 +112,30 @@ CREATE TABLE `ChatSessions` (
 -- --------------------------------------------------------
 
 --
+-- Estructura de tabla para la tabla `SessionAttachments`
+--
+
+CREATE TABLE IF NOT EXISTS `SessionAttachments` (
+  `id_` INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `session_id` INT NULL DEFAULT NULL,
+  `files3_id` INT NULL DEFAULT NULL,
+  `s3_key` VARCHAR(512) NOT NULL,
+  `filename` VARCHAR(255) NOT NULL,
+  `mime_type` VARCHAR(100) NOT NULL,
+  `size_bytes` BIGINT NOT NULL DEFAULT 0,
+  `user_id` INT NOT NULL,
+  `status` ENUM('pending', 'indexed', 'error') NOT NULL DEFAULT 'pending',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_session (session_id),
+  INDEX idx_user (user_id),
+  INDEX idx_files3 (files3_id),
+  INDEX idx_status (status),
+  FOREIGN KEY (files3_id) REFERENCES `FileS3`(`id_`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Estructura de tabla para la tabla `ChunkEmbeddings`
 --
 
