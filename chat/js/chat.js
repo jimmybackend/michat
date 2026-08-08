@@ -2411,7 +2411,7 @@ function openSessionAttachmentsModal() {
             const uid = getUserId();
             if (uid) qs.set('user_id', uid);
 
-            const r = await fetch(`chat2_sessions.php?${qs.toString()}`, { credentials: 'same-origin' });
+            const r = await fetch(`../chat2_sessions.php?${qs.toString()}`, { credentials: 'same-origin' });
             const j = await r.json();
             if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
             sessions = Array.isArray(j.sessions) ? j.sessions : [];
@@ -2491,7 +2491,7 @@ function openSessionAttachmentsModal() {
             const qs = new URLSearchParams();
             if (uid) qs.set('user_id', uid);
 
-            const r = await fetch(`projects.php?${qs.toString()}`, { credentials: 'same-origin' });
+            const r = await fetch(`../projects.php?${qs.toString()}`, { credentials: 'same-origin' });
             const j = await r.json();
             if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
             projects = Array.isArray(j.projects) ? j.projects : [];
@@ -2588,7 +2588,7 @@ function openSessionAttachmentsModal() {
             chat2Messages.innerHTML = '<div class="text-muted text-center mt-5"><i class="fas fa-spinner fa-spin"></i> Cargando mensajes...</div>';
             
             const qs = new URLSearchParams({ session_id: String(sessionId) });
-            const r = await fetch(`chat2_messages.php?${qs.toString()}`, { credentials: 'same-origin' });
+            const r = await fetch(`../chat2_messages.php?${qs.toString()}`, { credentials: 'same-origin' });
             const j = await r.json();
             
             if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
@@ -2744,7 +2744,7 @@ function openSessionAttachmentsModal() {
                 const uid = getUserId();
                 if (uid) fd.append('user_id', uid);
                 
-                const r = await fetch('chat2_session_create.php', { method: 'POST', credentials: 'same-origin', body: fd });
+                const r = await fetch('../chat2_session_create.php', { method: 'POST', credentials: 'same-origin', body: fd });
                 const j = await r.json();
                 if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
                 
@@ -2796,7 +2796,7 @@ function openSessionAttachmentsModal() {
             const uid = getUserId();
             if (uid) fd.append('user_id', uid);
             
-            const r = await fetch('projects.php', { method: 'POST', credentials: 'same-origin', body: fd });
+            const r = await fetch('../projects.php', { method: 'POST', credentials: 'same-origin', body: fd });
             const j = await r.json();
             if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
             
