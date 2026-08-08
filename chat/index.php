@@ -256,7 +256,9 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <!-- Scripts base -->
 <script src="js/actualizar-hora.js"></script>
 <script src="js/recargarPagina.js"></script>
-<!-- chat.js debe cargar primero porque exporta window.chatUtils -->
+<!-- sidebar-sessions-projects.js debe cargar primero porque maneja las sesiones del sidebar -->
+<script src="js/sidebar-sessions-projects.js"></script>
+<!-- chat.js debe cargar segundo porque exporta window.chatUtils -->
 <script src="js/chat.js"></script>
 <!-- Módulos que dependen de chat.js -->
 <script src="js/run-tests.js"></script>
