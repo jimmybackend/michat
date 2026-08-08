@@ -1,3 +1,47 @@
-```javascript
+```
+# Compiled and build artifacts
+*.pyc
+__pycache__/
 
+# Dependencies
+.venv/
+venv/
+node_modules/
+pip-log.txt
+*.egg-info/
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# Environment
+.env
+.env.local
+.env.*
+
+# Editors
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# Distribution / packaging
+dist/
+build/
+*.tar.gz
+*.whl
+
+# Pytest cache
+.pytest_cache/
+
+# MyPy cache
+.mypy_cache/
 ```
