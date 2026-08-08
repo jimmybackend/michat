@@ -3139,7 +3139,7 @@ function openSessionAttachmentsModal() {
     }
 
     // =====================================================================
-    // UTILIDADES
+    // UTILIDADES EXPORTADAS PARA OTROS MÓDULOS
     // =====================================================================
     function escapeHtml(text) {
         if (!text) return '';
@@ -3180,5 +3180,22 @@ function openSessionAttachmentsModal() {
         if (typeof window.currentProjectId !== 'undefined') return parseInt(window.currentProjectId);
         return 0;
     }
+
+    function getCurrentSessionId() {
+        if (typeof window.currentSessionId !== 'undefined') return window.currentSessionId;
+        return null;
+    }
+
+    // Exportar funciones utilitarias para otros módulos
+    window.chatUtils = {
+        escapeHtml: escapeHtml,
+        showToast: showToast,
+        getCurrentProjectId: getCurrentProjectId,
+        getCurrentSessionId: getCurrentSessionId,
+        getUserId: getUserId,
+        fmtDate: fmtDate,
+        buildS3Url: buildS3Url,
+        mdToHtml: mdToHtml
+    };
 
 })();

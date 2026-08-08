@@ -253,15 +253,18 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"></script>
+<!-- Scripts base -->
 <script src="js/actualizar-hora.js"></script>
 <script src="js/recargarPagina.js"></script>
+<!-- chat.js debe cargar primero porque exporta window.chatUtils -->
 <script src="js/chat.js"></script>
+<!-- Módulos que dependen de chat.js -->
+<script src="js/run-tests.js"></script>
+<script src="js/rollback-edit.js"></script>
 <script src="js/sincronizar.js"></script>
 <script src="js/estilo.js"></script>
 <script src="js/sidebar-responsive.js"></script>
 <script src="js/subir-chunked.js"></script>
-<script src="js/run-tests.js"></script>
-<script src="js/rollback-edit.js"></script>
 <div id="settings-modal" class="modal fade" tabindex="-1" role="dialog" aria-hidden="true">
 <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
 <div class="modal-content">
