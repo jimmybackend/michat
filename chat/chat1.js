@@ -2527,8 +2527,7 @@ if (btnRefreshContext) {
   setStatus('');
   startNotifyPoller();
 })();
-});
-})();
+
 // ============================================================================
 // FUNCIONES PARA ADJUNTOS DE SESIÓN
 // ============================================================================
@@ -2803,13 +2802,12 @@ function openSessionAttachmentsModal() {
   jQuery(modal).modal('show');
 }
 
-// Inicializar estado de adjuntos
-let sessionAttachments = [];
-
-// Event listeners para adjuntos de sesión
+// Inicializar estado de adjuntos DENTRO del IIFE para tener acceso a currentSessionId
 (function() {
   'use strict';
   
+  let sessionAttachments = [];
+
   // Botón "Agregar adjuntos" en el panel principal
   if (el.attachmentsAdd) {
     el.attachmentsAdd.addEventListener('click', openSessionAttachmentsModal);
