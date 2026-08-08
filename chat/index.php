@@ -255,8 +255,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"></script>
 <script src="js/actualizar-hora.js"></script>
 <script src="js/recargarPagina.js"></script>
-<script src="chat1.js"></script>
-<script src="chat1-enhancements.js"></script>
+<script src="js/chat.js"></script>
 <script src="js/sincronizar.js"></script>
 <script src="js/estilo.js"></script>
 <script src="js/sidebar-responsive.js"></script>
@@ -266,6 +265,8 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 window.UPLOAD_API = "api/upload.php";
 </script>
 <script src="js/subir-chunked.js"></script>
+<script src="js/run-tests.js"></script>
+<script src="js/rollback-edit.js"></script>
 
 <!-- ✅ NUEVO: Script para cargar sesiones y proyectos en el sidebar (igual que s3chatstats.php) -->
 <script>
