@@ -354,6 +354,27 @@ body.ui-theme .badge-info    { background: rgba(88,166,255,.15) !important; colo
   background: rgba(var(--accent-rgb), .06) !important;
   border-color: rgba(var(--accent-rgb), .25) !important;
 }
+/* Alineación explícita izquierda/derecha */
+#chat2Messages .align-left {
+  align-self: flex-start !important;
+  margin-right: auto;
+}
+#chat2Messages .align-right {
+  align-self: flex-end !important;
+  margin-left: auto;
+}
+/* Header y contenido de mensajes */
+.chat-msg .msg-header {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.chat-msg .msg-content {
+  line-height: 1.6;
+  font-size: 0.9rem;
+}
 #chat2Messages .chat-md {
   line-height: 1.6;
   font-size: .9rem;
@@ -633,4 +654,53 @@ html, body { height: 100%; margin: 0; }
     height: 100%;
     min-height: 0;
     overflow: hidden;   /* ← Evita que la columna crezca */
+}
+
+/* Botones de acción de mensajes */
+.message-actions {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.chat-msg:hover .message-actions {
+  opacity: 1;
+}
+.message-actions .action-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  transition: all 0.2s;
+}
+.message-actions .action-btn:hover {
+  background: rgba(128, 128, 128, 0.1);
+  color: var(--text);
+}
+.message-actions .action-btn.copied {
+  color: #22c55e;
+}
+.message-actions .action-btn-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* Bloque de instrucciones */
+.chat-instruction-block {
+  background: rgba(255, 193, 7, 0.1) !important;
+  border-left: 3px solid #ffc107 !important;
+  padding: 8px !important;
+  margin: 8px 0 !important;
+  border-radius: 4px !important;
+  font-style: italic;
 }
