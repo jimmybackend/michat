@@ -68,7 +68,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <link rel="stylesheet" href="css/chat2.css" />
 <link rel="stylesheet" href="css/design-system.css" />
 </head>
-<body class="ui-theme theme-neon-green theme-dark vision-normal ascii-on">
+<body class="ui-theme theme-neon-green theme-light vision-normal ascii-on">
 <input type="hidden" id="chatUserId" value="<?= (int)$_SESSION['user_id'] ?>">
 
 <div class="app-container">
