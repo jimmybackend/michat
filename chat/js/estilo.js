@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', function () {
   // Estado por defecto cuando no hay preferencias guardadas
   const defaultState = {
     theme: 'theme-neon-green',   // tema oficial por defecto
-    mode: 'theme-dark',
+    mode: 'theme-light',
     vision: 'vision-normal',
     ascii: true
   };

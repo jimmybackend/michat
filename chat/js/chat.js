@@ -644,16 +644,16 @@ function renderSessionsList() {
     const title = esc(s.title || `Sesión #${sid}`);
     const meta = formatSessionMeta(s.updated_at || s.created_at || '');
     const isArchived = s.archived || s.status === 'archived';
-    const badge = isArchived ? `<span class="badge badge-secondary ml-1">archivada</span>` : '';
+    const badge = isArchived ? `<span class="badge badge-secondary ml-1" style="font-size:0.6rem;">arch</span>` : '';
     const active = (sid === currentSessionId) ? ' active' : '';
-    return `<div class="sb-item${active}" data-id="${sid}" title="${title}">
+    return `<div class="sb-item${active}" data-id="${sid}" title="${esc(title)}">
       <div class="d-flex justify-content-between align-items-center">
-        <span class="text-truncate" style="max-width: 85%;">${title} ${badge}</span>
-        <div class="btn-group btn-group-sm">
-          <button class="btn btn-link p-0 js-rename" title="Renombrar"><i class="fas fa-pen" style="font-size:0.6rem;"></i></button>
+        <span class="text-truncate sb-item-title" style="max-width: 70%;">${esc(title)} ${badge}</span>
+        <div class="btn-group btn-group-sm" style="flex-shrink: 0;">
+          <button class="btn btn-link p-0 js-rename" title="Renombrar"><i class="fas fa-pen" style="font-size:0.55rem;"></i></button>
           ${isArchived
-            ? `<button class="btn btn-link p-0 js-restore text-success" title="Restaurar"><i class="fas fa-undo" style="font-size:0.6rem;"></i></button>`
-            : `<button class="btn btn-link p-0 js-archive text-danger" title="Archivar"><i class="fas fa-archive" style="font-size:0.6rem;"></i></button>`}
+            ? `<button class="btn btn-link p-0 js-restore text-success" title="Restaurar"><i class="fas fa-undo" style="font-size:0.55rem;"></i></button>`
+            : `<button class="btn btn-link p-0 js-archive text-danger" title="Archivar"><i class="fas fa-archive" style="font-size:0.55rem;"></i></button>`}
         </div>
       </div>
       <small class="sb-item-meta text-muted d-block">${esc(meta)}</small>
@@ -1308,14 +1308,14 @@ function renderProjectList() {
         const sactive = (sid === currentSessionId) ? ' active' : '';
         const isArchived = s.archived || s.status === 'archived';
         const badge = isArchived ? `<span class="badge badge-secondary ml-1" style="font-size:0.6rem;">arch</span>` : '';
-        return `<div class="sb-item project-session${sactive}" data-id="${sid}" title="${stitle}" 
+        return `<div class="sb-item project-session${sactive}" data-id="${sid}" title="${esc(stitle)}" 
                 style="padding-left: 1.2rem; font-size: 0.75rem; border-left: 2px solid var(--accent, #00ff88); margin-top: 2px;">
           <div class="d-flex justify-content-between align-items-center">
-            <span class="text-truncate" style="max-width: 80%;">
+            <span class="text-truncate sb-item-title" style="max-width: 70%; font-size: 0.7rem;">
               <i class="fas fa-comment-dots mr-1" style="font-size:0.6rem;"></i>${stitle} ${badge}
             </span>
-            <div class="btn-group btn-group-sm">
-              <button class="btn btn-link p-0 js-rename text-muted" title="Renombrar"><i class="fas fa-pen" style="font-size:0.55rem;"></i></button>
+            <div class="btn-group btn-group-sm" style="flex-shrink: 0;">
+              <button class="btn btn-link p-0 js-rename text-muted" title="Renombrar"><i class="fas fa-pen" style="font-size:0.5rem;"></i></button>
             </div>
           </div>
         </div>`;
