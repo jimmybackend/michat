@@ -1,62 +1,58 @@
-```
-# Logs and temp files
+```php
+# Environment and configuration
+.env
+.env.local
+.env.*
+
+# Logs
 *.log
+
+# Temporary files
 *.tmp
 *.swp
 
-# Environment
-.env
-.env.local
-*.env.*
+# PHP specific
+*.php~
+*.php.bak
+*.php.swp
 
-# Editors
+# Cache and compiled files
+*.cache
+*.compiled
+*.o
+*.obj
+*.out
+
+# Dependencies
+vendor/
+node_modules/
+composer.lock
+
+# Build artifacts
+dist/
+build/
+target/
+
+# IDE and editor files
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# Python
+# OS files
+.DS_Store
+Thumbs.db
+
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# Python related (if applicable)
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
-env/
-venv/
-.venv/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-.git/
-.mypy_cache/
 .pytest_cache/
-.hypothesis/
-
-# Node.js
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-
-# Build outputs
-dist/
-build/
-target/
-*.min.js
-*.min.css
-
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+.mypy_cache/
 ```

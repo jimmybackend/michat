@@ -66,9 +66,9 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <link rel="stylesheet" href="css/chat2-old.css" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body class="ui-theme theme-neon-green theme-dark vision-normal ascii-on">
+<body class="ui-theme theme-neon-green theme-light vision-normal ascii-on">
 <input type="hidden" id="chatUserId" value="<?= (int)$_SESSION['user_id'] ?>">
-<nav class="navbar navbar-expand-lg navbar-dark px-3">
+<nav class="navbar navbar-expand-lg navbar-light bg-light px-3">
 <a class="navbar-brand" href="s3.php">
 <img src="ellogo.png" width="30" height="30" class="rounded-circle mr-2" alt="Logo"> Cloud Drive
 </a>
@@ -105,7 +105,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 </li>
 <li class="nav-item dropdown">
-<a class="nav-link dropdown-toggle d-flex align-items-center text-white" href="#" id="usuarioMenu" role="button" data-toggle="dropdown">
+<a class="nav-link dropdown-toggle d-flex align-items-center text-dark" href="#" id="usuarioMenu" role="button" data-toggle="dropdown">
 <img src="logo1.png" alt="Perfil" class="rounded-circle mr-2" width="30" height="30">
 <?= htmlspecialchars($_SESSION['usuario']) ?>
 </a>
@@ -213,7 +213,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 <div id="contextContent" class="row d-none">
 <div class="col-md-6 mb-3">
-<div class="card bg-dark text-white border-secondary h-100">
+<div class="card bg-light text-dark border-secondary h-100">
 <div class="card-header d-flex justify-content-between align-items-center">
 <span><i class="fas fa-briefcase"></i> Proyecto: <strong id="ctxProjectName">---</strong></span>
 </div>
@@ -225,7 +225,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 </div>
 <div class="col-md-6 mb-3">
-<div class="card bg-dark text-white border-secondary h-100">
+<div class="card bg-light text-dark border-secondary h-100">
 <div class="card-header d-flex justify-content-between align-items-center">
 <span><i class="fas fa-comments"></i> Sesión: <strong id="ctxSessionName">---</strong></span>
 </div>
@@ -275,7 +275,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 <div class="row mb-4">
 <div class="col-md-3">
-<div class="card bg-dark text-white border-secondary">
+<div class="card bg-light text-dark border-secondary">
 <div class="card-body text-center">
 <h6 class="card-title text-muted">Tokens Totales</h6>
 <h3 id="dashTotalTokens" class="text-info">0</h3>
@@ -284,7 +284,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 </div>
 <div class="col-md-3">
-<div class="card bg-dark text-white border-secondary">
+<div class="card bg-light text-dark border-secondary">
 <div class="card-body text-center">
 <h6 class="card-title text-muted">Costo Estimado</h6>
 <h3 id="dashTotalCost" class="text-success">$0.0000</h3>
@@ -293,7 +293,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 </div>
 <div class="col-md-3">
-<div class="card bg-dark text-white border-secondary">
+<div class="card bg-light text-dark border-secondary">
 <div class="card-body text-center">
 <h6 class="card-title text-muted">Sesiones Activas</h6>
 <h3 id="dashActiveSessions" class="text-warning">0</h3>
@@ -302,7 +302,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 </div>
 <div class="col-md-3">
-<div class="card bg-dark text-white border-secondary">
+<div class="card bg-light text-dark border-secondary">
 <div class="card-body text-center"><h6 class="card-title text-muted">Éxito Escalera Modelos</h6>
 <h3 id="dashLadderSuccess" class="text-primary">0%</h3>
 <small class="text-muted">Tasa de resolución automática</small>
@@ -312,7 +312,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 <div class="row">
 <div class="col-md-6 mb-4">
-<div class="card bg-dark text-white border-secondary">
+<div class="card bg-light text-dark border-secondary">
 <div class="card-header"><i class="fas fa-chart-pie"></i> Uso de Tokens por Fase del Pipeline</div>
 <div class="card-body" style="min-height: 300px;">
 <canvas id="chartTokenUsage"></canvas>
@@ -320,10 +320,10 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 </div>
 <div class="col-md-6 mb-4">
-<div class="card bg-dark text-white border-secondary">
+<div class="card bg-light text-dark border-secondary">
 <div class="card-header"><i class="fas fa-layer-group"></i> Rendimiento de la Escalera de Modelos (Linting)</div>
 <div class="card-body">
-<table class="table table-dark table-sm table-hover">
+<table class="table table-sm table-hover">
 <thead>
 <tr>
 <th>Modelo</th>
@@ -343,15 +343,15 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <!-- ✅ NUEVO: Tabla de Todos los Modelos IA Utilizados -->
 <div class="row">
     <div class="col-md-12 mb-4">
-        <div class="card bg-dark text-white border-secondary">
+        <div class="card bg-light text-dark border-secondary">
             <div class="card-header">
                 <i class="fas fa-robot"></i> Todos los Modelos IA Utilizados (TokenUsage)
                 <small class="text-muted float-right">Desglose histórico completo</small>
             </div>
             <div class="card-body p-0">
                 <div class="table-responsive">
-                    <table class="table table-dark table-sm table-hover mb-0">
-                        <thead class="thead-dark">
+                    <table class="table table-sm table-hover mb-0">
+                        <thead class="thead-light">
                             <tr>
                                 <th>Modelo</th>
                                 <th class="text-center">Usos</th>
@@ -371,11 +371,11 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
     </div>
 </div>
 <!-- FIN NUEVO -->
-<div class="card bg-dark text-white border-secondary">
+<div class="card bg-light text-dark border-secondary">
 <div class="card-header"><i class="fas fa-compress-alt"></i> Estado de Compresión de Contexto por Sesión</div>
 <div class="card-body p-0">
 <div class="table-responsive">
-<table class="table table-dark table-sm table-hover mb-0">
+<table class="table table-sm table-hover mb-0">
 <thead>
 <tr>
 <th>Sesión</th>
@@ -410,7 +410,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dropzone/5.9.3/min/dropzone.min.js"></script>
 <script src="js/actualizar-hora.js"></script>
 <script src="js/recargarPagina.js"></script>
-<script src="chat2.js"></script>
+<script src="js/chat.js"></script>
 <script src="chat2-enhancements.js"></script>
 <script src="js/sincronizar.js"></script>
 <script src="js/estilo.js"></script>
