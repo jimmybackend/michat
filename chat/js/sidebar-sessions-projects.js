@@ -97,14 +97,14 @@
             const badge = isArchived ? `<span class="badge badge-secondary ml-1" style="font-size:0.6rem;">arch</span>` : '';
             const active = (sid === currentSessionId) ? ' active' : '';
 
-            return `<div class="sb-item${active}" data-id="${sid}" data-type="session" title="${title}"
+            return `<div class="sb-item${active}" data-id="${sid}" data-type="session" title="${esc(title)}"
                     style="cursor: pointer; padding: 6px 8px; border-radius: 4px; margin-bottom: 2px;">
                 <div class="d-flex justify-content-between align-items-center">
-                    <span class="text-truncate" style="max-width: 85%; font-size: 0.8rem;">
-                        <i class="fas fa-comment-dots mr-1" style="font-size:0.65rem;"></i>${title} ${badge}
+                    <span class="text-truncate sb-item-title" style="max-width: 70%; font-size: 0.75rem;">
+                        <i class="fas fa-comment-dots mr-1" style="font-size:0.6rem;"></i>${title} ${badge}
                     </span>
                 </div>
-                <small class="text-muted d-block" style="font-size: 0.65rem;">${esc(meta)}</small>
+                <small class="text-muted d-block" style="font-size: 0.6rem;">${esc(meta)}</small>
             </div>`;
         };
 
@@ -177,10 +177,10 @@
             html += `<div class="sb-item project-item${isActive}" data-id="${pid}" data-type="project"
                      style="cursor: pointer; padding: 6px 8px; border-radius: 4px; margin-bottom: 4px; border-left: 3px solid var(--accent, #00ff88); background: rgba(0,255,136,0.05);">
                 <div class="d-flex justify-content-between align-items-center">
-                    <span class="text-truncate" style="max-width: 70%; font-weight: 600; font-size: 0.8rem;">
-                        <i class="fas fa-briefcase mr-1" style="font-size:0.7rem;"></i>${pname}
+                    <span class="text-truncate sb-item-title" style="max-width: 70%; font-weight: 600; font-size: 0.75rem;">
+                        <i class="fas fa-briefcase mr-1" style="font-size:0.65rem;"></i>${pname}
                     </span>
-                    <span class="badge badge-secondary" style="font-size: 0.65rem;">${sessCount} chats</span>
+                    <span class="badge badge-secondary" style="font-size: 0.6rem;">${sessCount} chats</span>
                 </div>
             </div>`;
         });

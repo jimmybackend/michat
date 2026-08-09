@@ -166,12 +166,16 @@ body.ui-theme {
 }
 .sidebar-panel .sb-item {
   border-radius: 10px !important;
-  padding: 8px 10px !important;
+  padding: 6px 8px !important;
 }
 .sidebar-panel .sb-item-meta {
-  font-size: 11px !important;
+  font-size: 10px !important;
   color: var(--text-soft) !important;
   margin-top: 2px;
+}
+.sidebar-panel .sb-item-title {
+  font-size: 12px !important;
+  max-width: 70% !important;
 }
 .sidebar-panel .sb-group-label {
   font-size: 10.5px;
