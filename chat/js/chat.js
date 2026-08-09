@@ -85,9 +85,17 @@
     let projects = [];
     let projectSources = [];
     let isSending = false;
-    let pendingFiles = []; 
+    let pendingFiles = [];
+    let sessionAttachments = [];
     let fileIdSeq = 1;
-    const esc = (s) => (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
     function fmtDate(dtStr) {
       if (!dtStr) return '';
       try { return new Date(dtStr.replace(' ', 'T')).toLocaleString(); } 
@@ -135,8 +143,8 @@
       }
       return model;
     }
-    function mdSafe(html) {
-      return String(html || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        function mdSafe(html) {
+      return String(html || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
     function mdInline(text) {
       let s = String(text || '');
@@ -1982,14 +1990,7 @@ document.addEventListener('click', async (e) => {
     alert('Error de red: ' + err.message);
   }
 });
-})();
 
-// =====================================================================
-// Fin del módulo principal - siguientes módulos son independientes
-// =====================================================================
-
-(function() {
-  'use strict';
   window.addEventListener('error', (ev) => {
       const msg = ev && ev.message ? ev.message : 'Error JS no especificado';
       setStatus('Error en script');
@@ -2341,9 +2342,6 @@ function openSessionAttachmentsModal() {
   if (fileInput) fileInput.value = '';
   jQuery(modal).modal('show');
 }
-(function() {
-  'use strict';
-  let sessionAttachments = [];
   if (el.attachmentsAdd) {
     el.attachmentsAdd.addEventListener('click', openSessionAttachmentsModal);
   }
@@ -2362,7 +2360,6 @@ function openSessionAttachmentsModal() {
       alert('Funcionalidad de indexación pendiente de implementar');
     });
   }
-})();
 
 // =====================================================================
 // UTILIDADES EXPORTADAS PARA OTROS MÓDULOS
@@ -2412,43 +2409,6 @@ function getCurrentSessionId() {
     return null;
 }
 
-function getUserId() {
-    const hid = document.getElementById('chatUserId');
-    if (hid && hid.value) {
-        const n = parseInt(hid.value, 10);
-        if (Number.isFinite(n) && n > 0) return String(n);
-    }
-    const ds = document.querySelector('[data-user-id]');
-    if (ds) {
-        const v = ds.getAttribute('data-user-id') || (ds.dataset ? ds.dataset.userId : '');
-        const n = parseInt(v, 10);
-        if (Number.isFinite(n) && n > 0) return String(n);
-    }
-    return '';
-}
-
-function fmtDate(dtStr) {
-    if (!dtStr) return '';
-    try { return new Date(dtStr.replace(' ', 'T')).toLocaleString(); }
-    catch { return dtStr; }
-}
-
-function buildS3Url(key) {
-    return '../descargar.php?archivo=' + encodeURIComponent(key) + '&nombre=' + encodeURIComponent(key.split('/').pop());
-}
-
-function mdToHtml(md) {
-    if (!md) return '';
-    let html = md;
-    html = html.replace(/\[INSTRUCTION\]([\s\S]*?)\[\/INSTRUCTION\]/g, '<div class="chat-instruction-block">$1</div>');
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>');
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    html = html.replace(/\n/g, '<br>');
-    return html;
-}
-
 // Exportar funciones utilitarias para otros módulos
 window.chatUtils = {
     escapeHtml: escapeHtml,
@@ -2460,7 +2420,6 @@ window.chatUtils = {
     buildS3Url: buildS3Url,
     mdToHtml: mdToHtml
 };
-
-  }); // Fin DOMContentLoaded
-})(); // Fin IIFE
-
+  // === FIN DEL ARCHIVO chat.js CORREGIDO ===
+  }); // cierra DOMContentLoaded
+})(); // cierra IIFE
