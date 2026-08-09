@@ -26,7 +26,7 @@
             formData.append('project_id', projectId);
             formData.append('action', 'get_recent_edits');
 
-            const res = await fetch('chat/rollback_edit.php', {
+            const res = await fetch('../rollback_edit.php', {
                 method: 'POST',
                 body: formData,
                 credentials: 'same-origin'
@@ -111,7 +111,7 @@
             formData.append('project_id', projectId);
             formData.append('target_filename', filename);
 
-            const res = await fetch('chat/rollback_edit.php', {
+            const res = await fetch('../rollback_edit.php', {
                 method: 'POST',
                 body: formData,
                 credentials: 'same-origin'

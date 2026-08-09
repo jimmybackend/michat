@@ -2412,6 +2412,43 @@ function getCurrentSessionId() {
     return null;
 }
 
+function getUserId() {
+    const hid = document.getElementById('chatUserId');
+    if (hid && hid.value) {
+        const n = parseInt(hid.value, 10);
+        if (Number.isFinite(n) && n > 0) return String(n);
+    }
+    const ds = document.querySelector('[data-user-id]');
+    if (ds) {
+        const v = ds.getAttribute('data-user-id') || (ds.dataset ? ds.dataset.userId : '');
+        const n = parseInt(v, 10);
+        if (Number.isFinite(n) && n > 0) return String(n);
+    }
+    return '';
+}
+
+function fmtDate(dtStr) {
+    if (!dtStr) return '';
+    try { return new Date(dtStr.replace(' ', 'T')).toLocaleString(); }
+    catch { return dtStr; }
+}
+
+function buildS3Url(key) {
+    return '../descargar.php?archivo=' + encodeURIComponent(key) + '&nombre=' + encodeURIComponent(key.split('/').pop());
+}
+
+function mdToHtml(md) {
+    if (!md) return '';
+    let html = md;
+    html = html.replace(/\[INSTRUCTION\]([\s\S]*?)\[\/INSTRUCTION\]/g, '<div class="chat-instruction-block">$1</div>');
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    html = html.replace(/\n/g, '<br>');
+    return html;
+}
+
 // Exportar funciones utilitarias para otros módulos
 window.chatUtils = {
     escapeHtml: escapeHtml,
@@ -2424,5 +2461,6 @@ window.chatUtils = {
     mdToHtml: mdToHtml
 };
 
-});
-})();
+  }); // Fin DOMContentLoaded
+})(); // Fin IIFE
+
