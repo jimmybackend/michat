@@ -70,7 +70,7 @@
             formData.append('project_id', projectId);
             formData.append('test_command', testCommand);
 
-            const response = await fetch('chat/run_tests.php', {
+            const response = await fetch('../run_tests.php', {
                 method: 'POST',
                 body: formData,
                 credentials: 'same-origin'
