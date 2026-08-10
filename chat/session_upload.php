@@ -93,18 +93,49 @@ if (empty($_FILES['files']) || !is_array($_FILES['files']['name'])) {
     jexit(['ok'=>false,'error'=>'No se recibieron archivos'], 400);
 }
 
-// ===== Construir ruta destino con fecha =====
-// Formato: Data/Chat/Uploads/{user_id}/YYYY/MM/
+// ===== Construir ruta destino con fecha y session_id =====
+// Formato: Data/Chat/Uploads/{user_id}/{YYYY}/{MM}/{DD}/{session_id}/
 $now = new DateTime();
 $year = $now->format('Y');
 $month = $now->format('m');
+$day = $now->format('d');
 
-$rutaDestino = "Data/Chat/Uploads/{$user_id}/{$year}/{$month}/";
+// Validar session_id si se proporcionó
+if ($session_id <= 0) {
+    // Si no hay session_id, usar un valor por defecto temporal
+    // En producción esto debería ser un error
+    $session_id = 0;
+}
+
+$rutaDestino = "Data/Chat/Uploads/{$user_id}/{$year}/{$month}/{$day}/{$session_id}/";
 
 // ===== Subir archivos =====
 $manager = new S3Manager();
 $uploaded = [];
 $errors = [];
+
+// Crear carpetas S3Folders para la jerarquía completa
+try {
+    $userIdInt = (int)$user_id;
+    $prefixes = [
+        "Data/Chat/Uploads/",
+        "Data/Chat/Uploads/{$userIdInt}/",
+        "Data/Chat/Uploads/{$userIdInt}/{$year}/",
+        "Data/Chat/Uploads/{$userIdInt}/{$year}/{$month}/",
+        "Data/Chat/Uploads/{$userIdInt}/{$year}/{$month}/{$day}/",
+        "Data/Chat/Uploads/{$userIdInt}/{$year}/{$month}/{$day}/{$session_id}/"
+    ];
+    
+    foreach ($prefixes as $prefix) {
+        if (!$manager->folderExistsDb($userIdInt, $prefix)) {
+            $manager->upsertFolderDbPublic($userIdInt, $prefix);
+        }
+    }
+} catch (Throwable $e) {
+    // Si falla la creación de carpetas, continuar igual con el upload
+    // Las carpetas se crearán bajo demanda en uploadFile
+    error_log('Warning: Error creando S3Folders: ' . $e->getMessage());
+}
 
 $count = count($_FILES['files']['name']);
 for ($i = 0; $i < $count; $i++) {
@@ -122,45 +153,15 @@ for ($i = 0; $i < $count; $i++) {
         // 1. Subir a S3 y registrar en FileS3
         $result = $manager->uploadFile($tmpPath, $originalName, $rutaDestino, $user_id, $mimeType, $fileSize);
         
-        // 2. Registrar en SessionAttachments (o crear tabla si no existe)
-        $attachmentId = next_id($db_connection, 'SessionAttachments', 'id_');
-        $s3Key = $result['key_s3'];
-        $filename = $originalName;
-        $files3_id = $result['id'];
-        
-        $sqlInsert = "INSERT INTO SessionAttachments (id_, session_id, files3_id, s3_key, filename, mime_type, size_bytes, user_id, status, created_at)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())";
-        $stmtInsert = $db_connection->prepare($sqlInsert);
-        if (!$stmtInsert) {
-            $errors[] = 'Error preparando INSERT SessionAttachments: '.$db_connection->error;
-            continue;
-        }
-        
-        $stmtInsert->bind_param('iiissisi', 
-            $attachmentId, 
-            $session_id, 
-            $files3_id, 
-            $s3Key, 
-            $filename, 
-            $mimeType, 
-            $fileSize,
-            $user_id
-        );
-        
-        if (!$stmtInsert->execute()) {
-            $errors[] = 'Error insertando SessionAttachments: '.$stmtInsert->error;
-            $stmtInsert->close();
-            continue;
-        }
-        $stmtInsert->close();
-        
         $uploaded[] = [
-            'id' => $attachmentId,
-            'filename' => $filename,
-            's3_key' => $s3Key,
+            'id' => $result['id'],
+            'files3_id' => $result['id'],
+            'filename' => $result['nombre_original'],
+            's3_key' => $result['key_s3'],
             'size' => $fileSize,
             'mime_type' => $mimeType,
-            'status' => 'pending'
+            'ruta' => $result['ruta'],
+            'created_at' => date('Y-m-d H:i:s')
         ];
         
     } catch (Throwable $e) {

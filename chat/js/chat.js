@@ -2137,16 +2137,17 @@ async function loadSessionAttachments(sessionId) {
         modalList.innerHTML = '<div class="list-group-item text-muted small">No hay adjuntos aún.</div>';
       } else {
         modalList.innerHTML = sessionAttachments.map(a => {
-          const statusClass = a.status || 'pending';
-          const statusText = { 'pending': 'Pendiente', 'indexed': 'Indexado', 'error': 'Error' }[statusClass] || statusClass;
-          const badgeClass = statusClass === 'indexed' ? 'success' : statusClass === 'error' ? 'danger' : 'warning';
-          return `<div class="list-group-item d-flex justify-content-between align-items-center py-2" data-id="${a.id}">
+          // El status ahora es siempre 'indexed' ya que FileS3 existe
+          const statusClass = 'indexed';
+          const statusText = 'Indexado';
+          const badgeClass = 'success';
+          return `<div class="list-group-item d-flex justify-content-between align-items-center py-2" data-id="${a.files3_id}">
             <div class="text-truncate" style="max-width: 70%;" title="${esc(a.filename)}">
               <i class="fas fa-file mr-1 text-muted"></i> ${esc(a.filename)}
             </div>
             <div class="d-flex align-items-center" style="gap: 8px;">
               <span class="badge badge-${badgeClass}" style="font-size: 0.7rem;">${statusText}</span>
-              <button class="btn btn-sm btn-outline-danger btn-delete-modal-attachment" data-id="${a.id}" title="Eliminar adjunto" style="padding: 0 .4rem;">
+              <button class="btn btn-sm btn-outline-danger btn-delete-modal-attachment" data-id="${a.files3_id}" title="Eliminar adjunto" style="padding: 0 .4rem;">
                 <i class="fas fa-trash"></i>
               </button>
             </div>
@@ -2177,9 +2178,10 @@ function renderSessionAttachments() {
     return;
   }
   list.innerHTML = sessionAttachments.map(a => {
-    const statusClass = a.status || 'pending';
-    const statusText = { 'pending': 'Pendiente', 'indexed': 'Indexado', 'error': 'Error' }[statusClass] || statusClass;
-    const badgeClass = statusClass === 'indexed' ? 'success' : statusClass === 'error' ? 'danger' : 'warning';
+    // El status ahora es siempre 'indexed' ya que FileS3 existe
+    const statusClass = 'indexed';
+    const statusText = 'Indexado';
+    const badgeClass = 'success';
     let actionsHtml = '';
     if (a.edit_url) {
       actionsHtml += `<a href="${esc(a.edit_url)}" target="_blank" class="btn btn-sm btn-primary" style="padding: 0 .3rem; font-size: 0.6rem;" title="Editar"><i class="fas fa-edit"></i></a>`;
@@ -2187,12 +2189,12 @@ function renderSessionAttachments() {
     if (a.view_url) {
       actionsHtml += `<a href="${esc(a.view_url)}" target="_blank" class="btn btn-sm btn-info" style="padding: 0 .3rem; font-size: 0.6rem;" title="Ver"><i class="fas fa-eye"></i></a>`;
     }
-    return `<div class="list-group-item attachment-item d-flex justify-content-between align-items-center py-1 px-2" data-id="${a.id}" style="font-size:0.7rem;">
+    return `<div class="list-group-item attachment-item d-flex justify-content-between align-items-center py-1 px-2" data-id="${a.files3_id}" style="font-size:0.7rem;">
       <span class="text-truncate" style="max-width:45%;" title="${esc(a.filename)}">${esc(a.filename)}</span>
       <span class="d-flex align-items-center" style="gap: 4px;">
         ${actionsHtml}
         <span class="badge badge-${badgeClass}" style="font-size:0.6rem;">${statusText}</span>
-        <button class="btn btn-sm btn-outline-danger btn-delete-attachment" data-id="${a.id}" title="Eliminar" style="padding: 0 .3rem; font-size: 0.6rem;">
+        <button class="btn btn-sm btn-outline-danger btn-delete-attachment" data-id="${a.files3_id}" title="Eliminar" style="padding: 0 .3rem; font-size: 0.6rem;">
           <i class="fas fa-trash"></i>
         </button>
       </span>
@@ -2297,11 +2299,13 @@ function openSessionAttachmentsModal() {
   }
   const modal = document.getElementById('modalSessionAttachments');
   if (!modal) return;
+  // La ruta ahora incluye día y session_id
   const userId = document.getElementById('chatUserId') ? document.getElementById('chatUserId').value : 1;
   const now = new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
-  const path = `Data/Chat/Uploads/${userId}/${year}/${month}/`;
+  const day = String(now.getDate()).padStart(2, '0');
+  const path = `Data/Chat/Uploads/${userId}/${year}/${month}/${day}/${currentSessionId}/`;
   const pathEl = document.getElementById('sessionUploadPath');
   if (pathEl) pathEl.textContent = path;
   const modalList = document.getElementById('modalSessionAttachmentsList');
@@ -2310,16 +2314,17 @@ function openSessionAttachmentsModal() {
       modalList.innerHTML = '<div class="list-group-item text-muted small">No hay adjuntos aún.</div>';
     } else {
       modalList.innerHTML = sessionAttachments.map(a => {
-        const statusClass = a.status || 'pending';
-        const statusText = { 'pending': 'Pendiente', 'indexed': 'Indexado', 'error': 'Error' }[statusClass] || statusClass;
-        const badgeClass = statusClass === 'indexed' ? 'success' : statusClass === 'error' ? 'danger' : 'warning';
-        return `<div class="list-group-item d-flex justify-content-between align-items-center py-2" data-id="${a.id}">
+        // El status ahora es siempre 'indexed' ya que FileS3 existe
+        const statusClass = 'indexed';
+        const statusText = 'Indexado';
+        const badgeClass = 'success';
+        return `<div class="list-group-item d-flex justify-content-between align-items-center py-2" data-id="${a.files3_id}">
           <div class="text-truncate" style="max-width: 70%;" title="${esc(a.filename)}">
             <i class="fas fa-file mr-1 text-muted"></i> ${esc(a.filename)}
           </div>
           <div class="d-flex align-items-center" style="gap: 8px;">
             <span class="badge badge-${badgeClass}" style="font-size: 0.7rem;">${statusText}</span>
-            <button class="btn btn-sm btn-outline-danger btn-delete-modal-attachment" data-id="${a.id}" title="Eliminar adjunto" style="padding: 0 .4rem;">
+            <button class="btn btn-sm btn-outline-danger btn-delete-modal-attachment" data-id="${a.files3_id}" title="Eliminar adjunto" style="padding: 0 .4rem;">
               <i class="fas fa-trash"></i>
             </button>
           </div>

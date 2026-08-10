@@ -197,6 +197,15 @@ class S3Manager
         $stmt->close();
     }
 
+    /**
+     * Método público para crear/actualizar carpetas S3Folders
+     * Usado por session_upload.php para crear la jerarquía de carpetas
+     */
+    public function upsertFolderDbPublic(int $userId, string $prefix): void
+    {
+        $this->upsertFolderDb($userId, $prefix);
+    }
+
 /**
  * ============================================================
  * FUNCTION: renameMoveFolderTreeDb
