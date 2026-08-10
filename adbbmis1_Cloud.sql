@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: localhost:3306
--- Tiempo de generación: 06-08-2026 a las 14:10:36
+-- Tiempo de generación: 10-08-2026 a las 12:55:07
 -- Versión del servidor: 8.0.46-37
 -- Versión de PHP: 8.4.24
 
@@ -35,25 +35,6 @@ CREATE TABLE `AccessControl` (
   `ip_address` varchar(45) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
   `action_details` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
-
--- --------------------------------------------------------
-
---
--- Estructura de tabla para la tabla `calls`
---
-
-CREATE TABLE `calls` (
-  `id` bigint UNSIGNED NOT NULL,
-  `user_id_` int NOT NULL,
-  `from_user_id` int DEFAULT NULL,
-  `from` varchar(191) DEFAULT NULL,
-  `to` varchar(191) DEFAULT NULL,
-  `status` enum('ringing','accepted','rejected','ended') NOT NULL DEFAULT 'ringing',
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `accepted_at` datetime DEFAULT NULL,
-  `rejected_at` datetime DEFAULT NULL,
-  `ended_at` datetime DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
 
@@ -163,44 +144,6 @@ CREATE TABLE `FileS3` (
   `SecureUpdatedAt` timestamp NULL DEFAULT NULL,
   `Fecha` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `user_id_` int NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- --------------------------------------------------------
-
---
--- Estructura de tabla para la tabla `FileS3_RepairControl`
---
-
-CREATE TABLE `FileS3_RepairControl` (
-  `id_` int NOT NULL,
-  `Prefix` varchar(512) NOT NULL,
-  `Estado` enum('pendiente','procesando','revisado','error') NOT NULL DEFAULT 'pendiente',
-  `UltimoMensaje` text,
-  `TotalS3` int NOT NULL DEFAULT '0',
-  `TotalBD` int NOT NULL DEFAULT '0',
-  `TotalAcciones` int NOT NULL DEFAULT '0',
-  `LastProcessedAt` timestamp NULL DEFAULT NULL,
-  `CreatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `UpdatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- --------------------------------------------------------
-
---
--- Estructura de tabla para la tabla `FileS3_RepairLog`
---
-
-CREATE TABLE `FileS3_RepairLog` (
-  `id_` bigint NOT NULL,
-  `Prefix` varchar(512) NOT NULL,
-  `FileS3_id` int DEFAULT NULL,
-  `Accion` enum('keep','update_encriptado','delete_duplicate','missing_in_s3','warning') NOT NULL,
-  `Nombre` varchar(255) DEFAULT NULL,
-  `EncriptadoAntes` varchar(255) DEFAULT NULL,
-  `EncriptadoDespues` varchar(255) DEFAULT NULL,
-  `S3Key` varchar(1024) DEFAULT NULL,
-  `Detalle` text,
-  `CreatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -397,7 +340,7 @@ CREATE TABLE `S3Folders` (
 CREATE TABLE `SessionContextBlocks` (
   `id_` bigint UNSIGNED NOT NULL,
   `session_id_` int NOT NULL,
-  `block_type` enum('primordial','level_0','level_1','level_2','level_3') NOT NULL DEFAULT 'level_0' COMMENT 'Jerarquía de compresión',
+  `block_type` enum('primordial','level_0','level_1','level_2','level_3','file','file_chunk') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'level_0',
   `question_msg_id` int DEFAULT NULL COMMENT 'ID del mensaje de pregunta en ChatMessages',
   `answer_msg_id` int DEFAULT NULL COMMENT 'ID del mensaje de respuesta en ChatMessages',
   `content_preview` mediumtext COMMENT 'Contexto completo del bloque para que la memoria no se corte y sea lógica',
@@ -516,15 +459,6 @@ ALTER TABLE `AccessControl`
   ADD KEY `user_id` (`user_id`);
 
 --
--- Indices de la tabla `calls`
---
-ALTER TABLE `calls`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_user_status_created` (`user_id_`,`status`,`created_at`),
-  ADD KEY `idx_status_created` (`status`,`created_at`),
-  ADD KEY `fk_calls_user_caller` (`from_user_id`);
-
---
 -- Indices de la tabla `ChatMessages`
 --
 ALTER TABLE `ChatMessages`
@@ -573,21 +507,6 @@ ALTER TABLE `FileS3`
   ADD KEY `idx_files_user_found` (`user_id_`,`Found`),
   ADD KEY `idx_files_user_ruta` (`user_id_`,`Ruta`(191)),
   ADD KEY `idx_files_user_access_found` (`user_id_`,`AccessType`,`Found`);
-
---
--- Indices de la tabla `FileS3_RepairControl`
---
-ALTER TABLE `FileS3_RepairControl`
-  ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `uq_prefix` (`Prefix`);
-
---
--- Indices de la tabla `FileS3_RepairLog`
---
-ALTER TABLE `FileS3_RepairLog`
-  ADD PRIMARY KEY (`id_`),
-  ADD KEY `idx_prefix` (`Prefix`(191)),
-  ADD KEY `idx_file` (`FileS3_id`);
 
 --
 -- Indices de la tabla `FileVersions`
@@ -734,12 +653,6 @@ ALTER TABLE `AccessControl`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
--- AUTO_INCREMENT de la tabla `calls`
---
-ALTER TABLE `calls`
-  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
 -- AUTO_INCREMENT de la tabla `ChatMessages`
 --
 ALTER TABLE `ChatMessages`
@@ -768,18 +681,6 @@ ALTER TABLE `EmbeddingJobs`
 --
 ALTER TABLE `FileS3`
   MODIFY `id_` int NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `FileS3_RepairControl`
---
-ALTER TABLE `FileS3_RepairControl`
-  MODIFY `id_` int NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `FileS3_RepairLog`
---
-ALTER TABLE `FileS3_RepairLog`
-  MODIFY `id_` bigint NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT de la tabla `FileVersions`
@@ -874,13 +775,6 @@ ALTER TABLE `Users`
 --
 ALTER TABLE `AccessControl`
   ADD CONSTRAINT `AccessControl_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `Users` (`id`);
-
---
--- Filtros para la tabla `calls`
---
-ALTER TABLE `calls`
-  ADD CONSTRAINT `fk_calls_user_caller` FOREIGN KEY (`from_user_id`) REFERENCES `Users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE,
-  ADD CONSTRAINT `fk_calls_user_receiver` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON UPDATE CASCADE;
 
 --
 -- Filtros para la tabla `ChatMessages`
