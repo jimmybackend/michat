@@ -1,7 +1,8 @@
 <?php
 // session_attachments.php
 // Gestión de adjuntos de sesión (archivos vinculados a una sesión de chat)
-// Acciones: list, add, remove, reindex
+// Acciones: list, remove
+// NOTA: reindex eliminado - la indexación se manejará por el nuevo sistema
 header('Content-Type: application/json; charset=utf-8');
 if (session_status() === PHP_SESSION_NONE) session_start();
 
@@ -9,15 +10,6 @@ function jexit($arr, $code = 200) {
     http_response_code($code);
     echo json_encode($arr, JSON_UNESCAPED_UNICODE);
     exit;
-}
-
-function next_id(mysqli $db, $table, $col) {
-    $table = preg_replace('/[^A-Za-z0-9_]+/','',$table);
-    $col   = preg_replace('/[^A-Za-z0-9_]+/','',$col);
-    $rs = $db->query("SELECT COALESCE(MAX($col), 0) + 1 AS nxt FROM $table");
-    if (!$rs) return 1;
-    $row = $rs->fetch_assoc();
-    return (int)($row['nxt'] ?? 1);
 }
 
 function resolve_root_candidates(): array {
@@ -119,29 +111,61 @@ LISTAR adjuntos de una sesión
 ============================ */
 if ($action === 'list') {
     $session_id = isset($_GET['session_id']) ? (int)$_GET['session_id'] : 0;
+    
+    // Construir el prefijo de ruta para buscar en FileS3
+    // Formato: Data/Chat/Uploads/{user_id}/{YYYY}/{MM}/{DD}/{session_id}/
     if ($session_id <= 0) {
-        // Si no hay session_id, listar adjuntos sin sesión (huérfanos o del usuario)
-        $sql = "SELECT sa.id_, sa.session_id, sa.files3_id, sa.s3_key, sa.filename, 
-                       sa.mime_type, sa.size_bytes, sa.status, sa.created_at,
-                       f.Ruta, f.Encriptado, f.AccessType
-                FROM SessionAttachments sa
-                LEFT JOIN FileS3 f ON f.id_ = sa.files3_id
-                WHERE sa.user_id = ?
-                ORDER BY sa.created_at DESC";
+        // Si no hay session_id, listar archivos del usuario en Chat/Uploads
+        $prefixBase = "Data/Chat/Uploads/{$user_id}/";
+        $sql = "SELECT f.id_ AS files3_id, f.Nombre AS filename, f.Encriptado AS s3_key,
+                       f.Tamano AS size_bytes, f.Ruta, f.AccessType, f.Fecha AS created_at,
+                       f.Metadatos
+                FROM FileS3 f
+                WHERE f.user_id_ = ?
+                  AND f.Ruta LIKE CONCAT(?, '%')
+                  AND f.Found = 1
+                ORDER BY f.Fecha DESC";
         $stmt = $db_connection->prepare($sql);
         if (!$stmt) jexit(['ok'=>false,'error'=>'Error preparando: '.$db_connection->error], 500);
-        $stmt->bind_param('i', $user_id);
+        $stmt->bind_param('is', $user_id, $prefixBase);
     } else {
-        $sql = "SELECT sa.id_, sa.session_id, sa.files3_id, sa.s3_key, sa.filename, 
-                       sa.mime_type, sa.size_bytes, sa.status, sa.created_at,
-                       f.Ruta, f.Encriptado, f.AccessType
-                FROM SessionAttachments sa
-                LEFT JOIN FileS3 f ON f.id_ = sa.files3_id
-                WHERE sa.session_id = ? AND sa.user_id = ?
-                ORDER BY sa.created_at DESC";
-        $stmt = $db_connection->prepare($sql);
-        if (!$stmt) jexit(['ok'=>false,'error'=>'Error preparando: '.$db_connection->error], 500);
-        $stmt->bind_param('ii', $session_id, $user_id);
+        // Listar archivos de una sesión específica
+        // Necesitamos obtener la fecha desde la sesión para construir el prefijo exacto
+        // Primero obtenemos información de la sesión
+        $sqlSession = "SELECT created_at FROM ChatSessions WHERE id_ = ? AND user_id_ = ?";
+        $stmtSession = $db_connection->prepare($sqlSession);
+        if ($stmtSession) {
+            $stmtSession->bind_param('ii', $session_id, $user_id);
+            $stmtSession->execute();
+            $resSession = $stmtSession->get_result();
+            if ($resSession->num_rows > 0) {
+                $sessionRow = $resSession->fetch_assoc();
+                $sessionDate = new DateTime($sessionRow['created_at']);
+                $year = $sessionDate->format('Y');
+                $month = $sessionDate->format('m');
+                $day = $sessionDate->format('d');
+                
+                $prefixBase = "Data/Chat/Uploads/{$user_id}/{$year}/{$month}/{$day}/{$session_id}/";
+                
+                $sql = "SELECT f.id_ AS files3_id, f.Nombre AS filename, f.Encriptado AS s3_key,
+                               f.Tamano AS size_bytes, f.Ruta, f.AccessType, f.Fecha AS created_at,
+                               f.Metadatos
+                        FROM FileS3 f
+                        WHERE f.user_id_ = ?
+                          AND f.Ruta = ?
+                          AND f.Found = 1
+                        ORDER BY f.Fecha DESC";
+                $stmt = $db_connection->prepare($sql);
+                if (!$stmt) jexit(['ok'=>false,'error'=>'Error preparando: '.$db_connection->error], 500);
+                $stmt->bind_param('is', $user_id, $prefixBase);
+            } else {
+                $stmtSession->close();
+                jexit(['ok'=>false,'error'=>'Sesión no encontrada'], 404);
+            }
+            $stmtSession->close();
+        } else {
+            jexit(['ok'=>false,'error'=>'Error preparando consulta de sesión: '.$db_connection->error], 500);
+        }
     }
     
     if (!$stmt->execute()) {
@@ -153,21 +177,21 @@ if ($action === 'list') {
     while ($row = $res->fetch_assoc()) {
         $acciones = obtener_acciones_archivo(
             $row['Ruta'] ?? '',
-            $row['Encriptado'] ?? '',
+            $row['s3_key'] ?? '',
             $row['filename'],
             $row['AccessType'] ?? 'normal'
         );
         
         $attachments[] = [
-            'id'            => (int)$row['id_'],
-            'session_id'    => $row['session_id'] ? (int)$row['session_id'] : null,
-            'files3_id'     => $row['files3_id'] ? (int)$row['files3_id'] : null,
+            'id'            => (int)$row['files3_id'],
+            'files3_id'     => (int)$row['files3_id'],
             's3_key'        => (string)$row['s3_key'],
             'filename'      => (string)$row['filename'],
-            'mime_type'     => (string)$row['mime_type'],
+            'mime_type'     => '', // FileS3 no tiene mime_type directamente
             'size_bytes'    => (int)$row['size_bytes'],
-            'status'        => (string)$row['status'],
+            'status'        => 'indexed', // Por defecto, ya que FileS3 existe
             'created_at'    => (string)$row['created_at'],
+            'ruta'          => (string)$row['Ruta'],
             'edit_url'      => $acciones['edit'],
             'view_url'      => $acciones['view'],
             'download_url'  => $acciones['download'],
@@ -181,26 +205,54 @@ if ($action === 'list') {
 ELIMINAR adjunto de sesión
 ============================ */
 if ($action === 'remove') {
-    $attachment_id = isset($_POST['attachment_id']) ? (int)$_POST['attachment_id'] : 0;
-    if ($attachment_id <= 0) jexit(['ok'=>false,'error'=>'attachment_id inválido'], 400);
+    $files3_id = isset($_POST['attachment_id']) ? (int)$_POST['attachment_id'] : 0;
+    if ($files3_id <= 0) jexit(['ok'=>false,'error'=>'attachment_id inválido'], 400);
     
-    $sqlCheck = "SELECT sa.id_ FROM SessionAttachments sa
-                 WHERE sa.id_ = ? AND sa.user_id = ?";
+    // Verificar que el archivo existe y pertenece al usuario
+    $sqlCheck = "SELECT f.id_, f.Ruta, f.Encriptado FROM FileS3 f
+                 WHERE f.id_ = ? AND f.user_id_ = ? AND f.Found = 1";
     $stmtCheck = $db_connection->prepare($sqlCheck);
     if (!$stmtCheck) jexit(['ok'=>false,'error'=>'Error preparando: '.$db_connection->error], 500);
-    $stmtCheck->bind_param('ii', $attachment_id, $user_id);
+    $stmtCheck->bind_param('ii', $files3_id, $user_id);
     $stmtCheck->execute();
     $resCheck = $stmtCheck->get_result();
     if ($resCheck->num_rows === 0) {
         $stmtCheck->close();
-        jexit(['ok'=>false,'error'=>'Adjunto no encontrado'], 404);
+        jexit(['ok'=>false,'error'=>'Archivo no encontrado o no pertenece al usuario'], 404);
     }
+    $fileRow = $resCheck->fetch_assoc();
     $stmtCheck->close();
     
-    $sql = "DELETE FROM SessionAttachments WHERE id_ = ?";
+    // Verificar que la ruta corresponde a Chat/Uploads
+    $ruta = $fileRow['Ruta'] ?? '';
+    if (strpos($ruta, 'Data/Chat/Uploads/') !== 0) {
+        jexit(['ok'=>false,'error'=>'El archivo no es un adjunto de chat válido'], 400);
+    }
+    
+    // Eliminar físicamente de S3
+    try {
+        require_once __DIR__ . '/S3Manager.php';
+        $manager = new S3Manager();
+        $bucket = $manager->getBucket();
+        
+        $s3Key = $fileRow['Encriptado'];
+        if (!empty($s3Key)) {
+            $s3Client = Config::getS3();
+            $s3Client->deleteObject([
+                'Bucket' => $bucket,
+                'Key'    => $s3Key
+            ]);
+        }
+    } catch (Throwable $e) {
+        // Continuar aunque falle S3, al menos eliminamos de BD
+        error_log('Warning: Error eliminando de S3: ' . $e->getMessage());
+    }
+    
+    // Eliminar registro de FileS3 (marcar como no encontrado)
+    $sql = "UPDATE FileS3 SET Found = 0 WHERE id_ = ?";
     $stmt = $db_connection->prepare($sql);
     if (!$stmt) jexit(['ok'=>false,'error'=>'Error preparando: '.$db_connection->error], 500);
-    $stmt->bind_param('i', $attachment_id);
+    $stmt->bind_param('i', $files3_id);
     if (!$stmt->execute()) {
         $e = $stmt->error; $stmt->close();
         jexit(['ok'=>false,'error'=>'Error eliminando: '.$e], 500);
@@ -211,23 +263,12 @@ if ($action === 'remove') {
 }
 
 /* ============================
-REINDEXAR adjunto
+REINDEXAR adjunto - NO IMPLEMENTADO
 ============================ */
 if ($action === 'reindex') {
-    $attachment_id = isset($_POST['attachment_id']) ? (int)$_POST['attachment_id'] : 0;
-    if ($attachment_id <= 0) jexit(['ok'=>false,'error'=>'attachment_id inválido'], 400);
-    
-    $sql = "UPDATE SessionAttachments SET status = 'pending' WHERE id_ = ?";
-    $stmt = $db_connection->prepare($sql);
-    if (!$stmt) jexit(['ok'=>false,'error'=>'Error preparando: '.$db_connection->error], 500);
-    $stmt->bind_param('i', $attachment_id);
-    if (!$stmt->execute()) {
-        $e = $stmt->error; $stmt->close();
-        jexit(['ok'=>false,'error'=>'Error actualizando: '.$e], 500);
-    }
-    $stmt->close();
-    
-    jexit(['ok' => true, 'message' => 'Adjunto marcado para reindexar']);
+    // La indexación se manejará por el nuevo sistema de embeddings
+    // Esta acción ya no es válida en la nueva arquitectura
+    jexit(['ok' => false, 'error' => 'La acción reindex ha sido eliminada. La indexación se manejará por el sistema de embeddings.']);
 }
 
 jexit(['ok' => false, 'error' => 'Acción no válida'], 400);
