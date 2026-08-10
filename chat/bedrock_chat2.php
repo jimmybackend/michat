@@ -842,14 +842,17 @@ if (!empty($sessionData['context_summary'])) {
     $sessionContext = (string)$sessionData['context_summary'];
 }
 
+
 // Prioridad 2: Si no hay context_summary, leer los bloques de la sesión activa
 if (empty($sessionContext)) {
     $sessionBlocks = [];
-    $sqlSessionBlocks = "SELECT block_type, content_preview, token_count 
-                         FROM SessionContextBlocks 
-                         WHERE session_id_ = ? 
-                         ORDER BY created_at ASC 
-                         LIMIT 20";
+    $sqlSessionBlocks = "SELECT block_type, content_preview, token_count, s3_path
+                         FROM SessionContextBlocks
+                         WHERE session_id_ = ?
+                         ORDER BY 
+                           CASE WHEN block_type IN ('file', 'file_chunk') THEN 0 ELSE 1 END ASC,
+                           created_at ASC
+                         LIMIT 30";
     $stmtSB = $db_connection->prepare($sqlSessionBlocks);
     if ($stmtSB) {
         $stmtSB->bind_param('i', $session_id);
@@ -862,11 +865,25 @@ if (empty($sessionContext)) {
     }
     
     if (!empty($sessionBlocks)) {
-        $sessionContext = "Temas tratados en esta sesión:\n";
-        foreach ($sessionBlocks as $idx => $block) {
-            $sessionContext .= ($idx + 1) . ". " . mb_substr($block['content_preview'], 0, 200) . "\n";
+            $sessionContext = "=== CONTEXTO DE ESTA SESIÓN ===\n";
+            foreach ($sessionBlocks as $idx => $block) {
+                $blockType = $block['block_type'] ?? 'level_0';
+                
+                if ($blockType === 'file') {
+                    $sessionContext .= "[RESUMEN DE ARCHIVO ADJUNTO]\n";
+                    $sessionContext .= $block['content_preview'] . "\n\n";
+                } elseif ($blockType === 'file_chunk') {
+                    $sessionContext .= "[FRAGMENTO DE ARCHIVO ADJUNTO";
+                    if (!empty($block['s3_path'])) {
+                        $sessionContext .= " (" . basename($block['s3_path']) . ")";
+                    }
+                    $sessionContext .= "]\n";
+                    $sessionContext .= $block['content_preview'] . "\n\n";
+                } else {
+                    $sessionContext .= ($idx + 1) . ". " . mb_substr($block['content_preview'], 0, 200) . "\n";
+                }
+            }
         }
-    }
 }
 
 // ✅ C. CONSTRUIR SYSTEM PROMPT BASE
@@ -1330,13 +1347,15 @@ if ($compilation_id > 0 && isset($_POST['compiled_prompt']) && trim($_POST['comp
     
     // Prioridad 2: Leer bloques de la sesión activa directamente
     if (empty($sessionMemory)) {
-        $stmtMem = $db_connection->prepare("
-            SELECT block_type, content_preview, token_count 
-            FROM SessionContextBlocks 
-            WHERE session_id_ = ? 
-            ORDER BY created_at ASC 
-            LIMIT 20
-        ");
+            $stmtMem = $db_connection->prepare("
+                SELECT block_type, content_preview, token_count, s3_path
+                FROM SessionContextBlocks
+                WHERE session_id_ = ?
+                ORDER BY 
+                  CASE WHEN block_type IN ('file', 'file_chunk') THEN 0 ELSE 1 END ASC,
+                  created_at ASC
+                LIMIT 30
+            ");
         if ($stmtMem) {
             $stmtMem->bind_param('i', $session_id);
             $stmtMem->execute();
@@ -1347,24 +1366,71 @@ if ($compilation_id > 0 && isset($_POST['compiled_prompt']) && trim($_POST['comp
             }
             $stmtMem->close();
             
-            if (!empty($memBlocks)) {
-                $sessionMemory = "Temas tratados en esta sesión:\n";
-                foreach ($memBlocks as $idx => $memBlock) {
-                    $sessionMemory .= ($idx + 1) . ". " . mb_substr($memBlock['content_preview'], 0, 300) . "\n";
-                }
+if (!empty($memBlocks)) {
+    $hasAttachments = false;
+    $sessionMemory = "=== CONTEXTO COMPLETO DE ESTA SESIÓN ===\n";
+    $sessionMemory .= "Incluye: conversación previa + archivos adjuntos indexados.\n\n";
+    
+    foreach ($memBlocks as $idx => $memBlock) {
+        $blockType = $memBlock['block_type'] ?? 'level_0';
+        
+        if ($blockType === 'file') {
+            $hasAttachments = true;
+            $sessionMemory .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+            $sessionMemory .= "📄 [RESUMEN SEMÁNTICO DE ARCHIVO ADJUNTO]\n";
+            $sessionMemory .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+            $sessionMemory .= $memBlock['content_preview'] . "\n\n";
+        } elseif ($blockType === 'file_chunk') {
+            $hasAttachments = true;
+            $sessionMemory .= "📎 [FRAGMENTO DE CÓDIGO/TEXTO ADJUNTO";
+            if (!empty($memBlock['s3_path'])) {
+                $filename = basename($memBlock['s3_path']);
+                $sessionMemory .= " - Archivo: {$filename}";
             }
+            $sessionMemory .= "]\n";
+            $sessionMemory .= $memBlock['content_preview'] . "\n\n";
+        } else {
+            $sessionMemory .= ($idx + 1) . ". " . mb_substr($memBlock['content_preview'], 0, 300) . "\n";
+        }
+    }
+}
         }
     }
     
-    // Inyectar la memoria de sesión (UNA SOLA VEZ)
-    if (!empty($sessionMemory)) {
-        $systemPrompt .= "\n\n[MEMORIA DE ESTA SESIÓN - SOLO ESTA, NO OTRAS]\n";
-        $systemPrompt .= "El usuario ha consultado los siguientes temas en esta conversación. ";
-        $systemPrompt .= "Si pregunta '¿qué he preguntado?' o '¿de qué hemos hablado?', responde EXCLUSIVAMENTE basándote en esta lista. ";
-        $systemPrompt .= "NO inventes temas. NO agregues información que no esté aquí:\n";
-        $systemPrompt .= $sessionMemory;
+
+// Inyectar la memoria de sesión (UNA SOLA VEZ)
+if (!empty($sessionMemory)) {
+    // Detectar si hay adjuntos en esta sesión
+    $hasFileBlocks = false;
+    foreach ($memBlocks as $mb) {
+        if (in_array($mb['block_type'], ['file', 'file_chunk'])) {
+            $hasFileBlocks = true;
+            break;
+        }
     }
-    // ====================================================================
+    
+    $systemPrompt .= "\n\n[MEMORIA DE ESTA SESIÓN - SOLO ESTA, NO OTRAS]\n";
+    
+    if ($hasFileBlocks) {
+        // CASO 1: Sesión CON archivos adjuntos
+        $systemPrompt .= "Esta sección contiene:\n";
+        $systemPrompt .= "1. Temas de conversación previos\n";
+        $systemPrompt .= "2. Archivos adjuntos que el usuario ha subido e indexado\n\n";
+        $systemPrompt .= "INSTRUCCIONES CRÍTICAS SOBRE ARCHIVOS ADJUNTOS:\n";
+        $systemPrompt .= "- Si ves bloques marcados como [RESUMEN SEMÁNTICO DE ARCHIVO ADJUNTO] o [FRAGMENTO DE CÓDIGO/TEXTO ADJUNTO], ";
+        $systemPrompt .= "ese contenido proviene de archivos reales que el usuario subió a esta conversación.\n";
+        $systemPrompt .= "- Cuando el usuario pregunte sobre esos archivos, usa el contenido de esos bloques para responder.\n";
+        $systemPrompt .= "- Si el usuario pregunta '¿qué archivos he subido?' o '¿qué adjuntos tengo?', lista los nombres de archivo que veas en los bloques.\n";
+        $systemPrompt .= "- NUNCA digas 'no tengo información sobre ese archivo' si hay un bloque [FRAGMENTO] o [RESUMEN] correspondiente.\n\n";
+    } else {
+        // CASO 2: Sesión SIN archivos adjuntos (solo conversación)
+        $systemPrompt .= "El usuario ha consultado los siguientes temas en esta conversación. ";
+    }
+    
+    $systemPrompt .= "Si pregunta '¿qué he preguntado?' o '¿de qué hemos hablado?', responde EXCLUSIVAMENTE basándote en esta lista. ";
+    $systemPrompt .= "NO inventes temas. NO agregues información que no esté aquí:\n";
+    $systemPrompt .= $sessionMemory;
+}
 
     // ✅ INSTRUCCIONES DEL PROYECTO (solo si la sesión tiene proyecto)
     if (!empty($projectInstructions)) {

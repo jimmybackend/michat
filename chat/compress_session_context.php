@@ -867,7 +867,7 @@ if (empty($sessions)) {
             elseif ($compressedL1 > 0) $newLevel = 1;
             
             // 2. Leer todos los bloques actuales
-            $stmtSummary = $db_connection->prepare("SELECT block_type, content_preview, token_count FROM SessionContextBlocks WHERE session_id_ = ? ORDER BY created_at ASC LIMIT 30");
+            $stmtSummary = $db_connection->prepare("SELECT block_type, content_preview, token_count FROM SessionContextBlocks WHERE session_id_ = ? AND block_type <> 'file_chunk' ORDER BY created_at ASC LIMIT 30");
             $stmtSummary->bind_param('i', $sessionId);
             $stmtSummary->execute();
             $resSummary = $stmtSummary->get_result();

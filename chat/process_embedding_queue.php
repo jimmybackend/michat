@@ -645,19 +645,20 @@ foreach ($jobs as $job) {
         // =================================================================
         if ($targetType === 'session_block') {
             // 1. OBTENER DATOS DEL BLOQUE
-            $stmtData = $db_connection->prepare("
-                SELECT 
-                    scb.session_id_, 
-                    scb.answer_msg_id,
-                    scb.content_preview,
-                    COALESCE(q.content, '') AS question_text, 
-                    COALESCE(a.content, '') AS answer_text
-                FROM SessionContextBlocks scb
-                LEFT JOIN ChatMessages q ON scb.question_msg_id = q.id_
-                LEFT JOIN ChatMessages a ON scb.answer_msg_id = a.id_
-                WHERE scb.id_ = ?
-                LIMIT 1
-            ");
+$stmtData = $db_connection->prepare("
+    SELECT
+        scb.session_id_,
+        scb.answer_msg_id,
+        scb.block_type,
+        scb.content_preview,
+        COALESCE(q.content, '') AS question_text,
+        COALESCE(a.content, '') AS answer_text
+    FROM SessionContextBlocks scb
+    LEFT JOIN ChatMessages q ON scb.question_msg_id = q.id_
+    LEFT JOIN ChatMessages a ON scb.answer_msg_id = a.id_
+    WHERE scb.id_ = ?
+    LIMIT 1
+");           
             $stmtData->bind_param('i', $targetId);
             $stmtData->execute();
             $rowData = $stmtData->get_result()->fetch_assoc();
@@ -701,6 +702,55 @@ foreach ($jobs as $job) {
                 }
                 $stmtUser->close();
             }
+
+
+        // =====================================================
+        // ✅ NUEVO: bloques de archivos adjuntos (file/file_chunk)
+        // Se vectorizan DIRECTO, sin resumen Q&A de SMART MEMORY.
+        // =====================================================
+        $blockType = (string)($rowData['block_type'] ?? 'level_0');
+
+        if ($blockType === 'file' || $blockType === 'file_chunk') {
+            $fileText = (string)($rowData['content_preview'] ?? '');
+            if (trim($fileText) === '') {
+                throw new RuntimeException('Bloque de archivo sin contenido');
+            }
+            $fileText = mb_substr($fileText, 0, 30000);
+
+            $embData = generateTitanEmbedding($bedrock, $fileText, $modelId);
+            if (empty($embData['embedding'])) {
+                throw new RuntimeException('Embedding de archivo vacío');
+            }
+
+            $binary = floatsToBinaryBlob($embData['embedding']);
+            $json   = json_encode($embData['embedding']);
+
+            $stmtUpd = $db_connection->prepare("
+                UPDATE SessionContextBlocks
+                SET embedding = ?, embedding_json = ?, embedding_model = ?
+                WHERE id_ = ?
+            ");
+            $null = $binary;
+            $stmtUpd->bind_param('bssi', $null, $json, $modelId, $targetId);
+            $stmtUpd->send_long_data(0, $binary);
+            $stmtUpd->execute();
+            $stmtUpd->close();
+
+            $upd = $db_connection->prepare("UPDATE EmbeddingJobs SET status = 'completed', attempts = ?, updated_at = NOW() WHERE id_ = ?");
+            $upd->bind_param('ii', $attempts, $jobId);
+            $upd->execute();
+            $upd->close();
+
+            if ($sessionId && $tcMsgId !== null) {
+                logTokenUsage($db_connection, $sessionId, $tcMsgId, 'embedding', $modelId, $embData['inputTokens'], 0);
+            }
+
+            $detail['status'] = 'completed_file';
+            $detail['dimensions'] = count($embData['embedding']);
+            $results['succeeded']++;
+            $results['details'][] = $detail;
+            continue;
+        }
 
             // 3. FILTRO DE TRIVIALIDAD
             $isTrivial = (mb_strlen($question) < SMART_MEMORY_MIN_Q_LENGTH && mb_strlen($answer) < SMART_MEMORY_MIN_A_LENGTH);

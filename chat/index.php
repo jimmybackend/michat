@@ -53,6 +53,7 @@ function build_file_s3_key(string $ruta, string $encriptado): string {
     return $ruta . $enc;
 }
 function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION)); }
+
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -113,6 +114,26 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 </div>
 
+<div class="sidebar-section adjuntos-section">
+
+  <div class="section-label-row">
+    <div class="section-label">
+      <i class="fas fa-paperclip"></i>
+      ARCHIVOS DE ESTA CONVERSACIÓN
+    </div>
+    <span class="chat-files-count" id="chatFilesCount">0</span>
+  </div>
+
+  <div id="chatSessionFilesList" class="chat-session-files-list">
+    <!-- Los archivos se cargan dinámicamente desde chat.js -->
+    <div class="empty-state-sidebar chat-files-empty">
+      <i class="fas fa-file"></i>
+      <span>Selecciona una conversación para ver sus archivos</span>
+    </div>
+  </div>
+
+</div>
+
 <div class="sidebar-footer">
 <div class="user-profile">
 <div class="user-avatar"><?= htmlspecialchars(mb_strtoupper(mb_substr($_SESSION['usuario'], 0, 1))) ?></div>
@@ -127,6 +148,8 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 
 </aside>
+
+
 <!-- Fin de Panel lateral -->
 
 <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Ocultar o mostrar barra lateral" title="Ocultar o mostrar barra lateral">
@@ -136,24 +159,55 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <!-- cuerpo -->
 <main id="chat-main" class="chat-main">
 <header class="chat-header">
-<div class="header-left">
-<button id="sidebar-toggle-mobile" class="sidebar-toggle-mobile" aria-label="Abrir barra lateral" title="Abrir barra lateral" type="button">
-<i class="fas fa-bars"></i>
-</button>
-<h1 class="chat-title" id="chat2Title">Nueva conversación</h1>
-<small class="text-muted ml-2 d-none" id="chat2SessionBadge"></small>
-</div>
-<div class="header-right">
-<button id="chat2Rename" class="btn-icon-sm" title="Renombrar chat" type="button">
-<i class="fas fa-pen"></i>
-</button>
-<button id="chat2Archive" class="btn-icon-sm" title="Archivar chat" type="button">
-<i class="fas fa-archive"></i>
-</button>
-<button id="chat2Restore" class="btn-icon-sm d-none" title="Restaurar chat" type="button">
-<i class="fas fa-undo"></i>
-</button>
-</div>
+  <div class="header-left">
+    <button id="sidebar-toggle-mobile" class="sidebar-toggle-mobile" aria-label="Abrir barra lateral" title="Abrir barra lateral" type="button">
+      <i class="fas fa-bars"></i>
+    </button>
+    <h1 class="chat-title" id="chat2Title">Nueva conversación</h1>
+    <small class="text-muted ml-2 d-none" id="chat2SessionBadge"></small>
+        <button id="chat2Rename" class="btn-icon-sm" title="Renombrar chat" type="button">
+      <i class="fas fa-pen"></i>
+    </button>
+    <button id="chat2Archive" class="btn-icon-sm" title="Archivar chat" type="button">
+      <i class="fas fa-archive"></i>
+    </button>
+    <button id="chat2Restore" class="btn-icon-sm d-none" title="Restaurar chat" type="button">
+      <i class="fas fa-undo"></i>
+    </button>
+  </div>
+  <div class="header-right">
+
+    <!-- ============================================= -->
+    <!-- 📊 MINI DASHBOARD: Tokens y Costo del mes     -->
+    <!-- ============================================= -->
+    <div class="chat-stats-mini" id="chatStatsMini" title="Consumo del mes actual">
+      <div class="chat-stats-mini-item">
+        <i class="fas fa-coins"></i>
+        <div class="chat-stats-mini-data">
+          <span class="chat-stats-mini-label">Tokens</span>
+          <span class="chat-stats-mini-value" id="chatMiniTokens">—</span>
+        </div>
+      </div>
+      <div class="chat-stats-mini-divider"></div>
+      <div class="chat-stats-mini-item">
+        <i class="fas fa-dollar-sign"></i>
+        <div class="chat-stats-mini-data">
+          <span class="chat-stats-mini-label">Costo</span>
+          <span class="chat-stats-mini-value chat-stats-mini-cost" id="chatMiniCost">—</span>
+        </div>
+      </div>
+      <a href="https://drive.esforzados.com/michat/s3chatstats.php" 
+         class="chat-stats-mini-link" 
+         target="_blank" 
+         rel="noopener"
+         title="Ver estadísticas completas">
+        <i class="fas fa-chart-line"></i>
+      </a>
+    </div>
+    <!-- ============================================= -->
+
+
+  </div>
 </header>
 <!-- panel -->
 <div id="pane-Chat2" class="tab-pane show active">   
@@ -694,5 +748,95 @@ role="progressbar" style="width: 0%">0%</div>
 </div>
 </div>
 </div>
+
+<script>
+// =====================================================================
+// 📊 MINI DASHBOARD: Carga de tokens y costo del mes en el header
+// =====================================================================
+(function () {
+  'use strict';
+
+  const tokensEl = document.getElementById('chatMiniTokens');
+  const costEl   = document.getElementById('chatMiniCost');
+  if (!tokensEl || !costEl) return;
+
+  const REFRESH_MS = 5 * 60 * 1000; // 5 minutos
+
+  function fmtNumber(n) {
+    return Number(n || 0).toLocaleString('es-MX');
+  }
+
+  function fmtCost(n) {
+    const v = Number(n || 0);
+    if (v < 0.01) return '$' + v.toFixed(4);
+    if (v < 1)    return '$' + v.toFixed(4);
+    return '$' + v.toFixed(2);
+  }
+
+  function setLoading(on) {
+    [tokensEl, costEl].forEach(el => {
+      el.classList.toggle('loading', on);
+    });
+  }
+
+  async function loadMiniStats() {
+    try {
+      setLoading(true);
+      const month = new Date().toISOString().slice(0, 7); // YYYY-MM
+      const r = await fetch('dashboard_stats.php?month=' + encodeURIComponent(month), {
+        credentials: 'same-origin',
+        cache: 'no-cache'
+      });
+
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || 'Respuesta inválida');
+
+      tokensEl.textContent = fmtNumber(j.tokens && j.tokens.total);
+      costEl.textContent   = fmtCost(j.tokens && j.tokens.cost);
+
+      // Tooltip dinámico con más info
+      const mini = document.getElementById('chatStatsMini');
+      if (mini && j.tokens) {
+        const byPhase = j.tokens.by_phase || {};
+        mini.title =
+          'Consumo del mes ' + month + '\n' +
+          '━━━━━━━━━━━━━━━━━━━━━\n' +
+          '• Compilación:  ' + fmtNumber(byPhase.compile)  + ' tokens\n' +
+          '• Respuesta:    ' + fmtNumber(byPhase.respond)  + ' tokens\n' +
+          '• Embeddings:   ' + fmtNumber(byPhase.embedding)+ ' tokens\n' +
+          '• Lint fix:     ' + fmtNumber(byPhase.lint_fix) + ' tokens\n' +
+          '━━━━━━━━━━━━━━━━━━━━━\n' +
+          'Total: ' + fmtNumber(j.tokens.total) + ' tokens\n' +
+          'Costo: ' + fmtCost(j.tokens.cost) + ' USD\n\n' +
+          'Clic en el ícono para ver dashboard completo';
+      }
+    } catch (e) {
+      console.error('Error cargando mini-stats:', e);
+      tokensEl.textContent = '—';
+      costEl.textContent   = '—';
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Cargar al inicio
+  loadMiniStats();
+
+  // Recargar cada 5 minutos
+  setInterval(loadMiniStats, REFRESH_MS);
+
+  // Recargar cada vez que se envíe un mensaje (la sesión ya se refresca,
+  // así que aprovechamos para actualizar también las stats)
+  const originalSend = document.getElementById('chat2Send');
+  if (originalSend) {
+    originalSend.addEventListener('click', () => {
+      // Retraso de 3s para que el backend registre los tokens primero
+      setTimeout(loadMiniStats, 3000);
+    });
+  }
+})();
+</script>
 </body>
 </html>
