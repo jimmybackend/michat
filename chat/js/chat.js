@@ -15,7 +15,8 @@
       genVideoStatus: 'chat_gen_video_status.php',
       notifyPoll: 'chat_notify_poll.php',
       markPrimordial: 'chat_mark_primordial.php', 
-      getContext: 'get_context.php'
+      getContext: 'get_context.php',
+      sessionFiles: 'chat2_session_files.php'
     };
     const PROJECT_API = {
       list: 'projects.php',
@@ -78,6 +79,8 @@
       attachmentsCount: $('#chat2AttachmentsCount'),
       attachmentsAdd: $('#chat2AttachmentsAdd'),
       attachmentsRefresh: $('#chat2AttachmentsRefresh'),
+      sbSessionFiles: $('#chatSessionFilesList'),
+      chatFilesCount: $('#chatFilesCount'),   
     };
     let currentSessionId = null;
     let currentProjectId = null;
@@ -284,6 +287,8 @@ function mdToHtml(md) {
       el.input.focus();
       el.input.setSelectionRange(el.input.value.length, el.input.value.length);
     }
+
+
 function pushLocal(role, content, opts = {}) {
   const ct = opts.content_type || 'text';
   const timeHtml = opts.created_at ? `<div class="msg-time">${esc(fmtDate(opts.created_at))}</div>` : '';
@@ -305,7 +310,7 @@ function pushLocal(role, content, opts = {}) {
   // Botones de acción solo para asistente
   const actionsHtml = (role === 'assistant') ? renderMessageActionsHtml(msgId) : '';
   
- if (ct === 'image' && (opts.s3_key || opts.thumb_s3_key)) {
+  if (ct === 'image' && (opts.s3_key || opts.thumb_s3_key)) {
     const imgUrl = buildS3Url(opts.thumb_s3_key || opts.s3_key);
     const fullUrl = buildS3Url(opts.s3_key || opts.thumb_s3_key);
     const alignClass = role === 'assistant' ? 'align-right' : 'align-left';
@@ -368,9 +373,12 @@ function pushLocal(role, content, opts = {}) {
     }
   }
   el.messages.insertAdjacentHTML('beforeend', html);
-  if (role === 'assistant' && ct === 'text') {
+  
+  // ✅ CORRECCIÓN: Activar botones para TODOS los mensajes del asistente
+  if (role === 'assistant') {
     wireMessageActions(el.messages.lastElementChild);
   }
+  
   wireCodeCopyButtons(el.messages);
   scrollMessagesToBottom();
 }
@@ -681,6 +689,9 @@ function renderSessionsList() {
     if (btnRestore) btnRestore.addEventListener('click', (e) => { e.stopPropagation(); doRestore(sid); });
   });
 }
+
+
+
     async function createSession(title) {
       setStatus('Creando sesión…');
       const fd = new FormData();
@@ -788,25 +799,220 @@ function renderSessionsList() {
       }
     }
     window.selectSessionChat1 = selectSession;
-    function renderMessages(msgs) {
-      el.messages.innerHTML = '';
-      (msgs || []).forEach(m => {
-        pushLocal(m.role || 'assistant', m.content || '', {
-          message_id: m.id_ || m.id,               
-          is_primordial: (m.is_primordial == 1 || m.is_primordial === true),
-          content_type: m.content_type || 'text',
-          s3_key: m.s3_key || null,
-          mime_type: m.mime_type || null,
-          thumb_s3_key: m.thumb_s3_key || null,
-          created_at: m.created_at || null,
-        });
-      });
-      setTimeout(() => {
-        wireCodeCopyButtons(el.messages);
-        wireAllMessageActions(el.messages);
-      }, 0);
-    }
+    
+    
+function renderMessages(msgs) {
+  el.messages.innerHTML = '';
+  (msgs || []).forEach(m => {
+    pushLocal(m.role || 'assistant', m.content || '', {
+      message_id: m.id_ || m.id,               
+      is_primordial: (m.is_primordial == 1 || m.is_primordial === true),
+      content_type: m.content_type || 'text',
+      s3_key: m.s3_key || null,
+      mime_type: m.mime_type || null,
+      thumb_s3_key: m.thumb_s3_key || null,
+      created_at: m.created_at || null,
+    });
+  });
+  
+  // ✅ CORRECCIÓN: Solo ejecutar wireCodeCopyButtons, NO wireAllMessageActions
+  // (porque pushLocal ya ejecuta wireMessageActions para cada mensaje)
+  setTimeout(() => {
+    wireCodeCopyButtons(el.messages);
+  }, 0);
+}
+
     window.renderChatMessages = renderMessages;
+    
+/* ============================================================
+   ARCHIVOS DE LA SESIÓN: endpoints + helpers
+   (DEBE ir DENTRO del DOMContentLoaded, junto a const API)
+   ============================================================ */
+const FILE_ENDPOINTS = {
+  viewer:       'ver_archivo.php',          // imágenes, video, audio (valida dueño)
+  pdf:          'ver_pdf.php',              // PDF inline
+  editor:       'editor.php',               // código/texto (Monaco)
+  download:     'descargar.php',            // descarga con nombre visible
+  delete:       'eliminar_archivo.php',     // borrado seguro (POST)
+  indexFile:    'index_session_file.php',   // indexa en SessionContextBlocks + encola embedding
+  semanticFile: 'semantic_session_file.php' // resume con IA + guarda embedding inmediato
+};
+
+const CODE_EXTS = ['php','phtml','inc','js','mjs','cjs','jsx','ts','tsx','css','scss','less',
+  'html','htm','json','xml','yaml','yml','ini','conf','cfg','txt','md','markdown','sql',
+  'sh','bash','zsh','bat','cmd','ps1','py','rb','java','c','h','cpp','hpp','cs','go','rs',
+  'swift','kt','kts','vue','csv','tsv','log','srt','vtt','env','gitignore','htaccess'];
+
+function getFileExt(name) {
+  const base = String(name || '').toLowerCase().split('/').pop();
+  const i = base.lastIndexOf('.');
+  return i >= 0 ? base.slice(i + 1) : '';
+}
+
+function openFileViewer(s3Key, filename) {
+  const ext = getFileExt(filename || s3Key);
+  let url;
+  if (ext === 'pdf') url = FILE_ENDPOINTS.pdf;
+  else if (CODE_EXTS.includes(ext)) url = FILE_ENDPOINTS.editor;
+  else url = FILE_ENDPOINTS.viewer;
+  window.open(url + '?archivo=' + encodeURIComponent(s3Key), '_blank', 'noopener');
+}
+
+function downloadSessionFile(s3Key, filename) {
+  const url = FILE_ENDPOINTS.download
+    + '?archivo=' + encodeURIComponent(s3Key)
+    + '&nombre='  + encodeURIComponent(filename || s3Key.split('/').pop());
+  window.open(url, '_blank', 'noopener');
+}
+
+async function deleteSessionFile(fileId, s3Key, filename, btn) {
+  const label = filename || s3Key || ('#' + fileId);
+
+  if (!confirm('¿Eliminar el archivo "' + label + '"?\nEsta acción borra el archivo de S3 y no se puede deshacer.')) {
+    return;
+  }
+
+  const fd = new FormData();
+  if (fileId && !Number.isNaN(fileId)) fd.append('file_id', String(fileId));
+  else if (s3Key) fd.append('archivo', s3Key);
+  else { showToast('⚠️ Eliminar', 'Falta la referencia del archivo.', 'warning'); return; }
+
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+  try {
+    const r = await fetch(FILE_ENDPOINTS.delete, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd
+    });
+
+    let j;
+    try { j = await r.json(); }
+    catch (err) { throw new Error('Respuesta inválida del servidor (HTTP ' + r.status + ')'); }
+
+    if (!r.ok || j.ok === false || j.estado === 'error') {
+      throw new Error(j.error || j.mensaje || ('HTTP ' + r.status));
+    }
+
+    showToast('🗑️ Eliminado', 'El archivo "' + label + '" se eliminó correctamente.', 'success');
+
+    if (currentSessionId) {
+      await loadSessionAttachments(currentSessionId);
+    }
+  } catch (e) {
+    console.error('Error eliminando archivo:', e);
+    showToast('⚠️ Error', 'No se pudo eliminar: ' + e.message, 'danger');
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+  }
+}
+
+/* ============================================================
+   PROCESAR ACCIONES DE INDEXACIÓN / SEMÁNTICA (genérica)
+   Envía POST con file_id + session_id al endpoint correspondiente.
+   ============================================================ */
+async function processSessionFileAction(endpoint, fileId, label, btn) {
+  if (!currentSessionId) {
+    showToast('⚠️ Sesión', 'Selecciona una conversación primero.', 'warning');
+    return;
+  }
+  if (!fileId || Number.isNaN(fileId)) {
+    showToast('⚠️ Archivo', 'Referencia inválida.', 'warning');
+    return;
+  }
+
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+  try {
+    const fd = new FormData();
+    fd.append('file_id',    String(fileId));
+    fd.append('session_id', String(currentSessionId));
+
+    const r = await fetch(endpoint, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd
+    });
+
+    let j;
+    try { j = await r.json(); }
+    catch (err) { throw new Error('Respuesta inválida (HTTP ' + r.status + ')'); }
+
+    if (!r.ok || j.ok === false) {
+      throw new Error(j.error || j.mensaje || ('HTTP ' + r.status));
+    }
+
+    showToast(label, j.mensaje || 'Proceso completado.', 'success');
+
+    // Refrescar la lista de archivos para que el contador quede consistente
+    if (currentSessionId) {
+      await loadSessionAttachments(currentSessionId);
+    }
+  } catch (e) {
+    console.error(e);
+    showToast('⚠️ Error', e.message, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+  }
+}
+
+function wireFileActions(container) {
+  if (!container) return;
+
+  container.querySelectorAll('.chat-file-action').forEach(btn => {
+    if (btn.dataset.wired === 'true') return;
+    btn.dataset.wired = 'true';
+
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const action   = btn.getAttribute('data-action');
+      const fileId   = parseInt(btn.getAttribute('data-file-id'), 10);
+      const s3Key    = btn.getAttribute('data-s3-key') || '';
+      const filename = btn.getAttribute('data-filename') || '';
+
+      if ((action === 'view' || action === 'download') && !s3Key) {
+        showToast('⚠️ Archivo', 'Este archivo no tiene clave S3 válida.', 'warning');
+        return;
+      }
+
+      switch (action) {
+        case 'view':
+          openFileViewer(s3Key, filename);
+          break;
+        case 'download':
+          downloadSessionFile(s3Key, filename);
+          break;
+        case 'delete':
+          deleteSessionFile(fileId, s3Key, filename, btn);
+          break;
+        case 'index':
+          processSessionFileAction(
+            FILE_ENDPOINTS.indexFile,
+            fileId,
+            '🔍 Indexar',
+            btn
+          );
+          break;
+        case 'semantic':
+          processSessionFileAction(
+            FILE_ENDPOINTS.semanticFile,
+            fileId,
+            '🧠 Semántica',
+            btn
+          );
+          break;
+      }
+    });
+  });
+}
+    
 function showPromptApprovalModal(compiledPrompt, compilationId) {
     return new Promise((resolve) => {
         const originalLength = compiledPrompt.length;
@@ -2120,95 +2326,166 @@ if (btnRefreshContext) {
   setStatus('');
   startNotifyPoller();
 }());
+
+
 async function loadSessionAttachments(sessionId) {
-  try {
-    const qs = new URLSearchParams();
-    if (sessionId && sessionId > 0) {
-      qs.set('session_id', sessionId);
-    }
-    const r = await fetch(`session_attachments.php?action=list&${qs.toString()}`, { credentials: 'same-origin' });
-    const j = toJSONorThrow(await r.text(), r.status, 'Listar adjuntos');
-    if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
-    sessionAttachments = Array.isArray(j.attachments) ? j.attachments : [];
-    renderSessionAttachments();
-    const modalList = document.getElementById('modalSessionAttachmentsList');
-    if (modalList) {
-      if (sessionAttachments.length === 0) {
-        modalList.innerHTML = '<div class="list-group-item text-muted small">No hay adjuntos aún.</div>';
-      } else {
-        modalList.innerHTML = sessionAttachments.map(a => {
-          // El status ahora es siempre 'indexed' ya que FileS3 existe
-          const statusClass = 'indexed';
-          const statusText = 'Indexado';
-          const badgeClass = 'success';
-          return `<div class="list-group-item d-flex justify-content-between align-items-center py-2" data-id="${a.files3_id}">
-            <div class="text-truncate" style="max-width: 70%;" title="${esc(a.filename)}">
-              <i class="fas fa-file mr-1 text-muted"></i> ${esc(a.filename)}
-            </div>
-            <div class="d-flex align-items-center" style="gap: 8px;">
-              <span class="badge badge-${badgeClass}" style="font-size: 0.7rem;">${statusText}</span>
-              <button class="btn btn-sm btn-outline-danger btn-delete-modal-attachment" data-id="${a.files3_id}" title="Eliminar adjunto" style="padding: 0 .4rem;">
-                <i class="fas fa-trash"></i>
-              </button>
-            </div>
-          </div>`;
-        }).join('');
-        modalList.querySelectorAll('.btn-delete-modal-attachment').forEach(btn => {
-          btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const id = parseInt(btn.getAttribute('data-id'), 10);
-            deleteSessionAttachment(id);
-          });
-        });
-      }
-    }
-  } catch (e) {
-    console.error('Error cargando adjuntos:', e);
-    const list = el.attachmentsList;
-    if (list) list.innerHTML = '<div class="text-danger small">Error cargando adjuntos</div>';
-  }
-}
-function renderSessionAttachments() {
-  const list = el.attachmentsList;
-  const countMain = el.attachmentsCount;
-  if (!list) return;
-  if (sessionAttachments.length === 0) {
-    list.innerHTML = '<div class="text-muted small">Sin adjuntos agregados</div>';
-    if (countMain) countMain.textContent = '0';
+  const target = el.sbSessionFiles;
+  const countEl = el.chatFilesCount;
+
+  if (!target) return;
+
+  if (!sessionId || Number.isNaN(Number(sessionId))) {
+    target.innerHTML = `
+      <div class="empty-state-sidebar chat-files-empty">
+        <i class="fas fa-file"></i>
+        <span>Selecciona una conversación para ver sus archivos</span>
+      </div>
+    `;
+    if (countEl) countEl.textContent = '0';
     return;
   }
-  list.innerHTML = sessionAttachments.map(a => {
-    // El status ahora es siempre 'indexed' ya que FileS3 existe
-    const statusClass = 'indexed';
-    const statusText = 'Indexado';
-    const badgeClass = 'success';
-    let actionsHtml = '';
-    if (a.edit_url) {
-      actionsHtml += `<a href="${esc(a.edit_url)}" target="_blank" class="btn btn-sm btn-primary" style="padding: 0 .3rem; font-size: 0.6rem;" title="Editar"><i class="fas fa-edit"></i></a>`;
-    }
-    if (a.view_url) {
-      actionsHtml += `<a href="${esc(a.view_url)}" target="_blank" class="btn btn-sm btn-info" style="padding: 0 .3rem; font-size: 0.6rem;" title="Ver"><i class="fas fa-eye"></i></a>`;
-    }
-    return `<div class="list-group-item attachment-item d-flex justify-content-between align-items-center py-1 px-2" data-id="${a.files3_id}" style="font-size:0.7rem;">
-      <span class="text-truncate" style="max-width:45%;" title="${esc(a.filename)}">${esc(a.filename)}</span>
-      <span class="d-flex align-items-center" style="gap: 4px;">
-        ${actionsHtml}
-        <span class="badge badge-${badgeClass}" style="font-size:0.6rem;">${statusText}</span>
-        <button class="btn btn-sm btn-outline-danger btn-delete-attachment" data-id="${a.files3_id}" title="Eliminar" style="padding: 0 .3rem; font-size: 0.6rem;">
-          <i class="fas fa-trash"></i>
-        </button>
-      </span>
-    </div>`;
-  }).join('');
-  if (countMain) countMain.textContent = String(sessionAttachments.length);
-  list.querySelectorAll('.btn-delete-attachment').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const id = parseInt(btn.getAttribute('data-id'), 10);
-      deleteSessionAttachment(id);
+
+  target.innerHTML = `<div class="text-muted small">Cargando archivos…</div>`;
+
+  try {
+    const qs = new URLSearchParams({ session_id: String(sessionId) });
+    const r = await fetch(`${API.sessionFiles}?${qs.toString()}`, {
+      credentials: 'same-origin'
     });
-  });
+
+    let j;
+    try {
+      j = await r.json();
+    } catch (err) {
+      throw new Error('Respuesta inválida del servidor');
+    }
+
+    if (!r.ok || j.ok === false) {
+      throw new Error(j.error || `HTTP ${r.status}`);
+    }
+
+    const files = j.files || [];
+
+    if (countEl) {
+      countEl.textContent = String(files.length);
+    }
+
+    if (!files.length) {
+      target.innerHTML = `
+        <div class="empty-state-sidebar chat-files-empty">
+          <i class="fas fa-file"></i>
+          <span>No hay archivos adjuntos</span>
+        </div>
+      `;
+      return;
+    }
+
+    // Generar HTML para cada archivo
+    target.innerHTML = files.map(file => {
+      const fileId = file.id || 0;
+      const filename = esc(file.filename || file.s3_key || `Archivo #${fileId}`);
+      
+      // Formatear tamaño
+      let sizeLabel = '0 B';
+      const size = Number(file.size_bytes || 0);
+      if (size >= 1048576) {
+        sizeLabel = (size / 1048576).toFixed(2) + ' MB';
+      } else if (size >= 1024) {
+        sizeLabel = (size / 1024).toFixed(2) + ' KB';
+      } else if (size > 0) {
+        sizeLabel = size + ' B';
+      }
+
+      // Formatear fecha
+      let dateLabel = '';
+      if (file.created_at) {
+        const timestamp = new Date(file.created_at).getTime();
+        if (!isNaN(timestamp)) {
+          const d = new Date(file.created_at);
+          dateLabel = d.toLocaleDateString('es-ES', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+        }
+      }
+
+      // Icono según extensión
+      const extension = (file.filename || '').split('.').pop().toLowerCase();
+      let fileIcon = 'fa-file';
+      if (extension === 'pdf') fileIcon = 'fa-file-pdf';
+      else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(extension)) fileIcon = 'fa-file-image';
+      else if (['php', 'js', 'css', 'html', 'json', 'xml'].includes(extension)) fileIcon = 'fa-file-code';
+      else if (['doc', 'docx'].includes(extension)) fileIcon = 'fa-file-word';
+      else if (['xls', 'xlsx', 'csv'].includes(extension)) fileIcon = 'fa-file-excel';
+
+      return `
+        <div class="chat-session-file" data-file-id="${fileId}">
+          <div class="chat-session-file-main">
+            <div class="chat-session-file-icon">
+              <i class="fas ${fileIcon}"></i>
+            </div>
+
+            <div class="chat-session-file-info">
+              <div class="chat-session-file-name" title="${filename}">
+                ${filename}
+              </div>
+
+              <div class="chat-session-file-meta">
+                ${dateLabel}
+                ·
+                ${sizeLabel}
+              </div>
+            </div>
+          </div>
+
+          <div class="chat-session-file-actions">
+            <button type="button" class="chat-file-action" title="Ver archivo"
+              data-action="view" data-file-id="${fileId}"
+              data-s3-key="${esc(file.s3_key || '')}" data-filename="${filename}">
+              <i class="fas fa-eye"></i>
+            </button>
+
+            <button type="button" class="chat-file-action" title="Descargar archivo"
+              data-action="download" data-file-id="${fileId}"
+              data-s3-key="${esc(file.s3_key || '')}" data-filename="${filename}">
+              <i class="fas fa-download"></i>
+            </button>
+
+            <button type="button" class="chat-file-action" title="Indexar archivo"
+              data-action="index" data-file-id="${fileId}">
+              <i class="fas fa-search"></i>
+            </button>
+
+            <button type="button" class="chat-file-action" title="Crear semántica"
+              data-action="semantic" data-file-id="${fileId}">
+              <i class="fas fa-brain"></i>
+            </button>
+
+            <button type="button" class="chat-file-action chat-file-action-danger" title="Eliminar archivo"
+              data-action="delete" data-file-id="${fileId}">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
+          
+          
+        </div>
+      `;
+    }).join('');
+
+    // Wire up action buttons
+    wireFileActions(target);
+
+  } catch (e) {
+    console.error(e);
+    target.innerHTML = `<div class="text-danger small">${esc(e.message)}</div>`;
+    if (countEl) countEl.textContent = '0';
+  }
 }
+
+
 async function deleteSessionAttachment(attachmentId) {
   if (!confirm('¿Eliminar este adjunto de la sesión?')) {
     return;
