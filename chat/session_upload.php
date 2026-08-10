@@ -1,29 +1,45 @@
 <?php
 // session_upload.php
-// Sube archivos para adjuntos de sesión de chat (no vinculados a proyecto)
-// POST: session_id (int, opcional), files[] (archivos)
-header('Content-Type: application/json; charset=utf-8');
-if (session_status() === PHP_SESSION_NONE) session_start();
+// Sube archivos adjuntos de una sesión de chat.
+// Los archivos se almacenan en S3 y se registran mediante FileS3.
+// NO utiliza SessionAttachments.
 
-function jexit($arr, $code = 200) {
+header('Content-Type: application/json; charset=utf-8');
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+/**
+ * Respuesta JSON y finalización.
+ */
+function jexit(array $arr, int $code = 200): void
+{
     http_response_code($code);
-    echo json_encode($arr, JSON_UNESCAPED_UNICODE);
+
+    echo json_encode(
+        $arr,
+        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+    );
+
     exit;
 }
 
-function next_id(mysqli $db, $table, $col) {
-    $table = preg_replace('/[^A-Za-z0-9_]+/','',$table);
-    $col   = preg_replace('/[^A-Za-z0-9_]+/','',$col);
-    $rs = $db->query("SELECT COALESCE(MAX($col), 0) + 1 AS nxt FROM $table");
-    if (!$rs) return 1;
-    $row = $rs->fetch_assoc();
-    return (int)($row['nxt'] ?? 1);
-}
+/**
+ * Resolver posibles raíces del proyecto para localizar app_bootstrap.php.
+ */
+function resolve_root_candidates(): array
+{
+    $docRoot = isset($_SERVER['DOCUMENT_ROOT'])
+        ? (string)$_SERVER['DOCUMENT_ROOT']
+        : '';
 
-function resolve_root_candidates(): array {
-    $docRoot = isset($_SERVER['DOCUMENT_ROOT']) ? (string)$_SERVER['DOCUMENT_ROOT'] : '';
-    $rootFromDoc = $docRoot !== '' ? realpath($docRoot . '/..') : false;
+    $rootFromDoc = $docRoot !== ''
+        ? realpath($docRoot . '/..')
+        : false;
+
     $candidates = [];
+
     foreach ([
         $rootFromDoc,
         realpath(__DIR__ . '/../../'),
@@ -31,148 +47,601 @@ function resolve_root_candidates(): array {
         realpath(__DIR__ . '/../../../'),
         realpath(__DIR__ . '/../'),
         realpath(__DIR__),
-    ] as $p) {
-        if ($p && is_dir($p)) $candidates[$p] = true;
+    ] as $path) {
+        if ($path && is_dir($path)) {
+            $candidates[$path] = true;
+        }
     }
+
     return array_keys($candidates);
 }
 
-function find_file_in_candidates(string $filename, array $bases, array $subfolders): ?string {
+/**
+ * Buscar un archivo dentro de las posibles raíces.
+ */
+function find_file_in_candidates(
+    string $filename,
+    array $bases,
+    array $subfolders
+): ?string {
     $filename = ltrim($filename, '/');
+
     foreach ($bases as $base) {
         foreach ($subfolders as $sub) {
-            $sub = ($sub === '' ? '' : '/' . trim($sub,'/'));
-            $try = rtrim($base,'/') . $sub . '/' . $filename;
-            if (is_file($try)) return $try;
+
+            $sub = ($sub === '')
+                ? ''
+                : '/' . trim($sub, '/');
+
+            $try = rtrim($base, '/') . $sub . '/' . $filename;
+
+            if (is_file($try)) {
+                return $try;
+            }
         }
     }
+
     return null;
 }
 
 try {
+
+    /*
+     * ============================================================
+     * BOOTSTRAP
+     * ============================================================
+     */
+
     $bootstrap = __DIR__ . '/app_bootstrap.php';
-    if (!is_file($bootstrap)) $bootstrap = __DIR__ . '/../app_bootstrap.php';
+
     if (!is_file($bootstrap)) {
+        $bootstrap = __DIR__ . '/../app_bootstrap.php';
+    }
+
+    if (!is_file($bootstrap)) {
+
         $bases = resolve_root_candidates();
-        $bootstrap = find_file_in_candidates('app_bootstrap.php', $bases, ['', 'public_html', 'api', 'app', 'www']);
+
+        $bootstrap = find_file_in_candidates(
+            'app_bootstrap.php',
+            $bases,
+            [
+                '',
+                'public_html',
+                'api',
+                'app',
+                'www'
+            ]
+        );
     }
+
     if (!$bootstrap || !is_file($bootstrap)) {
-        throw new RuntimeException('app_bootstrap.php no encontrado.');
+        throw new RuntimeException(
+            'app_bootstrap.php no encontrado.'
+        );
     }
+
     require_once $bootstrap;
+
 } catch (Throwable $e) {
-    jexit(['ok' => false, 'error' => 'bootstrap: ' . $e->getMessage()], 500);
+
+    jexit(
+        [
+            'ok' => false,
+            'error' => 'bootstrap: ' . $e->getMessage()
+        ],
+        500
+    );
 }
 
-if (!isset($db_connection) || !($db_connection instanceof mysqli)) {
-    jexit(['ok'=>false,'error'=>'DB no disponible'], 500);
+
+/*
+ * ============================================================
+ * BASE DE DATOS
+ * ============================================================
+ */
+
+if (
+    !isset($db_connection) ||
+    !($db_connection instanceof mysqli)
+) {
+    jexit(
+        [
+            'ok' => false,
+            'error' => 'DB no disponible'
+        ],
+        500
+    );
 }
+
+
+/*
+ * ============================================================
+ * S3 MANAGER
+ * ============================================================
+ */
 
 require_once __DIR__ . '/S3Manager.php';
 
-// ===== Validar método =====
+
+/*
+ * ============================================================
+ * VALIDAR MÉTODO
+ * ============================================================
+ */
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    jexit(['ok'=>false,'error'=>'Método no permitido'], 405);
+
+    jexit(
+        [
+            'ok' => false,
+            'error' => 'Método no permitido'
+        ],
+        405
+    );
 }
 
-// ===== User ID =====
-$user_id = 0;
-if (isset($_SESSION['user_id']) && is_numeric($_SESSION['user_id'])) {
-    $user_id = (int)$_SESSION['user_id'];
+
+/*
+ * ============================================================
+ * USUARIO AUTENTICADO
+ * ============================================================
+ *
+ * IMPORTANTE:
+ * Ya NO utilizamos:
+ *
+ *     if (!$user_id) $user_id = 1;
+ *
+ * porque eso permitiría que una petición sin autenticación
+ * terminara trabajando como usuario 1.
+ */
+
+if (
+    !isset($_SESSION['user_id']) ||
+    !is_numeric($_SESSION['user_id']) ||
+    (int)$_SESSION['user_id'] <= 0
+) {
+    jexit(
+        [
+            'ok' => false,
+            'error' => 'No autenticado'
+        ],
+        401
+    );
 }
-if (!$user_id && isset($_POST['user_id']) && is_numeric($_POST['user_id'])) {
-    $user_id = (int)$_POST['user_id'];
-}
-if (!$user_id) $user_id = 1;
 
-// ===== Session ID (opcional) =====
-$session_id = isset($_POST['session_id']) ? (int)$_POST['session_id'] : 0;
+$user_id = (int)$_SESSION['user_id'];
 
-// ===== Validar archivos =====
-if (empty($_FILES['files']) || !is_array($_FILES['files']['name'])) {
-    jexit(['ok'=>false,'error'=>'No se recibieron archivos'], 400);
-}
 
-// ===== Construir ruta destino con fecha y session_id =====
-// Formato: Data/Chat/Uploads/{user_id}/{YYYY}/{MM}/{DD}/{session_id}/
-$now = new DateTime();
-$year = $now->format('Y');
-$month = $now->format('m');
-$day = $now->format('d');
+/*
+ * ============================================================
+ * SESSION ID
+ * ============================================================
+ *
+ * Para un archivo adjunto de una sesión necesitamos saber
+ * exactamente a qué ChatSessions pertenece.
+ */
 
-// Validar session_id si se proporcionó
+$session_id = isset($_POST['session_id'])
+    ? (int)$_POST['session_id']
+    : 0;
+
 if ($session_id <= 0) {
-    // Si no hay session_id, usar un valor por defecto temporal
-    // En producción esto debería ser un error
-    $session_id = 0;
+
+    jexit(
+        [
+            'ok' => false,
+            'error' => 'session_id es requerido'
+        ],
+        400
+    );
 }
 
-$rutaDestino = "Data/Chat/Uploads/{$user_id}/{$year}/{$month}/{$day}/{$session_id}/";
 
-// ===== Subir archivos =====
+/*
+ * ============================================================
+ * VALIDAR PROPIEDAD DE LA SESIÓN
+ * ============================================================
+ *
+ * Evita que un usuario pueda subir archivos dentro de la
+ * carpeta de una sesión que pertenece a otro usuario.
+ */
+
+$stmt = $db_connection->prepare(
+    "SELECT id_
+       FROM ChatSessions
+      WHERE id_ = ?
+        AND user_id_ = ?
+      LIMIT 1"
+);
+
+if (!$stmt) {
+
+    jexit(
+        [
+            'ok' => false,
+            'error' => 'Error preparando validación de sesión: ' .
+                       $db_connection->error
+        ],
+        500
+    );
+}
+
+$stmt->bind_param(
+    'ii',
+    $session_id,
+    $user_id
+);
+
+if (!$stmt->execute()) {
+
+    $error = $stmt->error;
+    $stmt->close();
+
+    jexit(
+        [
+            'ok' => false,
+            'error' => 'Error validando sesión: ' . $error
+        ],
+        500
+    );
+}
+
+$result = $stmt->get_result();
+
+if (!$result || $result->num_rows === 0) {
+
+    $stmt->close();
+
+    jexit(
+        [
+            'ok' => false,
+            'error' => 'Sesión no encontrada o acceso denegado'
+        ],
+        403
+    );
+}
+
+$stmt->close();
+
+
+/*
+ * ============================================================
+ * VALIDAR ARCHIVOS
+ * ============================================================
+ */
+
+if (
+    empty($_FILES['files']) ||
+    !isset($_FILES['files']['name']) ||
+    !is_array($_FILES['files']['name'])
+) {
+
+    jexit(
+        [
+            'ok' => false,
+            'error' => 'No se recibieron archivos'
+        ],
+        400
+    );
+}
+
+
+/*
+ * ============================================================
+ * FECHA
+ * ============================================================
+ */
+
+$now = new DateTime();
+
+$year  = $now->format('Y');
+$month = $now->format('m');
+$day   = $now->format('d');
+
+
+/*
+ * ============================================================
+ * RUTA DEL CHAT
+ * ============================================================
+ *
+ * Ejemplo real:
+ *
+ * Data/Chat/Uploads/1/2026/08/10/1/
+ *
+ * El archivo terminará dentro de esta ruta.
+ */
+
+$rutaDestino =
+    "Data/Chat/Uploads/" .
+    "{$user_id}/" .
+    "{$year}/" .
+    "{$month}/" .
+    "{$day}/" .
+    "{$session_id}/";
+
+
+/*
+ * ============================================================
+ * S3 MANAGER
+ * ============================================================
+ */
+
 $manager = new S3Manager();
-$uploaded = [];
-$errors = [];
 
-// Crear carpetas S3Folders para la jerarquía completa
+$uploaded = [];
+$errors   = [];
+
+
+/*
+ * ============================================================
+ * CREAR / VERIFICAR S3FOLDERS
+ * ============================================================
+ *
+ * S3Folders representa la estructura lógica de carpetas.
+ *
+ * No se utiliza SessionAttachments.
+ */
+
 try {
-    $userIdInt = (int)$user_id;
+
     $prefixes = [
+
         "Data/Chat/Uploads/",
-        "Data/Chat/Uploads/{$userIdInt}/",
-        "Data/Chat/Uploads/{$userIdInt}/{$year}/",
-        "Data/Chat/Uploads/{$userIdInt}/{$year}/{$month}/",
-        "Data/Chat/Uploads/{$userIdInt}/{$year}/{$month}/{$day}/",
-        "Data/Chat/Uploads/{$userIdInt}/{$year}/{$month}/{$day}/{$session_id}/"
+
+        "Data/Chat/Uploads/{$user_id}/",
+
+        "Data/Chat/Uploads/{$user_id}/{$year}/",
+
+        "Data/Chat/Uploads/{$user_id}/{$year}/{$month}/",
+
+        "Data/Chat/Uploads/{$user_id}/{$year}/{$month}/{$day}/",
+
+        "Data/Chat/Uploads/{$user_id}/{$year}/{$month}/{$day}/{$session_id}/"
+
     ];
-    
+
     foreach ($prefixes as $prefix) {
-        if (!$manager->folderExistsDb($userIdInt, $prefix)) {
-            $manager->upsertFolderDbPublic($userIdInt, $prefix);
+
+        if (!$manager->folderExistsDb($user_id, $prefix)) {
+
+            $manager->upsertFolderDbPublic(
+                $user_id,
+                $prefix
+            );
         }
     }
+
 } catch (Throwable $e) {
-    // Si falla la creación de carpetas, continuar igual con el upload
-    // Las carpetas se crearán bajo demanda en uploadFile
-    error_log('Warning: Error creando S3Folders: ' . $e->getMessage());
+
+    /*
+     * No detenemos el upload.
+     *
+     * S3Manager puede crear/registrar la información
+     * durante uploadFile().
+     */
+
+    error_log(
+        'Warning: Error creando S3Folders: ' .
+        $e->getMessage()
+    );
 }
+
+
+/*
+ * ============================================================
+ * SUBIR ARCHIVOS
+ * ============================================================
+ */
 
 $count = count($_FILES['files']['name']);
+
 for ($i = 0; $i < $count; $i++) {
-    if (!isset($_FILES['files']['error'][$i]) || $_FILES['files']['error'][$i] !== UPLOAD_ERR_OK) {
-        $errors[] = 'Archivo '.$i.' no recibido o con error';
+
+    /*
+     * --------------------------------------------------------
+     * Validar error PHP del upload
+     * --------------------------------------------------------
+     */
+
+    if (
+        !isset($_FILES['files']['error'][$i]) ||
+        $_FILES['files']['error'][$i] !== UPLOAD_ERR_OK
+    ) {
+
+        $errors[] =
+            'Archivo ' . $i .
+            ' no recibido o con error';
+
         continue;
     }
-    
+
+
+    /*
+     * --------------------------------------------------------
+     * Archivo temporal
+     * --------------------------------------------------------
+     */
+
     $tmpPath = $_FILES['files']['tmp_name'][$i];
-    $originalName = basename($_FILES['files']['name'][$i]);
+
+    if (!is_uploaded_file($tmpPath)) {
+
+        $errors[] =
+            'El archivo ' . $i .
+            ' no corresponde a un upload válido';
+
+        continue;
+    }
+
+
+    /*
+     * --------------------------------------------------------
+     * Nombre original
+     * --------------------------------------------------------
+     */
+
+    $originalName =
+        basename(
+            (string)$_FILES['files']['name'][$i]
+        );
+
+    if ($originalName === '') {
+
+        $errors[] =
+            'El archivo ' . $i .
+            ' no tiene nombre válido';
+
+        continue;
+    }
+
+
+    /*
+     * --------------------------------------------------------
+     * Tamaño
+     * --------------------------------------------------------
+     */
+
     $fileSize = filesize($tmpPath);
+
+    if ($fileSize === false) {
+
+        $errors[] =
+            'No se pudo determinar el tamaño de ' .
+            $originalName;
+
+        continue;
+    }
+
+
+    /*
+     * --------------------------------------------------------
+     * MIME
+     * --------------------------------------------------------
+     */
+
     $mimeType = mime_content_type($tmpPath);
-    
+
+    if (!$mimeType) {
+        $mimeType = 'application/octet-stream';
+    }
+
+
+    /*
+     * --------------------------------------------------------
+     * UPLOAD
+     * --------------------------------------------------------
+     *
+     * S3Manager se encarga del almacenamiento y del
+     * registro correspondiente en FileS3.
+     *
+     * NO hacemos INSERT en SessionAttachments.
+     */
+
     try {
-        // 1. Subir a S3 y registrar en FileS3
-        $result = $manager->uploadFile($tmpPath, $originalName, $rutaDestino, $user_id, $mimeType, $fileSize);
-        
+
+        $result = $manager->uploadFile(
+            $tmpPath,
+            $originalName,
+            $rutaDestino,
+            $user_id,
+            $mimeType,
+            $fileSize
+        );
+
+
+        /*
+         * Verificar que S3Manager realmente devolvió
+         * información del archivo.
+         */
+
+        if (
+            !is_array($result) ||
+            !isset($result['id'])
+        ) {
+
+            throw new RuntimeException(
+                'S3Manager::uploadFile() no devolvió un ID de FileS3 válido.'
+            );
+        }
+
+
+        /*
+         * ----------------------------------------------------
+         * Respuesta para JavaScript
+         * ----------------------------------------------------
+         */
+
         $uploaded[] = [
-            'id' => $result['id'],
-            'files3_id' => $result['id'],
-            'filename' => $result['nombre_original'],
-            's3_key' => $result['key_s3'],
-            'size' => $fileSize,
-            'mime_type' => $mimeType,
-            'ruta' => $result['ruta'],
-            'created_at' => date('Y-m-d H:i:s')
+
+            'id' =>
+                (int)$result['id'],
+
+            'files3_id' =>
+                (int)$result['id'],
+
+            'filename' =>
+                $result['nombre_original']
+                ?? $originalName,
+
+            's3_key' =>
+                $result['key_s3']
+                ?? null,
+
+            'size' =>
+                (int)$fileSize,
+
+            'size_bytes' =>
+                (int)$fileSize,
+
+            'mime_type' =>
+                $mimeType,
+
+            'ruta' =>
+                $result['ruta']
+                ?? $rutaDestino,
+
+            'created_at' =>
+                date('Y-m-d H:i:s')
         ];
-        
+
+
     } catch (Throwable $e) {
-        $errors[] = 'Error subiendo '.$originalName.': '.$e->getMessage();
+
+        $errors[] =
+            'Error subiendo ' .
+            $originalName .
+            ': ' .
+            $e->getMessage();
+
+        error_log(
+            'session_upload.php: ' .
+            $e->getMessage()
+        );
     }
 }
 
-jexit([
-    'ok' => true,
-    'uploaded' => $uploaded,
-    'errors' => $errors,
-    'ruta_destino' => $rutaDestino,
-    'message' => count($uploaded).' archivos subidos correctamente'
-]);
+
+/*
+ * ============================================================
+ * RESPUESTA FINAL
+ * ============================================================
+ */
+
+jexit(
+    [
+        'ok' => true,
+
+        'success' => count($uploaded) > 0,
+
+        'uploaded' => $uploaded,
+
+        'errors' => $errors,
+
+        'ruta_destino' => $rutaDestino,
+
+        'message' =>
+            count($uploaded) .
+            ' archivos subidos correctamente'
+    ]
+);
