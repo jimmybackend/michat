@@ -720,3 +720,289 @@ body.ui-theme :focus-visible {
     transition-duration: .01ms !important;
   }
 }
+
+
+/* ==========================================================
+   ARCHIVOS ADJUNTOS DE LA SESIÓN (sidebar)
+   Usa variables del design-system para integrarse al tema.
+   ========================================================== */
+
+/* Cabecera: título a la izquierda, contador a la derecha */
+.sidebar-section.adjuntos-section .section-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.sidebar-section.adjuntos-section .section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0;
+}
+
+/* Burbuja del contador */
+.chat-files-count {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--accent) !important;
+  color: #fff !important;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(var(--accent-rgb), .35);
+}
+
+/* Lista scrolleable */
+.chat-session-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+/* Tarjeta de cada archivo */
+.chat-session-file {
+  background: var(--bg3) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color .15s ease;
+}
+
+.chat-session-file:hover {
+  border-color: rgba(var(--accent-rgb), .5) !important;
+}
+
+/* Fila principal: icono + info alineados */
+.chat-session-file-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.chat-session-file-icon {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(var(--accent-rgb), .12);
+  color: var(--accent) !important;
+  font-size: 14px;
+}
+
+.chat-session-file-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-session-file-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-strong) !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-session-file-meta {
+  font-size: 10.5px;
+  color: var(--text-soft) !important;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Fila de acciones: separada con borde superior */
+.chat-session-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+/* Botones de acción con colores semánticos */
+.chat-file-action {
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  color: #fff !important;
+  font-size: 12px;
+  padding: 0 !important;
+  background: var(--bg3) !important;
+  transition: transform .15s ease, filter .15s ease, box-shadow .15s ease;
+}
+
+.chat-file-action:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.15);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .25);
+}
+
+.chat-file-action:active { transform: translateY(0); }
+
+/* Colores semánticos por acción (con variables del tema) */
+.chat-file-action[data-action="view"] {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+}
+
+.chat-file-action[data-action="download"] {
+  background: var(--ok) !important;
+  border-color: var(--ok) !important;
+}
+
+.chat-file-action[data-action="index"] {
+  background: var(--warn) !important;
+  border-color: var(--warn) !important;
+  color: #1c2128 !important;
+}
+
+.chat-file-action[data-action="semantic"] {
+  background: var(--accent-2) !important;
+  border-color: var(--accent-2) !important;
+}
+
+.chat-file-action[data-action="delete"],
+.chat-file-action.chat-file-action-danger {
+  background: var(--danger) !important;
+  border-color: var(--danger) !important;
+}
+
+/* Estado vacío */
+.chat-files-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 8px;
+  color: var(--text-soft) !important;
+  font-size: 12px;
+  text-align: center;
+  border: 1px dashed var(--border) !important;
+  border-radius: 10px;
+}
+
+.chat-files-empty i {
+  font-size: 18px;
+  opacity: .7;
+}
+
+/* ============================================================
+   📊 MINI DASHBOARD (header del chat)
+   Usa las variables del tema (--accent, --bg3, --border, etc.)
+   ============================================================ */
+.chat-stats-mini {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  background: var(--bg3) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 999px !important;
+  font-size: 11.5px;
+  margin-right: 8px;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.chat-stats-mini:hover {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), .15);
+}
+
+.chat-stats-mini-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-stats-mini-item > i {
+  color: var(--accent) !important;
+  font-size: 11px;
+  opacity: .85;
+}
+
+.chat-stats-mini-data {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.chat-stats-mini-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-soft) !important;
+}
+
+.chat-stats-mini-value {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-strong) !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+}
+
+.chat-stats-mini-cost {
+  color: var(--accent) !important;
+}
+
+.chat-stats-mini-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--border) !important;
+  margin: 0 6px;
+}
+
+.chat-stats-mini-link {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px !important;
+  background: rgba(var(--accent-rgb), .12) !important;
+  color: var(--accent) !important;
+  font-size: 11px;
+  margin-left: 4px;
+  text-decoration: none !important;
+  transition: transform .15s ease, background .15s ease;
+}
+
+.chat-stats-mini-link:hover {
+  background: var(--accent) !important;
+  color: #fff !important;
+  transform: scale(1.08);
+}
+
+/* Ocultar en móvil muy pequeño para no saturar */
+@media (max-width: 560px) {
+  .chat-stats-mini { display: none; }
+}
+
+/* Feedback mientras carga */
+.chat-stats-mini-value.loading {
+  opacity: .5;
+  font-style: italic;
+  font-weight: 400;
+}
