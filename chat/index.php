@@ -59,13 +59,15 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Cloud Drive · Chat IA</title>
+<title>Chat IA</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.3.1/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-<link rel="icon" href="ellogo.png" type="image/x-icon">
+<link rel="icon" href="asistente-de-inteligencia-artificial.gif" type="image/x-icon">
+
+
 <link rel="stylesheet" href="css/chat2.css" />
 <link rel="stylesheet" href="css/design-system.css" />
 </head>
@@ -77,7 +79,9 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <aside id="chat-sidebar" class="sidebar-panel">
 
 <div class="sidebar-brand">
-<a href="s3.php"><i class="fas fa-cloud"></i> Cloud Drive</a>
+    <a href="s3.php">
+        <img src="asistente-de-inteligencia-artificial.gif" alt="IA" style="height: 2.2em; vertical-align: middle; display: inline-block;"> Chat+S3
+    </a>
 </div>
 
 <div class="sidebar-header">
@@ -119,18 +123,29 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
   <div class="section-label-row">
     <div class="section-label">
       <i class="fas fa-paperclip"></i>
-      ARCHIVOS DE ESTA CONVERSACIÓN
+      ARCHIVOS
     </div>
     <span class="chat-files-count" id="chatFilesCount">0</span>
   </div>
 
+
+
+    <button id="btnAttachmentInspector" class="btn btn-sm btn-outline-info w-100 mt-2" style="font-size:0.75rem;" title="Ver qué información tiene la IA de los archivos adjuntos">
+        <i class="fas fa-microscope"></i> Inspector de Adjuntos
+    </button>
   <div id="chatSessionFilesList" class="chat-session-files-list">
     <!-- Los archivos se cargan dinámicamente desde chat.js -->
     <div class="empty-state-sidebar chat-files-empty">
-      <i class="fas fa-file"></i>
-      <span>Selecciona una conversación para ver sus archivos</span>
+      <!--<i class="fas fa-file"></i>
+      <span class="text-muted" style="font-size:0.65rem;">Selecciona una conversación</span>-->
     </div>
   </div>
+  <div class="chat-attachment-mode mb-2" style="font-size:0.75rem;">
+    <label class="m-0 d-flex align-items-center" style="gap:6px; cursor:pointer;">
+        <input type="checkbox" id="chatAttachmentsRagMode"  title="Si está activo, solo se inyectan archivos relacionados con la pregunta." checked>
+        <small class="text-muted" style="font-size:0.65rem;">Usar adjuntos solo si son relevantes (RAG)</small>
+    </label>
+</div>
 
 </div>
 
@@ -196,7 +211,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
           <span class="chat-stats-mini-value chat-stats-mini-cost" id="chatMiniCost">—</span>
         </div>
       </div>
-      <a href="https://drive.esforzados.com/michat/s3chatstats.php" 
+      <a href="https://drive.esforzados.com/michat/dashboard_viewer.php" 
          class="chat-stats-mini-link" 
          target="_blank" 
          rel="noopener"
@@ -305,22 +320,8 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 
 <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
 
-<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"></script>
-<!-- Scripts base -->
-<script src="js/actualizar-hora.js"></script>
-<script src="js/recargarPagina.js"></script>
-<!-- sidebar-sessions-projects.js debe cargar primero porque maneja las sesiones del sidebar -->
-<script src="js/sidebar-sessions-projects.js"></script>
-<!-- chat.js debe cargar segundo porque exporta window.chatUtils -->
-<script src="js/chat.js"></script>
-<!-- Módulos que dependen de chat.js -->
-<script src="js/run-tests.js"></script>
-<script src="js/rollback-edit.js"></script>
-<script src="js/sincronizar.js"></script>
-<script src="js/estilo.js"></script>
-<script src="js/sidebar-responsive.js"></script>
-<script src="js/subir-chunked.js"></script>
+
+<!-- Modal para Adjuntos de settings-modal -->
 <div id="settings-modal" class="modal fade" tabindex="-1" role="dialog" aria-hidden="true">
 <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
 <div class="modal-content">
@@ -553,6 +554,34 @@ Fuentes indexadas: <span id="sbSourcesCount">0</span>
 
 <hr>
 <div class="settings-section">
+    <div class="settings-section-title">Memoria Procedural</div>
+    <p class="small text-muted mb-2">
+        Patrones, preferencias y reglas que la IA ha aprendido de tus conversaciones.
+        Se aplican automáticamente en todas tus sesiones.
+    </p>
+    <div class="d-flex flex-wrap" style="gap:.5rem;">
+
+        <button class="btn btn-sm btn-outline-success" id="btnForceProceduralExtraction" type="button">
+            <i class="fas fa-sync-alt mr-1"></i> Re-analizar todas las sesiones
+        </button>
+        <button class="btn btn-sm btn-outline-info" id="btnOpenProceduralMemory" title="Ver, editar y eliminar memoria procedural" type="button">
+            <i class="fas fa-brain mr-1"></i> Ver y editar memoria
+        </button>
+        <button id="btnContextViewer" class="btn btn-sm btn-outline-info" title="Ver, editar y eliminar contexto activo de sesión y proyecto" type="button">
+            <i class="fas fa-database"></i> Inspector de Contexto
+        </button>
+        <button id="btnAiDataControl" class="btn btn-sm btn-outline-warning" title="Control avanzado de datos internos de la IA" type="button">
+            <i class="fas fa-sliders-h"></i> Control IA
+        </button>
+
+    </div>
+    <small class="text-muted mt-1 d-block" id="proceduralExtractionStatus"></small>
+    
+
+
+</div>
+<hr>
+<div class="settings-section">
 <div class="settings-section-title">Cuenta</div>
 <div class="d-flex flex-wrap" style="gap:.5rem;">
 <button id="btnSyncS3" class="btn btn-sm btn-outline-secondary" type="button">
@@ -577,7 +606,7 @@ Fuentes indexadas: <span id="sbSourcesCount">0</span>
 </div>
 </div>
 </div>
-
+<!-- Modal para Adjuntos de ProjectManager -->
 <div class="modal fade" id="modalProjectManager" tabindex="-1" role="dialog" aria-hidden="true">
 <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
 <div class="modal-content">
@@ -639,6 +668,7 @@ Fuentes indexadas: <span id="sbSourcesCount">0</span>
 </div>
 </div>
 </div>
+<!-- Modal para Adjuntos de ProjectSources -->
 <div class="modal fade" id="modalProjectSources" tabindex="-1" role="dialog" aria-hidden="true">
 <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
 <div class="modal-content">
@@ -692,7 +722,6 @@ role="progressbar" style="width: 0%">0%</div>
 </div>
 </div>
 </div>
-
 <!-- Modal para Adjuntos de Sesión -->
 <div class="modal fade" id="modalSessionAttachments" tabindex="-1" role="dialog" aria-hidden="true">
 <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
@@ -747,7 +776,75 @@ role="progressbar" style="width: 0%">0%</div>
 </div>
 </div>
 </div>
+<!-- Modal de Memoria Procedural -->
+<div class="modal fade" id="modalProceduralMemory" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <div class="modal-content" style="background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius-lg,18px); max-height:90vh; display:flex; flex-direction:column;">
+            <div class="modal-header" style="background:linear-gradient(135deg,var(--accent),var(--accent-2)); border-radius:var(--radius-lg,18px) var(--radius-lg,18px) 0 0; padding:16px 20px;">
+                <h5 class="modal-title" style="color:#fff; font-weight:700; display:flex; align-items:center; gap:8px;">
+                    <i class="fas fa-brain"></i> Memoria Procedural
+                </h5>
+                <button type="button" class="close" data-dismiss="modal" style="color:#fff; opacity:.8;">
+                    <span>&times;</span>
+                </button>
+            </div>
+            <div class="modal-body" style="overflow-y:auto; flex:1; padding:20px;">
+                <!-- Formulario para agregar nueva memoria -->
+                <div style="background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius,12px); padding:16px; margin-bottom:20px;">
+                    <div style="font-size:0.8rem; font-weight:700; color:var(--text-strong); margin-bottom:10px; text-transform:uppercase; letter-spacing:.05em;">
+                        <i class="fas fa-plus-circle" style="color:var(--accent);"></i> Agregar nueva regla
+                    </div>
+                    <div style="display:flex; gap:8px; margin-bottom:8px;">
+                        <select id="pmNewType" class="form-control form-control-sm" style="max-width:160px; background:var(--bg); border-color:var(--border); color:var(--text);">
+                            <option value="rule">📏 Regla</option>
+                            <option value="preference">🎨 Preferencia</option>
+                            <option value="correction">✏️ Corrección</option>
+                            <option value="workflow">🔄 Flujo de trabajo</option>
+                            <option value="pattern">🔁 Patrón</option>
+                        </select>
+                    </div>
+                    <textarea id="pmNewContent" class="form-control form-control-sm" rows="2"
+                        placeholder="Ej: Siempre responde en español. Usa nombres de variables en camelCase..."
+                        style="background:var(--bg); border-color:var(--border); color:var(--text); font-size:0.85rem;"></textarea>
+                    <div style="text-align:right; margin-top:8px;">
+                        <button class="btn btn-sm btn-primary" id="pmBtnAdd" style="background:var(--accent); border-color:var(--accent); font-weight:600;">
+                            <i class="fas fa-save mr-1"></i> Agregar
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Lista de memorias -->
+                <div id="pmList" style="display:flex; flex-direction:column; gap:10px;">
+                    <div style="text-align:center; color:var(--text-soft); padding:30px;">
+                        <i class="fas fa-spinner fa-spin"></i> Cargando...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
+
+</div>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"></script>
+<!-- Scripts base -->
+<script src="js/actualizar-hora.js"></script>
+<script src="js/recargarPagina.js"></script>
+<!-- sidebar-sessions-projects.js debe cargar primero porque maneja las sesiones del sidebar -->
+<script src="js/sidebar-sessions-projects.js"></script>
+<!-- chat.js debe cargar segundo porque exporta window.chatUtils -->
+<script src="js/chat.js"></script>
+<script src="js/context-viewer.js"></script> 
+<script src="js/ai-data-control.js"></script>
+<!-- Módulos que dependen de chat.js -->
+<script src="js/run-tests.js"></script>
+<script src="js/rollback-edit.js"></script>
+<script src="js/sincronizar.js"></script>
+<script src="js/estilo.js"></script>
+<script src="js/sidebar-responsive.js"></script>
+<script src="js/subir-chunked.js"></script>
+
 
 <script>
 // =====================================================================

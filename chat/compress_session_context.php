@@ -784,6 +784,146 @@ Formato de cada objeto:
 }
 
 // =======================================================================
+// ✅ MEMORIA PROCEDURAL: Detectar patrones, preferencias y correcciones
+// del usuario a través de sus conversaciones. A diferencia de is_primordial
+// (manual, por proyecto), esto es AUTOMÁTICO y GLOBAL (todas las sesiones).
+// =======================================================================
+function extractProceduralMemory(mysqli $db, $bedrock, int $sessionId, int $userId): int {
+    // 1. Obtener los últimos bloques de conversación de esta sesión
+    //    que aún no han sido analizados para memoria procedural
+    $sql = "
+        SELECT scb.id_, scb.content_preview, scb.created_at
+        FROM SessionContextBlocks scb
+        WHERE scb.session_id_ = ?
+          AND scb.block_type IN ('level_0', 'level_1')
+          AND scb.is_locked = 0
+          AND NOT EXISTS (
+              SELECT 1 FROM UserProceduralMemory upm
+              WHERE upm.source_session_id = ?
+                AND upm.user_id_ = ?
+          )
+        ORDER BY scb.created_at DESC
+        LIMIT 10
+    ";
+
+    $stmt = $db->prepare($sql);
+    $stmt->bind_param('ii', $sessionId, $userId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $blocks = [];
+    while ($row = $res->fetch_assoc()) {
+        $blocks[] = $row;
+    }
+    $stmt->close();
+
+    if (empty($blocks)) return 0;
+
+    // 2. Concatenar contenido para análisis
+    $allText = '';
+    foreach ($blocks as $b) {
+        $allText .= $b['content_preview'] . "\n";
+    }
+
+    if (mb_strlen($allText) < 100) return 0; // Muy poco texto para analizar
+
+    // 3. Usar IA para detectar patrones procedurales
+    $modelId = selectModelForContent($allText);
+
+    $systemPrompt = "Eres un detector de PATRONES PROCEDURALES del usuario. Analiza la conversación y detecta SOLO:
+
+1. CORRECCIONES: El usuario corrigió a la IA (ej: 'No, te dije que...', 'Eso está mal, debería ser...')
+2. PREFERENCIAS EXPLÍCITAS: 'Siempre usa...', 'Nunca hagas...', 'Prefiero que...'
+3. REGLAS DE FORMATO: 'Responde en español', 'Usa markdown', 'Sé conciso'
+4. PATRONES DE TRABAJO: 'Primero haz X, luego Y', 'Siempre verifica antes de...'
+5. ESTILO: 'No uses emojis', 'Usa tono formal', 'Explica paso a paso'
+
+REGLAS ESTRICTAS:
+- SOLO detecta patrones que el usuario ESTABLECIÓ EXPLÍCITAMENTE.
+- NO inventes patrones. NO detectes preferencias implícitas.
+- Si no hay ningún patrón claro, devuelve exactamente: []
+- Máximo 3 patrones por análisis.
+- Devuelve ÚNICAMENTE un array JSON válido, sin markdown ni explicaciones.
+
+Formato:
+[{\"type\": \"rule|preference|correction|workflow|pattern\", \"content\": \"descripción clara de la regla en español\"}]";
+
+    $userPrompt = "CONVERSACIÓN A ANALIZAR:\n" . mb_substr($allText, 0, 6000) . "\n\nDetecta patrones procedurales:";
+
+    try {
+        $res = $bedrock->converse([
+            'modelId' => $modelId,
+            'messages' => [['role' => 'user', 'content' => [['text' => $userPrompt]]]],
+            'system' => [['text' => $systemPrompt]],
+            'inferenceConfig' => ['maxTokens' => 500, 'temperature' => 0.1, 'topP' => 0.9]
+        ]);
+
+        $aiText = '';
+        foreach (($res['output']['message']['content'] ?? []) as $block) {
+            if (isset($block['text'])) $aiText .= $block['text'];
+        }
+
+        $inputTokens = (int)($res['usage']['inputTokens'] ?? 0);
+        $outputTokens = (int)($res['usage']['outputTokens'] ?? 0);
+
+        if ($inputTokens > 0 || $outputTokens > 0) {
+            logTokenUsage($db, $sessionId, null, 'compile', $modelId, $inputTokens, $outputTokens);
+        }
+
+        // Limpiar JSON
+        $jsonStr = trim($aiText);
+        if (preg_match('/\[[\s\S]*\]/', $jsonStr, $matches)) {
+            $jsonStr = $matches[0];
+        }
+        $jsonStr = preg_replace('/^```json\s*/i', '', $jsonStr);
+        $jsonStr = preg_replace('/\s*```$/i', '', $jsonStr);
+
+        $patterns = json_decode($jsonStr, true);
+
+        if (!is_array($patterns) || empty($patterns)) return 0;
+
+        // 4. Guardar patrones detectados (con deduplicación)
+        $saved = 0;
+        foreach ($patterns as $p) {
+            $type = $p['type'] ?? 'rule';
+            if (!in_array($type, ['preference','rule','pattern','correction','workflow'])) {
+                $type = 'rule';
+            }
+            $content = trim($p['content'] ?? '');
+            if (mb_strlen($content) < 15) continue;
+
+            // Verificar si ya existe un patrón similar
+            $checkStmt = $db->prepare("SELECT id_, confidence FROM UserProceduralMemory WHERE user_id_ = ? AND content = ? AND is_active = 1 LIMIT 1");
+            $checkStmt->bind_param('is', $userId, $content);
+            $checkStmt->execute();
+            $existing = $checkStmt->get_result()->fetch_assoc();
+            $checkStmt->close();
+
+            if ($existing) {
+                // Incrementar confianza (se observó de nuevo)
+                $newConfidence = min((int)$existing['confidence'] + 1, 10);
+                $updStmt = $db->prepare("UPDATE UserProceduralMemory SET confidence = ?, updated_at = NOW() WHERE id_ = ?");
+                $updStmt->bind_param('ii', $newConfidence, $existing['id_']);
+                $updStmt->execute();
+                $updStmt->close();
+            } else {
+                // Insertar nuevo patrón
+                $insStmt = $db->prepare("INSERT INTO UserProceduralMemory (user_id_, memory_type, content, source_session_id, confidence) VALUES (?, ?, ?, ?, 1)");
+                $insStmt->bind_param('issi', $userId, $type, $content, $sessionId);
+                $insStmt->execute();
+                $insStmt->close();
+                $saved++;
+            }
+        }
+
+        return $saved;
+
+    } catch (Throwable $e) {
+        error_log("Error extrayendo memoria procedural para sesión $sessionId: " . $e->getMessage());
+        return 0;
+    }
+}
+
+// =======================================================================
 // FUNCIÓN: GENERAR RESUMEN MAESTRO (META-RESUMEN) CON IA
 // =======================================================================
 /**
@@ -843,6 +983,169 @@ function generateSessionMetaSummary(mysqli $db, $bedrock, int $sessionId, array 
     }
 }
 
+// =======================================================================
+// ✅ MEMORIA PROCEDURAL: Detección automática de patrones del usuario
+// Analiza los bloques de sesión y extrae reglas, preferencias y correcciones.
+// Los costos de la IA se registran en TokenUsage vía logTokenUsage().
+// =======================================================================
+function extractProceduralMemory(mysqli $db, $bedrock, int $sessionId, int $userId, ?string $forceSessionIds = null): int {
+    // Si se pasan IDs forzados, solo analizar esas sesiones
+    if ($forceSessionIds !== null) {
+        $ids = array_filter(array_map('intval', explode(',', $forceSessionIds)));
+        if (empty($ids)) return 0;
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $types = str_repeat('i', count($ids));
+        $sql = "
+            SELECT scb.id_, scb.content_preview, scb.session_id_, scb.created_at
+            FROM SessionContextBlocks scb
+            WHERE scb.session_id_ IN ($placeholders)
+              AND scb.block_type IN ('level_0', 'level_1')
+              AND scb.is_locked = 0
+            ORDER BY scb.created_at DESC
+            LIMIT 20
+        ";
+        $stmt = $db->prepare($sql);
+        $stmt->bind_param($types, ...$ids);
+    } else {
+        // Flujo normal (cron): solo bloques que no han sido analizados para memoria procedural
+        $sql = "
+            SELECT scb.id_, scb.content_preview, scb.session_id_, scb.created_at
+            FROM SessionContextBlocks scb
+            WHERE scb.session_id_ = ?
+              AND scb.block_type IN ('level_0', 'level_1')
+              AND scb.is_locked = 0
+              AND NOT EXISTS (
+                  SELECT 1 FROM UserProceduralMemory upm
+                  WHERE upm.source_session_id = scb.session_id_ AND upm.user_id_ = ?
+              )
+            ORDER BY scb.created_at DESC
+            LIMIT 10
+        ";
+        $stmt = $db->prepare($sql);
+        $stmt->bind_param('ii', $sessionId, $userId);
+    }
+
+    if (!$stmt) return 0;
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $blocks = [];
+    while ($row = $res->fetch_assoc()) {
+        $blocks[] = $row;
+    }
+    $stmt->close();
+
+    if (empty($blocks)) return 0;
+
+    // Concatenar contenido para análisis
+    $allText = '';
+    foreach ($blocks as $b) {
+        $allText .= $b['content_preview'] . "\n";
+    }
+
+    if (mb_strlen($allText) < 100) return 0;
+
+    // Selección de modelo según contenido
+    $modelId = selectModelForContent($allText);
+
+    $systemPrompt = "Eres un detector de PATRONES PROCEDURALES del usuario. Analiza la conversación y detecta SOLO:
+
+1. CORRECCIONES: El usuario corrigió a la IA (ej: 'No, te dije que...', 'Eso está mal, debería ser...')
+2. PREFERENCIAS EXPLÍCITAS: 'Siempre usa...', 'Nunca hagas...', 'Prefiero que...'
+3. REGLAS DE FORMATO: 'Responde en español', 'Usa markdown', 'Sé conciso'
+4. PATRONES DE TRABAJO: 'Primero haz X, luego Y', 'Siempre verifica antes de...'
+5. ESTILO: 'No uses emojis', 'Usa tono formal', 'Explica paso a paso'
+
+REGLAS ESTRICTAS:
+- SOLO detecta patrones que el usuario ESTABLECIÓ EXPLÍCITAMENTE.
+- NO inventes patrones. NO detectes preferencias implícitas.
+- Si no hay ningún patrón claro, devuelve exactamente: []
+- Máximo 3 patrones por análisis.
+- Devuelve ÚNICAMENTE un array JSON válido, sin markdown ni explicaciones.
+
+Formato:
+[{\"type\": \"rule|preference|correction|workflow|pattern\", \"content\": \"descripción clara de la regla en español\"}]";
+
+    $userPrompt = "CONVERSACIÓN A ANALIZAR:\n" . mb_substr($allText, 0, 6000) . "\n\nDetecta patrones procedurales:";
+
+    try {
+        $res = $bedrock->converse([
+            'modelId' => $modelId,
+            'messages' => [['role' => 'user', 'content' => [['text' => $userPrompt]]]],
+            'system' => [['text' => $systemPrompt]],
+            'inferenceConfig' => ['maxTokens' => 500, 'temperature' => 0.1, 'topP' => 0.9]
+        ]);
+
+        $aiText = '';
+        foreach (($res['output']['message']['content'] ?? []) as $block) {
+            if (isset($block['text'])) $aiText .= $block['text'];
+        }
+
+        $inputTokens = (int)($res['usage']['inputTokens'] ?? 0);
+        $outputTokens = (int)($res['usage']['outputTokens'] ?? 0);
+
+        // ✅ REGISTRAR COSTO EN TokenUsage
+        $logSessionId = (int)($blocks[0]['session_id_'] ?? $sessionId);
+        if ($inputTokens > 0 || $outputTokens > 0) {
+            logTokenUsage($db, $logSessionId, null, 'compile', $modelId, $inputTokens, $outputTokens);
+        }
+
+        // Limpiar JSON
+        $jsonStr = trim($aiText);
+        if (preg_match('/\[[\s\S]*\]/', $jsonStr, $matches)) {
+            $jsonStr = $matches[0];
+        }
+        $jsonStr = preg_replace('/^```json\s*/i', '', $jsonStr);
+        $jsonStr = preg_replace('/\s*```$/i', '', $jsonStr);
+
+        $patterns = json_decode($jsonStr, true);
+
+        if (!is_array($patterns) || empty($patterns)) return 0;
+
+        // Guardar patrones detectados (con deduplicación)
+        $saved = 0;
+        foreach ($patterns as $p) {
+            $type = $p['type'] ?? 'rule';
+            if (!in_array($type, ['preference','rule','pattern','correction','workflow'])) {
+                $type = 'rule';
+            }
+            $content = trim($p['content'] ?? '');
+            if (mb_strlen($content) < 15) continue;
+
+            // Verificar si ya existe un patrón similar
+            $checkStmt = $db->prepare("SELECT id_, confidence FROM UserProceduralMemory WHERE user_id_ = ? AND content = ? AND is_active = 1 LIMIT 1");
+            if (!$checkStmt) continue;
+            $checkStmt->bind_param('is', $userId, $content);
+            $checkStmt->execute();
+            $existing = $checkStmt->get_result()->fetch_assoc();
+            $checkStmt->close();
+
+            if ($existing) {
+                $newConfidence = min((int)$existing['confidence'] + 1, 10);
+                $updStmt = $db->prepare("UPDATE UserProceduralMemory SET confidence = ?, updated_at = NOW() WHERE id_ = ?");
+                if ($updStmt) {
+                    $updStmt->bind_param('ii', $newConfidence, $existing['id_']);
+                    $updStmt->execute();
+                    $updStmt->close();
+                }
+            } else {
+                $insStmt = $db->prepare("INSERT INTO UserProceduralMemory (user_id_, memory_type, content, source_session_id, confidence) VALUES (?, ?, ?, ?, 1)");
+                if ($insStmt) {
+                    $insStmt->bind_param('issi', $userId, $type, $content, $logSessionId);
+                    if ($insStmt->execute()) {
+                        $saved++;
+                    }
+                    $insStmt->close();
+                }
+            }
+        }
+
+        return $saved;
+
+    } catch (Throwable $e) {
+        error_log("Error extrayendo memoria procedural para sesión $sessionId: " . $e->getMessage());
+        return 0;
+    }
+}
 
 // ===== Procesar sesiones (Compresión) =====
 $sessions = getSessionsNeedingCompression($db_connection, MAX_SESSIONS_PER_RUN);
@@ -861,13 +1164,44 @@ if (empty($sessions)) {
             $results['level_1_to_2'] += $compressedL2;
             $results['level_2_to_3'] += $compressedL3;
             
+            
+// ✅ MEMORIA PROCEDURAL: Detectar patrones del usuario
+$stmtUser = $db_connection->prepare("SELECT user_id_ FROM ChatSessions WHERE id_ = ?");
+$stmtUser->bind_param('i', $sessionId);
+$stmtUser->execute();
+$rowUser = $stmtUser->get_result()->fetch_assoc();
+$stmtUser->close();
+
+if ($rowUser && !empty($rowUser['user_id_'])) {
+    $proceduralSaved = extractProceduralMemory($db_connection, $bedrock, $sessionId, (int)$rowUser['user_id_']);
+    if (!isset($results['procedural_memory_saved'])) {
+        $results['procedural_memory_saved'] = 0;
+    }
+    $results['procedural_memory_saved'] += $proceduralSaved;
+}
+            
             $newLevel = (int)$session['context_level'];
-            if ($compressedL3 > 0) $newLevel = 3;
+            if ($compressedL3 > 0) $newLevel = 3; 
             elseif ($compressedL2 > 0) $newLevel = 2;
             elseif ($compressedL1 > 0) $newLevel = 1;
             
+
             // 2. Leer todos los bloques actuales
-            $stmtSummary = $db_connection->prepare("SELECT block_type, content_preview, token_count FROM SessionContextBlocks WHERE session_id_ = ? AND block_type <> 'file_chunk' ORDER BY created_at ASC LIMIT 30");
+
+/*
+¿Hay algún riesgo con la compresión y los adjuntos? 
+Hay un punto que conviene verificar. En compress_session_context.php, la consulta para generar el meta-resumen maestro es: 
+
+Esto se elimino:
+$stmtSummary = $db_connection->prepare("SELECT block_type, content_preview, token_count FROM SessionContextBlocks WHERE session_id_ = ? AND block_type <> 'file_chunk' ORDER BY created_at ASC LIMIT 30");
+
+Esto incluye bloques file (resúmenes semánticos) en el meta-resumen maestro. Eso puede ser positivo (el meta-resumen sabe qué archivos hay) pero también puede inflar el context_summary con información de adjuntos que el RAG ya maneja por separado.
+Si quieres que el meta-resumen maestro NO incluya resúmenes de adjuntos (para que el RAG los maneje exclusivamente), cambia esa línea a:
+Esto se usa: 
+$stmtSummary = $db_connection->prepare("SELECT block_type, content_preview, token_count FROM SessionContextBlocks WHERE session_id_ = ? AND block_type NOT IN ('file', 'file_chunk') ORDER BY created_at ASC LIMIT 30");
+*/
+$stmtSummary = $db_connection->prepare("SELECT block_type, content_preview, token_count FROM SessionContextBlocks WHERE session_id_ = ? AND block_type NOT IN ('file', 'file_chunk') ORDER BY created_at ASC LIMIT 30");
+
             $stmtSummary->bind_param('i', $sessionId);
             $stmtSummary->execute();
             $resSummary = $stmtSummary->get_result();

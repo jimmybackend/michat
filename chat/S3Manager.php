@@ -147,7 +147,7 @@ class S3Manager
         }
     }
 
-    private function folderExistsDb(int $userId, string $prefix): bool
+    public function folderExistsDb(int $userId, string $prefix): bool
     {
         $prefix = $this->normalizePrefix($prefix);
 

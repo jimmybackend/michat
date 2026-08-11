@@ -102,6 +102,422 @@ function cosineSimilarity(array $vecA, array $vecB): float {
 }
 
 // =====================================================================
+// ✅ RAG DE ARCHIVOS ADJUNTOS DE SESIÓN (helpers)
+// =====================================================================
+if (!defined('ATTACHMENT_EMBEDDING_MODEL')) define('ATTACHMENT_EMBEDDING_MODEL', 'amazon.titan-embed-text-v2:0');
+if (!defined('ATTACHMENT_EMBEDDING_DIMENSIONS')) define('ATTACHMENT_EMBEDDING_DIMENSIONS', 1024);
+if (!defined('ATTACHMENT_RAG_THRESHOLD')) define('ATTACHMENT_RAG_THRESHOLD', 0.25);
+if (!defined('ATTACHMENT_RAG_RELATED_FILE_THRESHOLD')) define('ATTACHMENT_RAG_RELATED_FILE_THRESHOLD', 0.20);
+if (!defined('ATTACHMENT_RAG_TOP')) define('ATTACHMENT_RAG_TOP', 4);
+if (!defined('ATTACHMENT_RAG_MAX_CHARS')) define('ATTACHMENT_RAG_MAX_CHARS', 12000);
+
+if (!function_exists('getModelPricing')) {
+    function getModelPricing(string $modelId): array {
+        $m = strtolower($modelId);
+
+        if (strpos($m, 'titan-embed') !== false) {
+            return ['input' => 0.10, 'output' => 0.00];
+        }
+
+        if (strpos($m, 'nova-micro') !== false) {
+            return ['input' => 0.035, 'output' => 0.14];
+        }
+
+        if (strpos($m, 'nova-lite') !== false) {
+            return ['input' => 0.06, 'output' => 0.24];
+        }
+
+        if (strpos($m, 'nova-pro') !== false) {
+            return ['input' => 0.80, 'output' => 3.20];
+        }
+
+        return ['input' => 0.035, 'output' => 0.14];
+    }
+}
+
+if (!function_exists('calculateCost')) {
+    function calculateCost(string $modelId, int $inputTokens, int $outputTokens): float {
+        $pricing = getModelPricing($modelId);
+        $cost = ($inputTokens / 1000000 * $pricing['input']) + ($outputTokens / 1000000 * $pricing['output']);
+        return round($cost, 6);
+    }
+}
+
+if (!function_exists('logTokenUsage')) {
+    function logTokenUsage(
+        mysqli $db,
+        int $sessionId,
+        ?int $msgId,
+        string $phase,
+        string $modelId,
+        int $inputTokens,
+        int $outputTokens,
+        int $durationMs = 0
+    ): void {
+        try {
+            $cost = calculateCost($modelId, $inputTokens, $outputTokens);
+            $tcId = next_id($db, 'TokenUsage', 'id_');
+
+            $stmt = $db->prepare("
+                INSERT INTO TokenUsage (
+                    id_, session_id_, message_id_, phase, model_id,
+                    input_tokens, output_tokens, estimated_cost_usd, duration_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+
+            if ($stmt) {
+                $stmt->bind_param(
+                    "iiissiidi",
+                    $tcId,
+                    $sessionId,
+                    $msgId,
+                    $phase,
+                    $modelId,
+                    $inputTokens,
+                    $outputTokens,
+                    $cost,
+                    $durationMs
+                );
+                $stmt->execute();
+                $stmt->close();
+            }
+        } catch (Throwable $e) {
+            error_log('logTokenUsage bedrock_chat2: ' . $e->getMessage());
+        }
+    }
+}
+
+if (!function_exists('generateTitanEmbedding')) {
+    function generateTitanEmbedding($bedrock, string $text, string $modelId): array {
+        $embedRes = $bedrock->invokeModel([
+            'modelId' => $modelId,
+            'contentType' => 'application/json',
+            'accept' => 'application/json',
+            'body' => json_encode([
+                'inputText' => mb_substr($text, 0, 8000),
+                'dimensions' => ATTACHMENT_EMBEDDING_DIMENSIONS,
+                'normalize' => true,
+            ]),
+        ]);
+
+        $embedData = json_decode((string)$embedRes['body'], true);
+
+        return [
+            'embedding' => $embedData['embedding'] ?? [],
+            'inputTokens' => (int)($embedData['inputTextTokenCount'] ?? 0),
+        ];
+    }
+}
+
+if (!function_exists('getSessionAttachmentMode')) {
+    function getSessionAttachmentMode(?string $metaJson): string {
+        $meta = json_decode((string)$metaJson, true);
+        if (!is_array($meta)) $meta = [];
+
+        $mode = strtolower(trim((string)($meta['attachment_rag_mode'] ?? 'rag')));
+
+        return ($mode === 'always') ? 'always' : 'rag';
+    }
+}
+
+if (!function_exists('getAttachmentFilenameFromBlock')) {
+    function getAttachmentFilenameFromBlock(array $block): string {
+        $filename = '';
+
+        if (!empty($block['source_ids'])) {
+            $source = json_decode((string)$block['source_ids'], true);
+
+            if (is_array($source) && !empty($source['filename'])) {
+                $filename = basename((string)$source['filename']);
+            }
+        }
+
+        if ($filename === '' && !empty($block['s3_path'])) {
+            $filename = basename((string)$block['s3_path']);
+        }
+
+        return $filename !== '' ? $filename : 'archivo adjunto';
+    }
+}
+
+if (!function_exists('buildSessionBaseContext')) {
+    function buildSessionBaseContext(mysqli $db, int $sessionId, array $sessionData): string {
+        if (!empty($sessionData['context_summary'])) {
+            return (string)$sessionData['context_summary'];
+        }
+
+        $blocks = [];
+
+        $stmt = $db->prepare("
+            SELECT block_type, content_preview
+            FROM SessionContextBlocks
+            WHERE session_id_ = ?
+              AND block_type NOT IN ('file', 'file_chunk')
+            ORDER BY created_at ASC
+            LIMIT 30
+        ");
+
+        if (!$stmt) return '';
+
+        $stmt->bind_param('i', $sessionId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+
+        while ($row = $res->fetch_assoc()) {
+            $blocks[] = $row;
+        }
+
+        $stmt->close();
+
+        if (empty($blocks)) return '';
+
+        $out = "=== CONTEXTO DE LA CONVERSACIÓN DE ESTA SESIÓN ===\n";
+
+        foreach ($blocks as $idx => $block) {
+            $out .= ($idx + 1) . ". " . mb_substr((string)($block['content_preview'] ?? ''), 0, 300) . "\n";
+        }
+
+        return $out;
+    }
+}
+
+if (!function_exists('buildSessionAttachmentContext')) {
+    function buildSessionAttachmentContext(
+        mysqli $db,
+        $bedrock,
+        int $sessionId,
+        string $queryText,
+        string $mode,
+        ?array $precomputedQueryVector = null,
+        ?int $logMsgId = null
+    ): string {
+        $queryText = trim((string)$queryText);
+        $blocks = [];
+
+        // =========================================================
+        // MODO "always": incluye adjuntos sin filtro de relevancia
+        // =========================================================
+        if ($mode === 'always') {
+            $stmt = $db->prepare("
+                SELECT id_, block_type, content_preview, s3_path, source_ids
+                FROM SessionContextBlocks
+                WHERE session_id_ = ?
+                  AND block_type IN ('file', 'file_chunk')
+                ORDER BY block_type ASC, created_at ASC
+                LIMIT 30
+            ");
+
+            if (!$stmt) return '';
+
+            $stmt->bind_param('i', $sessionId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+
+            while ($row = $res->fetch_assoc()) {
+                $blocks[] = $row;
+            }
+
+            $stmt->close();
+
+            if (empty($blocks)) return '';
+
+            $out = "=== ARCHIVOS ADJUNTOS DE ESTA SESIÓN (MODO SIEMPRE) ===\n";
+            $chars = mb_strlen($out);
+
+            foreach ($blocks as $block) {
+                $content = trim((string)($block['content_preview'] ?? ''));
+                if ($content === '') continue;
+
+                $filename = getAttachmentFilenameFromBlock($block);
+
+                $label = ($block['block_type'] === 'file')
+                    ? "[RESUMEN DE ARCHIVO ADJUNTO - {$filename}]"
+                    : "[FRAGMENTO DE ARCHIVO ADJUNTO - {$filename}]";
+
+                $part = $label . "\n" . $content . "\n\n";
+
+                if ($chars + mb_strlen($part) > ATTACHMENT_RAG_MAX_CHARS) {
+                    break;
+                }
+
+                $out .= $part;
+                $chars += mb_strlen($part);
+            }
+
+            return trim($out);
+        }
+
+        // =========================================================
+        // MODO "rag": solo adjuntos relevantes
+        // =========================================================
+        if ($queryText === '') {
+            return '';
+        }
+
+        $stmt = $db->prepare("
+            SELECT id_, block_type, content_preview, s3_path, source_ids, embedding_json
+            FROM SessionContextBlocks
+            WHERE session_id_ = ?
+              AND block_type IN ('file', 'file_chunk')
+              AND embedding_json IS NOT NULL
+            ORDER BY created_at ASC
+            LIMIT 200
+        ");
+
+        if (!$stmt) return '';
+
+        $stmt->bind_param('i', $sessionId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+
+        while ($row = $res->fetch_assoc()) {
+            $blocks[] = $row;
+        }
+
+        $stmt->close();
+
+        if (empty($blocks)) return '';
+
+        $queryVector = is_array($precomputedQueryVector) ? $precomputedQueryVector : [];
+
+        if (empty($queryVector)) {
+            try {
+                $emb = generateTitanEmbedding($bedrock, $queryText, ATTACHMENT_EMBEDDING_MODEL);
+                $queryVector = $emb['embedding'] ?? [];
+
+                if (!empty($emb['inputTokens']) && $emb['inputTokens'] > 0) {
+                    logTokenUsage(
+                        $db,
+                        $sessionId,
+                        $logMsgId,
+                        'rag',
+                        ATTACHMENT_EMBEDDING_MODEL,
+                        (int)$emb['inputTokens'],
+                        0
+                    );
+                }
+            } catch (Throwable $e) {
+                error_log('Attachment RAG embedding error: ' . $e->getMessage());
+                return '';
+            }
+        }
+
+        if (empty($queryVector)) return '';
+
+        $scored = [];
+
+        foreach ($blocks as $block) {
+            $vec = json_decode((string)($block['embedding_json'] ?? ''), true);
+
+            if (!is_array($vec) || empty($vec)) {
+                continue;
+            }
+
+            $score = cosineSimilarity($queryVector, $vec);
+            $block['score'] = (float)$score;
+            $scored[] = $block;
+        }
+
+        if (empty($scored)) return '';
+
+        usort($scored, function ($a, $b) {
+            return $b['score'] <=> $a['score'];
+        });
+
+        $chunks = [];
+        $files = [];
+
+        foreach ($scored as $row) {
+            if ($row['block_type'] === 'file_chunk') {
+                if ($row['score'] >= ATTACHMENT_RAG_THRESHOLD) {
+                    $chunks[] = $row;
+                }
+            } else {
+                $files[] = $row;
+            }
+        }
+
+        $selected = [];
+
+        // 1) Hasta 3 fragmentos relevantes.
+        foreach (array_slice($chunks, 0, 3) as $chunk) {
+            $selected[$chunk['id_']] = $chunk;
+        }
+
+        // 2) Si hay fragmentos seleccionados, agregar el resumen del mismo archivo
+        //    si también pasa un umbral ligeramente menor.
+        if (!empty($selected)) {
+            $selectedPaths = [];
+
+            foreach ($selected as $sel) {
+                if (!empty($sel['s3_path'])) {
+                    $selectedPaths[(string)$sel['s3_path']] = true;
+                }
+            }
+
+            foreach ($files as $file) {
+                if (count($selected) >= ATTACHMENT_RAG_TOP) break;
+
+                if (empty($file['s3_path']) || !isset($selectedPaths[(string)$file['s3_path']])) {
+                    continue;
+                }
+
+                if ($file['score'] >= ATTACHMENT_RAG_RELATED_FILE_THRESHOLD) {
+                    $selected[$file['id_']] = $file;
+                }
+            }
+        }
+
+        // 3) Completar con resúmenes relevantes si todavía hay espacio.
+        foreach ($files as $file) {
+            if (count($selected) >= ATTACHMENT_RAG_TOP) break;
+
+            if (isset($selected[$file['id_']])) {
+                continue;
+            }
+
+            if ($file['score'] >= ATTACHMENT_RAG_THRESHOLD) {
+                $selected[$file['id_']] = $file;
+            }
+        }
+
+        // 4) Si no quedó nada, no inyectar adjuntos.
+        if (empty($selected)) {
+            return '';
+        }
+
+        usort($selected, function ($a, $b) {
+            return $b['score'] <=> $a['score'];
+        });
+
+        $out = "=== ARCHIVOS ADJUNTOS RELEVANTES PARA ESTA PREGUNTA ===\n";
+        $chars = mb_strlen($out);
+
+        foreach ($selected as $row) {
+            $content = trim((string)($row['content_preview'] ?? ''));
+            if ($content === '') continue;
+
+            $filename = getAttachmentFilenameFromBlock($row);
+
+            $label = ($row['block_type'] === 'file')
+                ? "[RESUMEN DE ARCHIVO ADJUNTO - {$filename}]"
+                : "[FRAGMENTO DE ARCHIVO ADJUNTO - {$filename}]";
+
+            $part = $label . "\n" . $content . "\n\n";
+
+            if ($chars + mb_strlen($part) > ATTACHMENT_RAG_MAX_CHARS) {
+                break;
+            }
+
+            $out .= $part;
+            $chars += mb_strlen($part);
+        }
+
+        return trim($out);
+    }
+}
+
+// =====================================================================
 // ✅ DETECTOR DE CÓDIGO MULTI-LENGUAJE (agnóstico al lenguaje)
 // Se usa tanto para elegir el modelo de resumen de memoria como para
 // decidir si un texto debe tratarse como contenido técnico/código.
@@ -603,7 +1019,7 @@ $compiled_prompt_input = isset($_POST['compiled_prompt']) ? trim($_POST['compile
 $compilation_id = isset($_POST['compilation_id']) ? (int)$_POST['compilation_id'] : 0;
 
 // ===== Verificar sesión =====
-$stmtS = $db_connection->prepare("SELECT id_, project_id_ FROM ChatSessions WHERE id_=?");
+$stmtS = $db_connection->prepare("SELECT id_, project_id_, meta FROM ChatSessions WHERE id_=?");
 if(!$stmtS) jexit(['ok'=>false,'error'=>'Error preparando SELECT sesión: '.$db_connection->error],500);
 $stmtS->bind_param('i', $session_id);
 if(!$stmtS->execute()){ $e=$stmtS->error; $stmtS->close(); jexit(['ok'=>false,'error'=>'Error ejecutando SELECT sesión: '.$e],500); }
@@ -612,6 +1028,26 @@ if(!$resS || !$resS->num_rows){ $stmtS->close(); jexit(['ok'=>false,'error'=>'Se
 $sessionData = $resS->fetch_assoc();
 $projectId = (int)($sessionData['project_id_'] ?? 0);
 $stmtS->close();
+$attachmentMode = getSessionAttachmentMode($sessionData['meta'] ?? '');
+
+// ✅ MEMORIA PROCEDURAL: Cargar patrones globales del usuario
+$proceduralMemory = [];
+$stmtPM = $db_connection->prepare("
+    SELECT memory_type, content, confidence
+    FROM UserProceduralMemory
+    WHERE user_id_ = ? AND is_active = 1
+    ORDER BY confidence DESC, updated_at DESC
+    LIMIT 10
+");
+if ($stmtPM) {
+    $stmtPM->bind_param('i', $user_id);
+    $stmtPM->execute();
+    $resPM = $stmtPM->get_result();
+    while ($pmRow = $resPM->fetch_assoc()) {
+        $proceduralMemory[] = $pmRow;
+    }
+    $stmtPM->close();
+}
 
 // ========================================================================
 // ✅ CORRECCIÓN CRÍTICA: Recuperar user_msg_id si estamos en Fase 2
@@ -836,55 +1272,9 @@ if (!empty($sessionData['project_id_'])) {
     }
 }
 
-// ✅ B. MEMORIA DE LA SESIÓN ACTIVA (SOLO de esta sesión, no de otras)
-// Prioridad 1: context_summary (si el Cron ya lo generó)
-if (!empty($sessionData['context_summary'])) {
-    $sessionContext = (string)$sessionData['context_summary'];
-}
 
-
-// Prioridad 2: Si no hay context_summary, leer los bloques de la sesión activa
-if (empty($sessionContext)) {
-    $sessionBlocks = [];
-    $sqlSessionBlocks = "SELECT block_type, content_preview, token_count, s3_path
-                         FROM SessionContextBlocks
-                         WHERE session_id_ = ?
-                         ORDER BY 
-                           CASE WHEN block_type IN ('file', 'file_chunk') THEN 0 ELSE 1 END ASC,
-                           created_at ASC
-                         LIMIT 30";
-    $stmtSB = $db_connection->prepare($sqlSessionBlocks);
-    if ($stmtSB) {
-        $stmtSB->bind_param('i', $session_id);
-        $stmtSB->execute();
-        $resSB = $stmtSB->get_result();
-        while ($block = $resSB->fetch_assoc()) {
-            $sessionBlocks[] = $block;
-        }
-        $stmtSB->close();
-    }
-    
-    if (!empty($sessionBlocks)) {
-            $sessionContext = "=== CONTEXTO DE ESTA SESIÓN ===\n";
-            foreach ($sessionBlocks as $idx => $block) {
-                $blockType = $block['block_type'] ?? 'level_0';
-                
-                if ($blockType === 'file') {
-                    $sessionContext .= "[RESUMEN DE ARCHIVO ADJUNTO]\n";
-                    $sessionContext .= $block['content_preview'] . "\n\n";
-                } elseif ($blockType === 'file_chunk') {
-                    $sessionContext .= "[FRAGMENTO DE ARCHIVO ADJUNTO";
-                    if (!empty($block['s3_path'])) {
-                        $sessionContext .= " (" . basename($block['s3_path']) . ")";
-                    }
-                    $sessionContext .= "]\n";
-                    $sessionContext .= $block['content_preview'] . "\n\n";
-                } else {
-                    $sessionContext .= ($idx + 1) . ". " . mb_substr($block['content_preview'], 0, 200) . "\n";
-                }
-            }
-        }
-}
+// ✅ B eliminado: la memoria de sesión y adjuntos se construye una sola vez en la sección final.
+$sessionContext = '';
 
 // ✅ C. CONSTRUIR SYSTEM PROMPT BASE
 $systemParts = [];
@@ -1329,107 +1719,96 @@ if ($compilation_id > 0 && isset($_POST['compiled_prompt']) && trim($_POST['comp
 }
 
     // ---------------------------------------------------------
-    // 2. CONSTRUIR EL PROMPT FINAL (Versión Definitiva)
+    // 2. CONSTRUIR EL PROMPT FINAL (Versión Definitiva) 
     // ---------------------------------------------------------
     $systemPrompt = "Eres un asistente de IA experto en programación y conocimiento general. Responde de manera directa, útil y precisa en español.";
 
-    // ====================================================================
-    // ✅ MEMORIA DE SESIÓN (SOLO de la sesión activa, no de otras)
-    // Lee los SessionContextBlocks directamente porque context_summary
-    // suele estar vacío (el Cron no lo actualiza).
-    // ====================================================================
-    $sessionMemory = '';
-    
-    // Prioridad 1: context_summary (si el Cron ya lo generó)
-    if (!empty($sessionData['context_summary'])) {
-        $sessionMemory = (string)$sessionData['context_summary'];
+// ✅ INYECTAR MEMORIA PROCEDURAL (patrones del usuario)
+if (!empty($proceduralMemory)) {
+    $systemPrompt .= "\n\n[PATRONES Y PREFERENCIAS DEL USUARIO - MEMORIA PROCEDURAL]\n";
+    $systemPrompt .= "El usuario ha establecido estos patrones a lo largo de sus conversaciones. DEBES seguirlos en TODAS tus respuestas:\n";
+    foreach ($proceduralMemory as $idx => $pm) {
+        $typeLabel = [
+            'rule' => 'REGLA',
+            'preference' => 'PREFERENCIA',
+            'correction' => 'CORRECCIÓN',
+            'workflow' => 'FLUJO DE TRABAJO',
+            'pattern' => 'PATRÓN'
+        ][$pm['memory_type']] ?? 'REGLA';
+
+        $systemPrompt .= ($idx + 1) . ". [{$typeLabel}] " . $pm['content'] . "\n";
     }
-    
-    // Prioridad 2: Leer bloques de la sesión activa directamente
-    if (empty($sessionMemory)) {
-            $stmtMem = $db_connection->prepare("
-                SELECT block_type, content_preview, token_count, s3_path
-                FROM SessionContextBlocks
-                WHERE session_id_ = ?
-                ORDER BY 
-                  CASE WHEN block_type IN ('file', 'file_chunk') THEN 0 ELSE 1 END ASC,
-                  created_at ASC
-                LIMIT 30
-            ");
-        if ($stmtMem) {
-            $stmtMem->bind_param('i', $session_id);
-            $stmtMem->execute();
-            $resMem = $stmtMem->get_result();
-            $memBlocks = [];
-            while ($memRow = $resMem->fetch_assoc()) {
-                $memBlocks[] = $memRow;
-            }
-            $stmtMem->close();
+    $systemPrompt .= "Estos patrones tienen prioridad sobre tu comportamiento por defecto.\n";
+}
+
+// ====================================================================
+// ✅ MEMORIA DE SESIÓN + RAG DE ADJUNTOS (UNA SOLA LECTURA)
+// ====================================================================
+
+// 1) Memoria conversacional normal (sin file/file_chunk)
+$sessionMemory = buildSessionBaseContext($db_connection, $session_id, $sessionData);
+
+// 2) Texto de consulta para RAG de adjuntos
+$attachmentQueryText = trim((string)$text);
+if ($attachmentQueryText === '' && isset($compiled_prompt) && trim((string)$compiled_prompt) !== '') {
+    $attachmentQueryText = trim((string)$compiled_prompt);
+}
+
+// 3) Vector de pregunta: reutilizar si ya existe (RAG de proyecto), o generarlo aquí
+$precomputedQueryVector = (isset($queryVector) && is_array($queryVector) && !empty($queryVector))
+    ? $queryVector
+    : null;
+
+if (empty($precomputedQueryVector) && $attachmentQueryText !== '') {
+    try {
+        $embData = generateTitanEmbedding($bedrock, $attachmentQueryText, ATTACHMENT_EMBEDDING_MODEL);
+        if (!empty($embData['embedding'])) {
+            $precomputedQueryVector = $embData['embedding'];
             
-if (!empty($memBlocks)) {
-    $hasAttachments = false;
-    $sessionMemory = "=== CONTEXTO COMPLETO DE ESTA SESIÓN ===\n";
-    $sessionMemory .= "Incluye: conversación previa + archivos adjuntos indexados.\n\n";
-    
-    foreach ($memBlocks as $idx => $memBlock) {
-        $blockType = $memBlock['block_type'] ?? 'level_0';
-        
-        if ($blockType === 'file') {
-            $hasAttachments = true;
-            $sessionMemory .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-            $sessionMemory .= "📄 [RESUMEN SEMÁNTICO DE ARCHIVO ADJUNTO]\n";
-            $sessionMemory .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-            $sessionMemory .= $memBlock['content_preview'] . "\n\n";
-        } elseif ($blockType === 'file_chunk') {
-            $hasAttachments = true;
-            $sessionMemory .= "📎 [FRAGMENTO DE CÓDIGO/TEXTO ADJUNTO";
-            if (!empty($memBlock['s3_path'])) {
-                $filename = basename($memBlock['s3_path']);
-                $sessionMemory .= " - Archivo: {$filename}";
+            if (!empty($embData['inputTokens']) && $embData['inputTokens'] > 0) {
+                $attachmentLogMsgId = getValidMessageId($db_connection, $saved_user_text_id, $session_id);
+                logTokenUsage(
+                    $db_connection,
+                    $session_id,
+                    $attachmentLogMsgId,
+                    'rag',
+                    ATTACHMENT_EMBEDDING_MODEL,
+                    (int)$embData['inputTokens'],
+                    0
+                );
             }
-            $sessionMemory .= "]\n";
-            $sessionMemory .= $memBlock['content_preview'] . "\n\n";
-        } else {
-            $sessionMemory .= ($idx + 1) . ". " . mb_substr($memBlock['content_preview'], 0, 300) . "\n";
         }
+    } catch (Throwable $e) {
+        error_log('Error generando embedding para RAG de adjuntos: ' . $e->getMessage());
     }
 }
-        }
-    }
-    
 
-// Inyectar la memoria de sesión (UNA SOLA VEZ)
+// 4) Message ID válido para TokenUsage
+$attachmentLogMsgId = getValidMessageId($db_connection, $saved_user_text_id, $session_id);
+
+// 5) Construir contexto de adjuntos (modo rag o always)
+$attachmentContext = buildSessionAttachmentContext(
+    $db_connection,
+    $bedrock,
+    $session_id,
+    $attachmentQueryText,
+    $attachmentMode,
+    $precomputedQueryVector,
+    $attachmentLogMsgId
+);
+
+// 6) Inyectar memoria conversacional
 if (!empty($sessionMemory)) {
-    // Detectar si hay adjuntos en esta sesión
-    $hasFileBlocks = false;
-    foreach ($memBlocks as $mb) {
-        if (in_array($mb['block_type'], ['file', 'file_chunk'])) {
-            $hasFileBlocks = true;
-            break;
-        }
-    }
-    
-    $systemPrompt .= "\n\n[MEMORIA DE ESTA SESIÓN - SOLO ESTA, NO OTRAS]\n";
-    
-    if ($hasFileBlocks) {
-        // CASO 1: Sesión CON archivos adjuntos
-        $systemPrompt .= "Esta sección contiene:\n";
-        $systemPrompt .= "1. Temas de conversación previos\n";
-        $systemPrompt .= "2. Archivos adjuntos que el usuario ha subido e indexado\n\n";
-        $systemPrompt .= "INSTRUCCIONES CRÍTICAS SOBRE ARCHIVOS ADJUNTOS:\n";
-        $systemPrompt .= "- Si ves bloques marcados como [RESUMEN SEMÁNTICO DE ARCHIVO ADJUNTO] o [FRAGMENTO DE CÓDIGO/TEXTO ADJUNTO], ";
-        $systemPrompt .= "ese contenido proviene de archivos reales que el usuario subió a esta conversación.\n";
-        $systemPrompt .= "- Cuando el usuario pregunte sobre esos archivos, usa el contenido de esos bloques para responder.\n";
-        $systemPrompt .= "- Si el usuario pregunta '¿qué archivos he subido?' o '¿qué adjuntos tengo?', lista los nombres de archivo que veas en los bloques.\n";
-        $systemPrompt .= "- NUNCA digas 'no tengo información sobre ese archivo' si hay un bloque [FRAGMENTO] o [RESUMEN] correspondiente.\n\n";
-    } else {
-        // CASO 2: Sesión SIN archivos adjuntos (solo conversación)
-        $systemPrompt .= "El usuario ha consultado los siguientes temas en esta conversación. ";
-    }
-    
-    $systemPrompt .= "Si pregunta '¿qué he preguntado?' o '¿de qué hemos hablado?', responde EXCLUSIVAMENTE basándote en esta lista. ";
-    $systemPrompt .= "NO inventes temas. NO agregues información que no esté aquí:\n";
+    $systemPrompt .= "\n[MEMORIA DE ESTA SESIÓN - SOLO ESTA, NO OTRAS]\n";
+    $systemPrompt .= "Si pregunta '¿qué he preguntado?' o '¿de qué hemos hablado?', responde EXCLUSIVAMENTE basándote en esta memoria. No inventes temas:\n";
     $systemPrompt .= $sessionMemory;
+}
+
+// 7) Inyectar adjuntos solo si hubo contexto relevante
+if (!empty($attachmentContext)) {
+    $systemPrompt .= "\n[ARCHIVOS ADJUNTOS DE ESTA SESIÓN]\n";
+    $systemPrompt .= "El siguiente contenido proviene de archivos adjuntos reales de esta conversación. Úsalo solo si es relevante para la pregunta actual.\n";
+    $systemPrompt .= $attachmentContext;
 }
 
     // ✅ INSTRUCCIONES DEL PROYECTO (solo si la sesión tiene proyecto)

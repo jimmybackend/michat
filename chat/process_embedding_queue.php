@@ -704,53 +704,74 @@ $stmtData = $db_connection->prepare("
             }
 
 
-        // =====================================================
-        // ✅ NUEVO: bloques de archivos adjuntos (file/file_chunk)
-        // Se vectorizan DIRECTO, sin resumen Q&A de SMART MEMORY.
-        // =====================================================
-        $blockType = (string)($rowData['block_type'] ?? 'level_0');
+// =====================================================
+// ✅ Bloques de archivos adjuntos (file/file_chunk)
+// Se vectorizan DIRECTO, sin resumen Q&A de SMART MEMORY.
+// =====================================================
+$blockType = (string)($rowData['block_type'] ?? 'level_0');
 
-        if ($blockType === 'file' || $blockType === 'file_chunk') {
-            $fileText = (string)($rowData['content_preview'] ?? '');
-            if (trim($fileText) === '') {
-                throw new RuntimeException('Bloque de archivo sin contenido');
-            }
-            $fileText = mb_substr($fileText, 0, 30000);
+if ($blockType === 'file' || $blockType === 'file_chunk') {
+    $fileText = (string)($rowData['content_preview'] ?? '');
 
-            $embData = generateTitanEmbedding($bedrock, $fileText, $modelId);
-            if (empty($embData['embedding'])) {
-                throw new RuntimeException('Embedding de archivo vacío');
-            }
+    if (trim($fileText) === '') {
+        throw new RuntimeException('Bloque de archivo sin contenido');
+    }
 
-            $binary = floatsToBinaryBlob($embData['embedding']);
-            $json   = json_encode($embData['embedding']);
+    // generateTitanEmbedding() ya trunca inputText a 8000 para Titan.
+    $fileText = mb_substr($fileText, 0, 30000);
 
-            $stmtUpd = $db_connection->prepare("
-                UPDATE SessionContextBlocks
-                SET embedding = ?, embedding_json = ?, embedding_model = ?
-                WHERE id_ = ?
-            ");
-            $null = $binary;
-            $stmtUpd->bind_param('bssi', $null, $json, $modelId, $targetId);
-            $stmtUpd->send_long_data(0, $binary);
-            $stmtUpd->execute();
-            $stmtUpd->close();
+    $embData = generateTitanEmbedding($bedrock, $fileText, $modelId);
 
-            $upd = $db_connection->prepare("UPDATE EmbeddingJobs SET status = 'completed', attempts = ?, updated_at = NOW() WHERE id_ = ?");
-            $upd->bind_param('ii', $attempts, $jobId);
-            $upd->execute();
-            $upd->close();
+    if (empty($embData['embedding'])) {
+        throw new RuntimeException('Embedding de archivo vacío');
+    }
 
-            if ($sessionId && $tcMsgId !== null) {
-                logTokenUsage($db_connection, $sessionId, $tcMsgId, 'embedding', $modelId, $embData['inputTokens'], 0);
-            }
+    $binary = floatsToBinaryBlob($embData['embedding']);
+    $json   = json_encode($embData['embedding']);
 
-            $detail['status'] = 'completed_file';
-            $detail['dimensions'] = count($embData['embedding']);
-            $results['succeeded']++;
-            $results['details'][] = $detail;
-            continue;
-        }
+    $stmtUpd = $db_connection->prepare("
+        UPDATE SessionContextBlocks
+        SET embedding = ?, embedding_json = ?, embedding_model = ?
+        WHERE id_ = ?
+    ");
+
+    $null = $binary;
+    $stmtUpd->bind_param('bssi', $null, $json, $modelId, $targetId);
+    $stmtUpd->send_long_data(0, $binary);
+
+    if (!$stmtUpd->execute()) {
+        $err = $stmtUpd->error;
+        $stmtUpd->close();
+        throw new RuntimeException('Error guardando embedding de archivo: ' . $err);
+    }
+    $stmtUpd->close();
+
+    $upd = $db_connection->prepare("UPDATE EmbeddingJobs SET status = 'completed', attempts = ?, updated_at = NOW() WHERE id_ = ?");
+    $upd->bind_param('ii', $attempts, $jobId);
+    $upd->execute();
+    $upd->close();
+
+    // ✅ TokenUsage.message_id_ puede ser NULL en adjuntos.
+    if ($sessionId) {
+        logTokenUsage(
+            $db_connection,
+            $sessionId,
+            $tcMsgId,
+            'embedding',
+            $modelId,
+            (int)($embData['inputTokens'] ?? 0),
+            0
+        );
+    }
+
+    $detail['status'] = 'completed_file';
+    $detail['dimensions'] = count($embData['embedding']);
+    $detail['input_tokens'] = (int)($embData['inputTokens'] ?? 0);
+
+    $results['succeeded']++;
+    $results['details'][] = $detail;
+    continue;
+}
 
             // 3. FILTRO DE TRIVIALIDAD
             $isTrivial = (mb_strlen($question) < SMART_MEMORY_MIN_Q_LENGTH && mb_strlen($answer) < SMART_MEMORY_MIN_A_LENGTH);
