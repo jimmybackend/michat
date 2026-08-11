@@ -16,7 +16,8 @@
       notifyPoll: 'chat_notify_poll.php',
       markPrimordial: 'chat_mark_primordial.php', 
       getContext: 'get_context.php',
-      sessionFiles: 'chat2_session_files.php'
+      sessionFiles: 'chat2_session_files.php',
+      attachmentMode: 'session_attachment_mode.php'
     };
     const PROJECT_API = {
       list: 'projects.php',
@@ -790,6 +791,7 @@ function renderSessionsList() {
         renderMessages(j.messages || []);
         renderSessionsList();
         await loadSessionAttachments(id);
+        await loadAttachmentRagMode(id);
         setTimeout(() => wireCodeCopyButtons(el.messages), 0);
       } catch (e) {
         console.error(e);
@@ -835,7 +837,8 @@ const FILE_ENDPOINTS = {
   download:     'descargar.php',            // descarga con nombre visible
   delete:       'eliminar_archivo.php',     // borrado seguro (POST)
   indexFile:    'index_session_file.php',   // indexa en SessionContextBlocks + encola embedding
-  semanticFile: 'semantic_session_file.php' // resume con IA + guarda embedding inmediato
+  semanticFile: 'semantic_session_file.php', // resume con IA + guarda embedding inmediato
+   inspector:    'session_attachment_viewer.php' //stat de adjuntos 
 };
 
 const CODE_EXTS = ['php','phtml','inc','js','mjs','cjs','jsx','ts','tsx','css','scss','less',
@@ -959,6 +962,19 @@ async function processSessionFileAction(endpoint, fileId, label, btn) {
     btn.disabled = false;
     btn.innerHTML = originalHtml;
   }
+}
+
+// =====================================================================
+// INSPECTOR DE ADJUNTOS: Abre página con detalles de indexación
+// =====================================================================
+function openAttachmentInspector() {
+    if (!currentSessionId) {
+        showToast('⚠️ Sesión', 'Selecciona una conversación primero.', 'warning');
+        return;
+    }
+    
+    const url = FILE_ENDPOINTS.inspector + '?session_id=' + currentSessionId;
+    window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 function wireFileActions(container) {
@@ -2327,6 +2343,145 @@ if (btnRefreshContext) {
   startNotifyPoller();
 }());
 
+// =====================================================================
+// ✅ MODO DE ADJUNTOS POR SESIÓN (RAG / ALWAYS)
+// =====================================================================
+function getAttachmentModeCheckbox() {
+    return document.getElementById('chatAttachmentsRagMode');
+}
+
+async function loadAttachmentRagMode(sessionId) {
+    const checkbox = getAttachmentModeCheckbox();
+    if (!checkbox) return;
+
+    if (!sessionId || Number.isNaN(Number(sessionId))) {
+        checkbox.checked = true;
+        checkbox.disabled = true;
+        return;
+    }
+
+    try {
+        checkbox.disabled = true;
+
+        const qs = new URLSearchParams({
+            session_id: String(sessionId)
+        });
+
+        const r = await fetch(`${API.attachmentMode}?${qs.toString()}`, {
+            credentials: 'same-origin',
+            cache: 'no-cache'
+        });
+
+        const j = toJSONorThrow(await r.text(), r.status, 'Modo de adjuntos');
+
+        if (!r.ok || j.ok === false) {
+            throw new Error(j.error || `HTTP ${r.status}`);
+        }
+
+        // Por defecto usamos RAG.
+        checkbox.checked = (j.mode !== 'always');
+    } catch (e) {
+        console.error('Error cargando modo de adjuntos:', e);
+
+        // Si falla, dejamos RAG activo por seguridad/costo.
+        checkbox.checked = true;
+    } finally {
+        checkbox.disabled = false;
+    }
+}
+
+async function saveAttachmentRagMode(sessionId, mode) {
+    const checkbox = getAttachmentModeCheckbox();
+
+    if (!sessionId || Number.isNaN(Number(sessionId))) {
+        return;
+    }
+
+    if (!['rag', 'always'].includes(mode)) {
+        mode = 'rag';
+    }
+
+    try {
+        if (checkbox) checkbox.disabled = true;
+
+        const fd = new FormData();
+        fd.append('session_id', String(sessionId));
+        fd.append('mode', mode);
+
+        const r = await fetch(API.attachmentMode, {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: fd
+        });
+
+        const j = toJSONorThrow(await r.text(), r.status, 'Guardar modo de adjuntos');
+
+        if (!r.ok || j.ok === false) {
+            throw new Error(j.error || `HTTP ${r.status}`);
+        }
+
+        if (typeof showToast === 'function') {
+            if (mode === 'always') {
+                showToast(
+                    '📎 Adjuntos',
+                    'Se incluirán todos los adjuntos de la sesión.',
+                    'success'
+                );
+            } else {
+                showToast(
+                    '📎 Adjuntos',
+                    'Solo se incluirán adjuntos relevantes (RAG).',
+                    'success'
+                );
+            }
+        }
+    } catch (e) {
+        console.error('Error guardando modo de adjuntos:', e);
+
+        if (typeof showToast === 'function') {
+            showToast(
+                '⚠️ Error',
+                'No se pudo guardar el modo de adjuntos: ' + e.message,
+                'danger'
+            );
+        }
+
+        // Intentar restaurar el estado real desde el servidor.
+        try {
+            await loadAttachmentRagMode(sessionId);
+        } catch (_) {}
+    } finally {
+        if (checkbox) checkbox.disabled = false;
+    }
+}
+
+function wireAttachmentRagModeCheckbox() {
+    const checkbox = getAttachmentModeCheckbox();
+    if (!checkbox) return;
+
+    if (checkbox.dataset.wired === 'true') return;
+    checkbox.dataset.wired = 'true';
+
+    checkbox.addEventListener('change', async () => {
+        if (!currentSessionId) {
+            if (typeof showToast === 'function') {
+                showToast(
+                    '⚠️ Sesión',
+                    'Selecciona una conversación antes de cambiar este modo.',
+                    'warning'
+                );
+            }
+
+            checkbox.checked = true;
+            return;
+        }
+
+        const mode = checkbox.checked ? 'rag' : 'always';
+        await saveAttachmentRagMode(currentSessionId, mode);
+    });
+}
+
+wireAttachmentRagModeCheckbox();
 
 async function loadSessionAttachments(sessionId) {
   const target = el.sbSessionFiles;
@@ -2632,6 +2787,11 @@ function openSessionAttachmentsModal() {
       if (currentSessionId) loadSessionAttachments(currentSessionId);
     });
   }
+  // ✅ INSPECTOR DE ADJUNTOS
+    const btnInspector = document.getElementById('btnAttachmentInspector');
+    if (btnInspector) {
+        btnInspector.addEventListener('click', openAttachmentInspector);
+    }
   const btnUploadSessionFiles = document.getElementById('btnUploadSessionFiles');
   if (btnUploadSessionFiles) {
     btnUploadSessionFiles.addEventListener('click', uploadSessionFiles);
@@ -2642,6 +2802,313 @@ function openSessionAttachmentsModal() {
       alert('Funcionalidad de indexación pendiente de implementar');
     });
   }
+  
+// =====================================================================
+// 🧠 MEMORIA PROCEDURAL: Cargar, crear, editar, eliminar 
+// =====================================================================
+const PM_ENDPOINT = 'procedural_memory.php';
+
+const PM_TYPE_LABELS = {
+    rule: '📏 Regla',
+    preference: '🎨 Preferencia',
+    correction: '✏️ Corrección',
+    workflow: '🔄 Flujo',
+    pattern: '🔁 Patrón'
+};
+
+const PM_TYPE_COLORS = {
+    rule: 'var(--accent)',
+    preference: 'var(--ok)',
+    correction: 'var(--warn)',
+    workflow: 'var(--accent-2)',
+    pattern: 'var(--text-soft)'
+};
+
+async function loadProceduralMemories() {
+    const list = document.getElementById('pmList');
+    if (!list) return;
+
+    list.innerHTML = '<div style="text-align:center; color:var(--text-soft); padding:30px;"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>';
+
+    try {
+        const r = await fetch(PM_ENDPOINT + '?action=list', { credentials: 'same-origin' });
+        const j = await r.json();
+        if (!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
+
+        const memories = j.memories || [];
+
+        if (memories.length === 0) {
+            list.innerHTML = `
+                <div style="text-align:center; color:var(--text-soft); padding:40px 20px;">
+                    <i class="fas fa-brain" style="font-size:2rem; opacity:.3; display:block; margin-bottom:12px;"></i>
+                    <div style="font-size:0.9rem; font-weight:600; color:var(--text-strong);">Sin memorias procedurales</div>
+                    <div style="font-size:0.8rem; margin-top:6px;">
+                        Agrega reglas manualmente arriba, o la IA las detectará automáticamente
+                        conforme converses con ella.
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
+        list.innerHTML = memories.map(m => {
+            const typeLabel = PM_TYPE_LABELS[m.memory_type] || m.memory_type;
+            const typeColor = PM_TYPE_COLORS[m.memory_type] || 'var(--text-soft)';
+            const activeClass = m.is_active == 1 ? '' : 'opacity:.45;';
+            const activeLabel = m.is_active == 1 ? 'Activa' : 'Inactiva';
+            const activeIcon = m.is_active == 1 ? 'fa-toggle-on' : 'fa-toggle-off';
+            const dateStr = m.created_at ? new Date(m.created_at.replace(' ','T')).toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'}) : '';
+
+            return `
+            <div class="pm-card" data-id="${m.id_}" style="background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius,12px); padding:14px 16px; ${activeClass} transition:border-color .15s;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:999px; font-size:0.7rem; font-weight:700; background:rgba(var(--accent-rgb),.12); color:${typeColor}; border:1px solid ${typeColor};">
+                            ${typeLabel}
+                        </span>
+                        <span style="font-size:0.65rem; color:var(--text-soft);">
+                            <i class="fas fa-fire" style="color:var(--warn);"></i> Confianza: ${m.confidence}/10
+                        </span>
+                        <span style="font-size:0.65rem; color:var(--text-soft);">${dateStr}</span>
+                    </div>
+                    <div style="display:flex; gap:4px;">
+                        <button class="btn btn-sm pm-btn-toggle" data-id="${m.id_}" title="${m.is_active == 1 ? 'Desactivar' : 'Activar'}"
+                            style="border:none; background:none; color:${m.is_active == 1 ? 'var(--ok)' : 'var(--danger)'}; padding:2px 6px; cursor:pointer; font-size:0.85rem;">
+                            <i class="fas ${activeIcon}"></i>
+                        </button>
+                        <button class="btn btn-sm pm-btn-edit" data-id="${m.id_}" title="Editar"
+                            style="border:none; background:none; color:var(--accent); padding:2px 6px; cursor:pointer; font-size:0.85rem;">
+                            <i class="fas fa-pen"></i>
+                        </button>
+                        <button class="btn btn-sm pm-btn-delete" data-id="${m.id_}" title="Eliminar"
+                            style="border:none; background:none; color:var(--danger); padding:2px 6px; cursor:pointer; font-size:0.85rem;">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="pm-content" style="font-size:0.85rem; color:var(--text); line-height:1.5; white-space:pre-wrap;">${escapeHtml(m.content)}</div>
+                <div class="pm-edit-form" style="display:none; margin-top:10px;">
+                    <select class="form-control form-control-sm pm-edit-type" style="max-width:160px; margin-bottom:6px; background:var(--bg); border-color:var(--border); color:var(--text);">
+                        <option value="rule" ${m.memory_type==='rule'?'selected':''}>📏 Regla</option>
+                        <option value="preference" ${m.memory_type==='preference'?'selected':''}>🎨 Preferencia</option>
+                        <option value="correction" ${m.memory_type==='correction'?'selected':''}>✏️ Corrección</option>
+                        <option value="workflow" ${m.memory_type==='workflow'?'selected':''}>🔄 Flujo de trabajo</option>
+                        <option value="pattern" ${m.memory_type==='pattern'?'selected':''}>🔁 Patrón</option>
+                    </select>
+                    <textarea class="form-control form-control-sm pm-edit-content" rows="3"
+                        style="background:var(--bg); border-color:var(--border); color:var(--text); font-size:0.85rem;">${escapeHtml(m.content)}</textarea>
+                    <div style="text-align:right; margin-top:6px;">
+                        <button class="btn btn-sm pm-btn-cancel-edit" style="background:transparent; border:1px solid var(--border); color:var(--text-soft); margin-right:4px; font-size:0.75rem;">Cancelar</button>
+                        <button class="btn btn-sm pm-btn-save" data-id="${m.id_}" style="background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; font-size:0.75rem;">
+                            <i class="fas fa-check mr-1"></i>Guardar
+                        </button>
+                    </div>
+                </div>
+            </div>
+            `;
+        }).join('');
+
+        // Wire events
+        list.querySelectorAll('.pm-btn-edit').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const card = btn.closest('.pm-card');
+                const form = card.querySelector('.pm-edit-form');
+                const content = card.querySelector('.pm-content');
+                form.style.display = form.style.display === 'none' ? 'block' : 'none';
+                content.style.display = form.style.display === 'block' ? 'none' : 'block';
+            });
+        });
+
+        list.querySelectorAll('.pm-btn-cancel-edit').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const card = btn.closest('.pm-card');
+                card.querySelector('.pm-edit-form').style.display = 'none';
+                card.querySelector('.pm-content').style.display = 'block';
+            });
+        });
+
+        list.querySelectorAll('.pm-btn-save').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const card = btn.closest('.pm-card');
+                const id = btn.dataset.id;
+                const content = card.querySelector('.pm-edit-content').value.trim();
+                const type = card.querySelector('.pm-edit-type').value;
+
+                if (content.length < 10) {
+                    showToast('⚠️ Error', 'El contenido debe tener al menos 10 caracteres.', 'warning');
+                    return;
+                }
+
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+                try {
+                    const fd = new FormData();
+                    fd.append('action', 'update');
+                    fd.append('id', id);
+                    fd.append('content', content);
+                    fd.append('memory_type', type);
+                    fd.append('is_active', '1');
+
+                    const r = await fetch(PM_ENDPOINT, { method:'POST', credentials:'same-origin', body:fd });
+                    const j = await r.json();
+                    if (!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
+
+                    showToast('✅ Guardado', 'Memoria actualizada correctamente.', 'success');
+                    await loadProceduralMemories();
+                } catch (e) {
+                    showToast('⚠️ Error', e.message, 'danger');
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fas fa-check mr-1"></i>Guardar';
+                }
+            });
+        });
+
+        list.querySelectorAll('.pm-btn-toggle').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const card = btn.closest('.pm-card');
+                const id = btn.dataset.id;
+                const content = card.querySelector('.pm-content').textContent.trim();
+                const isActive = !card.style.opacity || card.style.opacity !== '0.45';
+
+                try {
+                    const fd = new FormData();
+                    fd.append('action', 'update');
+                    fd.append('id', id);
+                    fd.append('content', content);
+                    fd.append('memory_type', 'rule');
+                    fd.append('is_active', isActive ? '0' : '1');
+
+                    const r = await fetch(PM_ENDPOINT, { method:'POST', credentials:'same-origin', body:fd });
+                    const j = await r.json();
+                    if (!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
+
+                    showToast('✅ Actualizado', isActive ? 'Memoria desactivada.' : 'Memoria activada.', 'success');
+                    await loadProceduralMemories();
+                } catch (e) {
+                    showToast('⚠️ Error', e.message, 'danger');
+                }
+            });
+        });
+
+        list.querySelectorAll('.pm-btn-delete').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const id = btn.dataset.id;
+                if (!confirm('¿Eliminar esta memoria procedural? Esta acción no se puede deshacer.')) return;
+
+                btn.disabled = true;
+                try {
+                    const fd = new FormData();
+                    fd.append('action', 'delete');
+                    fd.append('id', id);
+
+                    const r = await fetch(PM_ENDPOINT, { method:'POST', credentials:'same-origin', body:fd });
+                    const j = await r.json();
+                    if (!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
+
+                    showToast('🗑️ Eliminado', 'Memoria eliminada.', 'success');
+                    await loadProceduralMemories();
+                } catch (e) {
+                    showToast('⚠️ Error', e.message, 'danger');
+                    btn.disabled = false;
+                }
+            });
+        });
+
+    } catch (e) {
+        console.error('Error cargando memorias:', e);
+        list.innerHTML = `<div style="text-align:center; color:var(--danger); padding:30px;">Error: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+// Abrir modal de memoria procedural
+const btnOpenPM = document.getElementById('btnOpenProceduralMemory');
+if (btnOpenPM) {
+    btnOpenPM.addEventListener('click', () => {
+        jQuery('#settings-modal').modal('hide');
+        jQuery('#modalProceduralMemory').modal('show');
+        loadProceduralMemories();
+    });
+}
+
+// Agregar nueva memoria
+const pmBtnAdd = document.getElementById('pmBtnAdd');
+if (pmBtnAdd) {
+    pmBtnAdd.addEventListener('click', async () => {
+        const contentEl = document.getElementById('pmNewContent');
+        const typeEl = document.getElementById('pmNewType');
+        const content = contentEl ? contentEl.value.trim() : '';
+        const type = typeEl ? typeEl.value : 'rule';
+
+        if (content.length < 10) {
+            showToast('⚠️ Error', 'Escribe al menos 10 caracteres.', 'warning');
+            if (contentEl) contentEl.focus();
+            return;
+        }
+
+        pmBtnAdd.disabled = true;
+        pmBtnAdd.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+        try {
+            const fd = new FormData();
+            fd.append('action', 'create');
+            fd.append('content', content);
+            fd.append('memory_type', type);
+
+            const r = await fetch(PM_ENDPOINT, { method:'POST', credentials:'same-origin', body:fd });
+            const j = await r.json();
+            if (!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
+
+            showToast('✅ Creada', 'Memoria procedural agregada.', 'success');
+            if (contentEl) contentEl.value = '';
+            await loadProceduralMemories();
+        } catch (e) {
+            showToast('⚠️ Error', e.message, 'danger');
+        } finally {
+            pmBtnAdd.disabled = false;
+            pmBtnAdd.innerHTML = '<i class="fas fa-save mr-1"></i> Agregar';
+        }
+    });
+}
+
+// =====================================================================
+// 🔄 FORZAR RE-ANÁLISIS DE MEMORIA PROCEDURAL
+// =====================================================================
+const btnForceProcedural = document.getElementById('btnForceProceduralExtraction');
+if (btnForceProcedural) {
+    btnForceProcedural.addEventListener('click', async () => {
+        const statusEl = document.getElementById('proceduralExtractionStatus');
+        btnForceProcedural.disabled = true;
+        btnForceProcedural.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Analizando...';
+        if (statusEl) statusEl.textContent = 'Analizando todas tus sesiones para detectar patrones...';
+
+        try {
+            const fd = new FormData();
+            const r = await fetch('force_procedural_extraction.php', {
+                method: 'POST',
+                credentials: 'same-origin',
+                body: fd
+            });
+            const j = await r.json();
+            if (!r.ok || !j.ok) throw new Error(j.error || 'HTTP ' + r.status);
+
+            showToast('✅ Análisis completado', j.mensaje, 'success');
+            if (statusEl) statusEl.textContent = j.mensaje;
+
+            // Recargar la lista si el modal está abierto
+            const pmList = document.getElementById('pmList');
+            if (pmList && pmList.offsetParent !== null) {
+                await loadProceduralMemories();
+            }
+        } catch (e) {
+            showToast('⚠️ Error', e.message, 'danger');
+            if (statusEl) statusEl.textContent = 'Error: ' + e.message;
+        } finally {
+            btnForceProcedural.disabled = false;
+            btnForceProcedural.innerHTML = '<i class="fas fa-sync-alt mr-1"></i> Re-analizar todas las sesiones';
+        }
+    });
+}
 
 // =====================================================================
 // UTILIDADES EXPORTADAS PARA OTROS MÓDULOS
