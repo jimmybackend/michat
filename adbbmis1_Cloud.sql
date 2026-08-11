@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: localhost:3306
--- Tiempo de generación: 10-08-2026 a las 12:55:07
+-- Tiempo de generación: 11-08-2026 a las 14:52:44
 -- Versión del servidor: 8.0.46-37
 -- Versión de PHP: 8.4.24
 
@@ -421,6 +421,24 @@ CREATE TABLE `ToolCalls` (
 -- --------------------------------------------------------
 
 --
+-- Estructura de tabla para la tabla `UserProceduralMemory`
+--
+
+CREATE TABLE `UserProceduralMemory` (
+  `id_` bigint UNSIGNED NOT NULL,
+  `user_id_` int NOT NULL,
+  `memory_type` enum('preference','rule','pattern','correction','workflow') NOT NULL DEFAULT 'rule',
+  `content` text NOT NULL COMMENT 'La regla o patrón detectado',
+  `source_session_id` int DEFAULT NULL COMMENT 'Sesión donde se detectó',
+  `confidence` tinyint UNSIGNED NOT NULL DEFAULT '1' COMMENT 'Veces que se ha observado este patrón',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Estructura de tabla para la tabla `Users`
 --
 
@@ -637,6 +655,15 @@ ALTER TABLE `ToolCalls`
   ADD KEY `idx_tc_loop_detect` (`session_id_`,`tool`,`params_hash`,`created_at`);
 
 --
+-- Indices de la tabla `UserProceduralMemory`
+--
+ALTER TABLE `UserProceduralMemory`
+  ADD PRIMARY KEY (`id_`),
+  ADD KEY `idx_upm_user` (`user_id_`),
+  ADD KEY `idx_upm_type_active` (`memory_type`,`is_active`),
+  ADD KEY `fk_upm_session` (`source_session_id`);
+
+--
 -- Indices de la tabla `Users`
 --
 ALTER TABLE `Users`
@@ -761,6 +788,12 @@ ALTER TABLE `ToolCalls`
   MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT de la tabla `UserProceduralMemory`
+--
+ALTER TABLE `UserProceduralMemory`
+  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT de la tabla `Users`
 --
 ALTER TABLE `Users`
@@ -877,6 +910,13 @@ ALTER TABLE `TokenUsage`
 ALTER TABLE `ToolCalls`
   ADD CONSTRAINT `fk_tc_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE CASCADE,
   ADD CONSTRAINT `fk_tc_session` FOREIGN KEY (`session_id_`) REFERENCES `ChatSessions` (`id_`) ON DELETE CASCADE;
+
+--
+-- Filtros para la tabla `UserProceduralMemory`
+--
+ALTER TABLE `UserProceduralMemory`
+  ADD CONSTRAINT `fk_upm_session` FOREIGN KEY (`source_session_id`) REFERENCES `ChatSessions` (`id_`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_upm_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE CASCADE;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
