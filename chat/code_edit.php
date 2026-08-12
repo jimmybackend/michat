@@ -12,10 +12,21 @@
  */
 
 header('Content-Type: application/json; charset=utf-8');
-if (session_status() === PHP_SESSION_NONE) session_start();
 
-@ini_set('max_execution_time', '300');
-@set_time_limit(300);
+if (ob_get_level() === 0) {
+    ob_start();
+}
+
+ini_set('display_errors', '0');
+error_reporting(E_ALL);
+ini_set('log_errors', '1');
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+@ini_set('max_execution_time', '600');
+@set_time_limit(600);
 
 // ===== 0. Exigir sesión autenticada (antes: se usaba user_id=1 como fallback silencioso) =====
 if (empty($_SESSION['user_id'])) {
@@ -26,10 +37,15 @@ if (empty($_SESSION['user_id'])) {
 $userId = (int) $_SESSION['user_id'];
 
 function jexit($arr, $code = 200) {
+    if (ob_get_length() > 0) {
+        ob_clean();
+    }
+
     http_response_code($code);
     echo json_encode($arr, JSON_UNESCAPED_UNICODE);
     exit;
 }
+
 
 // ===== FUNCIÓN AUXILIAR PARA OBTENER EL SIGUIENTE ID (Faltaba en este archivo) =====
 function next_id(mysqli $db, string $table, string $col): int {
@@ -241,12 +257,42 @@ if ($action === 'delete') {
     ]);
 }
 
+// ===== FUNCIÓN AUXILIAR PARA NORMALIZAR CÓDIGO PHP =====
+function normalizePhpCode(string $code): string {
+    // Detectar si hay declare(strict_types=1) mal posicionado
+    if (preg_match('/declare\s*\(\s*strict_types\s*=\s*1\s*\)\s*;/i', $code)) {
+        // Eliminar todas las ocurrencias de declare(strict_types=1)
+        $code = preg_replace('/declare\s*\(\s*strict_types\s*=\s*1\s*\)\s*;/i', '', $code);
+        
+        // Buscar la apertura de <?php
+        if (preg_match('/^(<\?php\s*)/i', $code, $matches)) {
+            // Insertar declare(strict_types=1) inmediatamente después de <?php
+            $code = preg_replace(
+                '/^(<\?php\s*)/i',
+                '$1' . "\n" . 'declare(strict_types=1);' . "\n",
+                $code,
+                1
+            );
+        }
+    }
+    
+    // Limpiar múltiples líneas en blanco al inicio
+    $code = preg_replace('/^(\s*\n){2,}/', "\n", $code);
+    
+    return $code;
+}
+
 // ===== 5. FUNCIÓN DE LINTING AVANZADO + MULTI-LENGUAJE + SEGURIDAD =====
 function lintCode(string $code, string $filename): array {
     $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    
+    // ✅ FIX: Normalizar código PHP antes del linting
+    if ($ext === 'php') {
+        $code = normalizePhpCode($code);
+    }
+    
     $tmpFile = tempnam(sys_get_temp_dir(), 'lint_') . '.' . $ext;
     file_put_contents($tmpFile, $code);
-
     $output = [];
     $returnCode = 0;
     $advancedErrors = [];
@@ -261,7 +307,6 @@ function lintCode(string $code, string $filename): array {
     } elseif ($ext === 'py') {
         exec("python3 -m py_compile " . escapeshellarg($tmpFile) . " 2>&1", $output, $returnCode);
     } elseif ($ext === 'sql') {
-        // Validación básica de SQL (puedes integrar sqlflint si lo tienes)
         $returnCode = (stripos($code, 'SELECT') === false && stripos($code, 'INSERT') === false && stripos($code, 'UPDATE') === false) ? 1 : 0;
         if ($returnCode !== 0) $output[] = "Posible sintaxis SQL inválida o incompleta.";
     }
@@ -625,35 +670,55 @@ function injectImports(string $originalContent, string $currentContent, array $n
 
 // ===== 7. CLASIFICADOR DE COMPLEJIDAD (usa Nova Micro) =====
 function classifyInstruction(string $instruction, $bedrock, mysqli $db, int $sessionId, int $newVersionId): string {
+    // ✅ NUEVO: Detectar si la instrucción requiere precisión quirúrgica
+    $precisionKeywords = [
+        'solo cambia', 'solo modifica', 'solo actualiza',
+        'únicamente cambia', 'únicamente modifica',
+        'no cambies nada más', 'no modifiques nada más',
+        'solo el parámetro', 'solo la firma', 'solo el tipo',
+        'only change', 'just modify', 'don\'t change anything else',
+        'cambia el parámetro', 'cambia la firma', 'cambia el tipo'
+    ];
+    
+    $requiresPrecision = false;
+    $instructionLower = mb_strtolower($instruction);
+    foreach ($precisionKeywords as $keyword) {
+        if (mb_strpos($instructionLower, $keyword) !== false) {
+            $requiresPrecision = true;
+            break;
+        }
+    }
+    
     $classifyPrompt = "Clasifica esta tarea de edición de código en una de estas categorías y responde SÓLO con la palabra clave:
 - 'simple': cambios menores, corrección de errores, ajustes de una línea.
 - 'medium': añadir funciones, modificar lógica moderada.
 - 'complex': reescribir clases enteras, cambiar arquitectura, refactorización pesada.
-Instrucción: " . $instruction;
 
+Instrucción: " . $instruction;
+    
     try {
         $res = $bedrock->converse([
             'modelId' => 'amazon.nova-micro-v1:0',
             'messages' => [['role' => 'user', 'content' => [['text' => $classifyPrompt]]]],
             'inferenceConfig' => ['maxTokens' => 50, 'temperature' => 0.1]
         ]);
-
+        
         $inputTokens = (int)($res['usage']['inputTokens'] ?? 0);
         $outputTokens = (int)($res['usage']['outputTokens'] ?? 0);
+        
         try {
             $tcId = next_id($db, 'TokenUsage', 'id_');
             $tcPhase = 'lint_fix';
             $tcModel = 'amazon.nova-micro-v1:0';
-            $costIn = 0.000035; 
+            $costIn = 0.000035;
             $costOut = 0.00014;
-            
             $tcCost = ($inputTokens / 1000 * $costIn) + ($outputTokens / 1000 * $costOut);
             
-            $sqlTC = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) 
+            $sqlTC = "INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms)
                       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)";
             $stmtTC = $db->prepare($sqlTC);
             if ($stmtTC) {
-                $durationMs = 0; // ✅ CORRECCIÓN: Variable en lugar de 0
+                $durationMs = 0;
                 $stmtTC->bind_param("iissiddi", $tcId, $sessionId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $durationMs);
                 $stmtTC->execute();
                 $stmtTC->close();
@@ -662,20 +727,30 @@ Instrucción: " . $instruction;
             $logMsg = "[" . date('Y-m-d H:i:s') . "] " . basename(__FILE__) . " | " . $e->getMessage() . "\n";
             @file_put_contents(__DIR__ . '/token_usage_debug.log', $logMsg, FILE_APPEND | LOCK_EX);
         }
-
+        
         $text = '';
         foreach (($res['output']['message']['content'] ?? []) as $block) {
             if (isset($block['text'])) {
                 $text .= $block['text'];
             }
         }
+        
         $category = trim(strtolower($text));
         if (!in_array($category, ['simple', 'medium', 'complex'])) {
-            return 'medium';
+            $category = 'medium';
         }
+        
+        // ✅ NUEVO: Si requiere precisión quirúrgica, forzar categoría 'medium' o superior
+        // para que use modelos más capaces (nova-pro, haiku, sonnet) en lugar de nova-micro
+        if ($requiresPrecision && $category === 'simple') {
+            $category = 'medium';
+            error_log("⚠️ Instrucción requiere precisión quirúrgica. Forzando categoría 'medium' para usar modelos más capaces.");
+        }
+        
         return $category;
+        
     } catch (Throwable $e) {
-        return 'medium';
+        return $requiresPrecision ? 'medium' : 'medium';
     }
 }
 
@@ -926,10 +1001,8 @@ RULES:
                     'inferenceConfig' => ['maxTokens' => 4000, 'temperature' => 0.2, 'topP' => 0.9]
                 ]);
 
-                // Registro de costos (igual que en tu código original)
                 $inputTokens = (int)($res['usage']['inputTokens'] ?? 0);
                 $outputTokens = (int)($res['usage']['outputTokens'] ?? 0);
-                // ... (Aquí va tu bloque de INSERT INTO TokenUsage que ya tienes, cópialo tal cual) ...
                 $tcId = next_id($db_connection, 'TokenUsage', 'id_');
                 $tcPhase = 'respond';
                 $tcModel = $tier['model'];
@@ -940,7 +1013,7 @@ RULES:
                 elseif (strpos($tcModel, 'nova-pro') !== false) { $costIn = 0.0008; $costOut = 0.0032; }
                 $tcCost = ($inputTokens / 1000 * $costIn) + ($outputTokens / 1000 * $costOut);
                 $stmtTC = $db_connection->prepare("INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)");
-                $durationMs = 0; // ✅ CORRECCIÓN: Variable en lugar de 0
+                $durationMs = 0;
                 if($stmtTC){ $stmtTC->bind_param("iissiddi", $tcId, $sessionId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $durationMs); $stmtTC->execute(); $stmtTC->close(); }
 
                 $rawResponse = '';
@@ -948,10 +1021,8 @@ RULES:
                     if (isset($block['text'])) $rawResponse .= $block['text'];
                 }
                 
-                // Limpiar posibles backticks de markdown que la IA haya puesto por error
                 $newContent = cleanMarkdown($rawResponse);
 
-                // Lint del archivo completo generado
                 $lintResult = lintCode($newContent, $targetFilename);
                 $attemptLog[] = ['model' => $tier['model'], 'attempt' => $i + 1, 'success' => $lintResult['success'], 'error' => $lintResult['error'], 'scout_target' => 'NEW_FILE_CREATION'];
                 $stmtLint = $db_connection->prepare("INSERT INTO LintAttempts (file_version_id_, attempt_number, model_used, error_message, is_success, duration_ms) VALUES (?, ?, ?, ?, ?, ?)");
@@ -961,11 +1032,15 @@ RULES:
                 $stmtLint->bind_param("iissii", $newVersionId, $attemptNum, $tier['model'], $lintResult['error'], $isSuccess, $durationMs);
                 $stmtLint->execute(); 
                 $stmtLint->close();
-                
+
+                // ✅ CORREGIDO: En modo creación, $newContent YA contiene el código generado.
+                // No hay $reassembledContent aquí.
                 if ($lintResult['success']) {
                     $success = true;
-                    break 2; // Éxito
+                    // $newContent ya tiene el valor correcto, no reasignar
+                    break 2;
                 }
+
                 $lastError = $lintResult['error'];
                 if (preg_match('/undefined method|type mismatch|cannot resolve|fatal error/i', $lastError)) break;
             }
@@ -975,23 +1050,27 @@ RULES:
         // ✅ MODO EDICIÓN: Patrón SCOUT → EXTRACT → EDIT → REASSEMBLE
         // =====================================================================
         
-        // 🚀 NUEVO: Análisis de Contexto Multi-Archivo (RAG de Código)
         $relatedContext = fetchRelatedContext($db_connection, $projectId, $instruction, $bedrock, $sessionId, $newVersionId);
         
         $scoutResult = scoutCodeBlock($currentContent, $instruction, $bedrock, $db_connection, $sessionId, $newVersionId);
         $contextInfo = extractContext($currentContent, $scoutResult['start_line'], $scoutResult['end_line'], 15);
-        
+    
         $systemPromptEditor = "You are an expert surgical code editor. Your task is to modify ONLY the provided code snippet according to the user's instruction.
 RULES:
 1. Return ONLY the modified snippet. Do NOT return the entire file.
 2. 🚀 If your modification introduces NEW classes/interfaces that require `use` statements, list them at the VERY TOP of your response, each on a new line, prefixed with `// @@IMPORT@@ ` (e.g., `// @@IMPORT@@ use App\\Services\\UserService;`).
 3. Wrap the actual code modification EXCLUSIVELY between these markers: // @@START_EDIT@@ and // @@END_EDIT@@
 4. Preserve exact indentation, variable names, and structure of the surrounding context.
-5. Use the PROVIDED RELATED PROJECT CONTEXT to ensure your edits are compatible with existing classes, methods, or variables.";
-
+5. Use the PROVIDED RELATED PROJECT CONTEXT to ensure your edits are compatible with existing classes, methods, or variables.
+6. 🛡️ CRITICAL - ANTI-HALLUCINATION RULES:
+   - NEVER rename functions, methods, classes, or variables UNLESS the user explicitly asks to rename them.
+   - NEVER add new methods, properties, or logic UNLESS the user explicitly asks for them.
+   - If the user says 'only change X', 'just modify X', 'don't change anything else', you MUST change ONLY that specific element and leave everything else EXACTLY as it is.
+   - If the user asks to change a parameter type (e.g., 'float \$x' to 'mixed \$x'), change ONLY the type declaration, not the parameter name, not the method name, not the return type, not the body.
+   - If you're unsure whether a change is requested, DO NOT make it. Preserve the original code.";
+   
         foreach ($ladder as $tier) {
             for ($i = 0; $i < $tier['max_attempts']; $i++) {
-                // 🚀 Inyectamos el contexto relacionado si existe
                 $contextBlock = $relatedContext !== '' ? "\n\n📚 RELATED PROJECT CONTEXT:\n{$relatedContext}" : "";
                 
                 $userPrompt = "FILE: {$source['filename']}\nBLOQUE A MODIFICAR (Líneas {$scoutResult['start_line']} a {$scoutResult['end_line']}):\n{$contextInfo['snippet']}{$contextBlock}\nUSER INSTRUCTION:\n{$instruction}";
@@ -1007,7 +1086,6 @@ RULES:
                     'inferenceConfig' => ['maxTokens' => 2000, 'temperature' => 0.1, 'topP' => 0.9]
                 ]);
 
-                // Registro de costos (copia tu bloque original de TokenUsage aquí)
                 $inputTokens = (int)($res['usage']['inputTokens'] ?? 0);
                 $outputTokens = (int)($res['usage']['outputTokens'] ?? 0);
                 $tcId = next_id($db_connection, 'TokenUsage', 'id_');
@@ -1019,7 +1097,7 @@ RULES:
                 elseif (strpos($tcModel, 'nova-pro') !== false) { $costIn = 0.0008; $costOut = 0.0032; }
                 $tcCost = ($inputTokens / 1000 * $costIn) + ($outputTokens / 1000 * $costOut);
                 $stmtTC = $db_connection->prepare("INSERT INTO TokenUsage (id_, session_id_, message_id_, phase, model_id, input_tokens, output_tokens, estimated_cost_usd, duration_ms) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)");
-                $durationMs = 0; // ✅ CORRECCIÓN: Variable en lugar de 0
+                $durationMs = 0;
                 if($stmtTC){ $stmtTC->bind_param("iissiddi", $tcId, $sessionId, $tcPhase, $tcModel, $inputTokens, $outputTokens, $tcCost, $durationMs); $stmtTC->execute(); $stmtTC->close(); }
 
                 $rawResponse = '';
@@ -1027,39 +1105,68 @@ RULES:
                     if (isset($block['text'])) $rawResponse .= $block['text'];
                 }
 
-                // 🚀 NUEVO: Extraer y procesar los imports solicitados por la IA
                 $newImports = [];
                 if (preg_match_all('/\/\/\s*@@IMPORT@@\s+(use\s+[^;]+;)/i', $rawResponse, $importMatches)) {
                     $newImports = $importMatches[1];
-                    // Limpiar la respuesta de los marcadores de importación para que no ensucien el código
                     $rawResponse = preg_replace('/\/\/\s*@@IMPORT@@\s+use\s+[^;]+;\s*/i', '', $rawResponse);
                 }
 
                 $reassembledContent = reassembleFile($currentContent, $contextInfo['absolute_start'], $contextInfo['absolute_end'], $rawResponse);
                 
-                // 🚀 NUEVO: Inyectar los imports faltantes en el archivo reensamblado
                 if (!empty($newImports)) {
                     $reassembledContent = injectImports($currentContent, $reassembledContent, $newImports);
                 }
 
-                
                 $lintResult = lintCode($reassembledContent, $targetFilename);
                 
                 $attemptLog[] = ['model' => $tier['model'], 'attempt' => $i + 1, 'success' => $lintResult['success'], 'error' => $lintResult['error'], 'scout_target' => $scoutResult['target_name'], 'lines_edited' => ($contextInfo['absolute_end'] - $contextInfo['absolute_start'] + 1)];
                 
-                // ✅ CORRECCIÓN: bind_param() exige variables por referencia, no expresiones
                 $attemptNum = $i + 1;
                 $isSuccess = $lintResult['success'] ? 1 : 0;
                 $durationMs = 0;
                 $stmtLint = $db_connection->prepare("INSERT INTO LintAttempts (file_version_id_, attempt_number, model_used, error_message, is_success, duration_ms) VALUES (?, ?, ?, ?, ?, ?)");
                 $stmtLint->bind_param("iissii", $newVersionId, $attemptNum, $tier['model'], $lintResult['error'], $isSuccess, $durationMs);
-                $stmtLint->execute(); $stmtLint->close();
+                $stmtLint->execute(); 
+                $stmtLint->close();
+
+                // ✅ NUEVO: Validación de cambios mínimos (anti-alucinación)
+                // SOLO en modo EDICIÓN, donde $currentContent tiene el archivo original
+                if ($lintResult['success'] && (
+                    stripos($instruction, 'solo cambia') !== false || 
+                    stripos($instruction, 'no cambies nada más') !== false ||
+                    stripos($instruction, 'only change') !== false ||
+                    stripos($instruction, 'just modify') !== false ||
+                    stripos($instruction, "don't change anything else") !== false
+                )) {
+                    $originalLines = explode("\n", $currentContent);
+                    $newLines = explode("\n", $reassembledContent);
+                    
+                    $changedLines = 0;
+                    $maxLines = max(count($originalLines), count($newLines));
+                    
+                    for ($j = 0; $j < $maxLines; $j++) {
+                        $origLine = $originalLines[$j] ?? '';
+                        $newLine = $newLines[$j] ?? '';
+                        if (trim($origLine) !== trim($newLine)) {
+                            $changedLines++;
+                        }
+                    }
+                    
+                    if ($maxLines > 0) {
+                        $changePercentage = ($changedLines / $maxLines) * 100;
+                        
+                        if ($changePercentage > 10) {
+                            error_log("⚠️ ADVERTENCIA ANTI-ALUCINACIÓN: La instrucción pedía cambios mínimos, pero se modificó " . round($changePercentage, 1) . "% del archivo ({$changedLines} de {$maxLines} líneas). Posible alucinación de la IA. Modelo: {$tier['model']}, Intento: " . ($i + 1));
+                        }
+                    }
+                }
 
                 if ($lintResult['success']) {
                     $success = true;
-                    $newContent = $reassembledContent;
+                    $newContent = $reassembledContent; // ✅ CORRECTO: aquí $reassembledContent SÍ existe
                     break 2;
                 }
+                
                 $lastError = $lintResult['error'];
                 if (preg_match('/undefined method|type mismatch|cannot resolve|fatal error/i', $lastError)) break;
             }
@@ -1080,66 +1187,151 @@ if (!$success) {
 }
 
 // ===== 14. Éxito: Subir a S3 y Registrar en BD (Incluye sync con FileS3 y S3Folders) =====
-// ✅ CORRECCIÓN: se envuelven todas las escrituras de este bloque en una transacción
-// para que, si algo falla a mitad de camino, no queden registros huérfanos
-// (p. ej. ProjectSources actualizado pero FileS3 sin sincronizar).
-$db_connection->begin_transaction();
+// ✅ FIX: preparar BD antes de escribir S3, y compensar S3 si la BD falla después.
+$warnings = [];
+$s3Saved = false;
+$dbCommitted = false;
+$backupS3Key = null;
+$originalS3Key = $source['s3_key'];
+
 try {
-    $originalS3Key = $source['s3_key'];
-    
-    // Detectar MIME type y lenguaje básico
     $ext = strtolower(pathinfo($targetFilename, PATHINFO_EXTENSION));
-    $mimeMap = ['php' => 'text/x-php', 'js' => 'application/javascript', 'html' => 'text/html', 'css' => 'text/css', 'py' => 'text/x-python'];
+    $mimeMap = [
+        'php' => 'text/x-php',
+        'js' => 'application/javascript',
+        'html' => 'text/html',
+        'css' => 'text/css',
+        'py' => 'text/x-python'
+    ];
     $mimeType = $mimeMap[$ext] ?? 'text/plain';
     $lang = $ext === 'php' ? 'php' : ($ext === 'js' ? 'javascript' : $ext);
+    $fileSize = strlen($newContent);
 
-// 14a. Actualizar o Crear en ProjectSources
-if ($isCreation) {
-    // 1. Verificamos si ya existe un registro "zombie" en la BD para este proyecto y ruta
-    $stmtCheck = $db_connection->prepare("SELECT id_ FROM ProjectSources WHERE project_id_ = ? AND s3_key = ? LIMIT 1");
-    $stmtCheck->bind_param("is", $projectId, $originalS3Key);
-    $stmtCheck->execute();
-    $resCheck = $stmtCheck->get_result();
-    $existingSource = $resCheck->fetch_assoc();
-    $stmtCheck->close();
+    $db_connection->begin_transaction();
 
-    $sizeBytes = strlen($newContent);
+    // 14a. Actualizar o Crear en ProjectSources ANTES de putObject.
+    if ($isCreation) {
+        $stmtCheck = $db_connection->prepare("SELECT id_ FROM ProjectSources WHERE project_id_ = ? AND s3_key = ? LIMIT 1");
+        $stmtCheck->bind_param("is", $projectId, $originalS3Key);
+        $stmtCheck->execute();
+        $resCheck = $stmtCheck->get_result();
+        $existingSource = $resCheck->fetch_assoc();
+        $stmtCheck->close();
 
-    if ($existingSource) {
-        // ✅ Es un archivo zombie: Actualizamos el registro existente en lugar de insertar uno nuevo
-        $sourceId = $existingSource['id_'];
-        $stmtUpdateSource = $db_connection->prepare("
-            UPDATE ProjectSources 
-            SET filename = ?, mime_type = ?, size_bytes = ?, language = ?, status = 'indexed', indexed_at = NOW()
-            WHERE id_ = ?
-        ");
-        $stmtUpdateSource->bind_param("ssisi", $targetFilename, $mimeType, $sizeBytes, $lang, $sourceId);
-        $stmtUpdateSource->execute();
-        $stmtUpdateSource->close();
-        $source['id_'] = $sourceId;
+        if ($existingSource) {
+            // Archivo zombie en BD: actualizar registro existente.
+            $sourceId = $existingSource['id_'];
+
+            $stmtUpdateSource = $db_connection->prepare("
+                UPDATE ProjectSources
+                SET filename = ?, mime_type = ?, size_bytes = ?, language = ?, status = 'indexed', indexed_at = NOW()
+                WHERE id_ = ?
+            ");
+            $stmtUpdateSource->bind_param("ssisi", $targetFilename, $mimeType, $fileSize, $lang, $sourceId);
+            $stmtUpdateSource->execute();
+            $stmtUpdateSource->close();
+
+            $source['id_'] = $sourceId;
+        } else {
+            $newSourceId = next_id($db_connection, 'ProjectSources', 'id_');
+
+            $stmtInsertSource = $db_connection->prepare("
+                INSERT INTO ProjectSources (id_, project_id_, files3_id_, s3_key, filename, mime_type, size_bytes, language, sha256, status, indexed_at)
+                VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, 'indexed', NOW())
+            ");
+            $stmtInsertSource->bind_param("iisssis", $newSourceId, $projectId, $originalS3Key, $targetFilename, $mimeType, $fileSize, $lang);
+            $stmtInsertSource->execute();
+            $stmtInsertSource->close();
+
+            $source['id_'] = $newSourceId;
+        }
     } else {
-        // ✅ Realmente es una creación desde cero: Insertamos normal
-        $newSourceId = next_id($db_connection, 'ProjectSources', 'id_');
-        $stmtInsertSource = $db_connection->prepare("
-            INSERT INTO ProjectSources (id_, project_id_, files3_id_, s3_key, filename, mime_type, size_bytes, language, sha256, status, indexed_at)
-            VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, 'indexed', NOW())
-        ");
-        $stmtInsertSource->bind_param("iisssis", $newSourceId, $projectId, $originalS3Key, $targetFilename, $mimeType, $sizeBytes, $lang);
-        $stmtInsertSource->execute();
-        $stmtInsertSource->close();
-        $source['id_'] = $newSourceId;
-    }
-} else {
         $backupS3Key = preg_replace('/(\.[a-zA-Z0-9]+)$/i', '.ver0$1', $originalS3Key);
-        $s3->copyObject(['Bucket' => $bucket, 'CopySource' => urlencode($bucket . '/' . $originalS3Key), 'Key' => $backupS3Key]);
-        
+
+        $s3->copyObject([
+            'Bucket' => $bucket,
+            'CopySource' => urlencode($bucket . '/' . $originalS3Key),
+            'Key' => $backupS3Key
+        ]);
+
         $updSource = $db_connection->prepare("UPDATE ProjectSources SET status = 'stale' WHERE id_ = ?");
         $updSource->bind_param('i', $source['id_']);
         $updSource->execute();
         $updSource->close();
     }
 
-    // 14b. Subir el archivo oficial a S3
+    // =====================================================================
+    // 14c. SINCRONIZACIÓN CON TABLAS LEGACY (FileS3 y S3Folders)
+    // Se hace ANTES del putObject para poder hacer rollback si falla.
+    // =====================================================================
+    $filename = basename($originalS3Key);
+    $folderPrefix = dirname($originalS3Key);
+    if ($folderPrefix === '.') {
+        $folderPrefix = '';
+    }
+
+    $encriptadoVal = hash('sha256', $userId . '|' . $originalS3Key);
+
+    // A) Sincronizar Carpeta (S3Folders)
+    if ($folderPrefix !== '') {
+        $stmtFolder = $db_connection->prepare("SELECT id_ FROM S3Folders WHERE user_id_ = ? AND Prefix = ? LIMIT 1");
+        $stmtFolder->bind_param("is", $userId, $folderPrefix);
+        $stmtFolder->execute();
+        $resFolder = $stmtFolder->get_result();
+
+        if ($resFolder->num_rows === 0) {
+            $newFolderId = next_id($db_connection, 'S3Folders', 'id_');
+            $folderName = basename($folderPrefix);
+            $parentPrefix = dirname($folderPrefix);
+            if ($parentPrefix === '.') {
+                $parentPrefix = '';
+            }
+
+            $stmtInsFolder = $db_connection->prepare("
+                INSERT INTO S3Folders (id_, user_id_, Prefix, Nombre, ParentPrefix, Found, AccessType, CreatedAt, UpdatedAt)
+                VALUES (?, ?, ?, ?, ?, 1, 'normal', NOW(), NOW())
+            ");
+            $stmtInsFolder->bind_param("iisss", $newFolderId, $userId, $folderPrefix, $folderName, $parentPrefix);
+            $stmtInsFolder->execute();
+            $stmtInsFolder->close();
+        }
+
+        $stmtFolder->close();
+    }
+
+    // B) Sincronizar Archivo (FileS3)
+    $stmtFile = $db_connection->prepare("SELECT id_, Tamano FROM FileS3 WHERE user_id_ = ? AND Ruta = ? AND Nombre = ? LIMIT 1");
+    $stmtFile->bind_param("iss", $userId, $folderPrefix, $filename);
+    $stmtFile->execute();
+    $resFile = $stmtFile->get_result();
+    $fileRow = $resFile->fetch_assoc();
+    $stmtFile->close();
+
+    if ($fileRow) {
+        $stmtUpdFile = $db_connection->prepare("UPDATE FileS3 SET Tamano = ?, Fecha = NOW(), Found = 1 WHERE id_ = ?");
+        $stmtUpdFile->bind_param("ii", $fileSize, $fileRow['id_']);
+        $stmtUpdFile->execute();
+        $stmtUpdFile->close();
+    } else {
+        $newFileId = next_id($db_connection, 'FileS3', 'id_');
+        $metadata = json_encode([
+            'source' => 'ai_editor',
+            'project_id' => $projectId,
+            's3_key' => $originalS3Key
+        ], JSON_UNESCAPED_UNICODE);
+
+        $stmtInsFile = $db_connection->prepare("
+            INSERT INTO FileS3 (id_, Nombre, Encriptado, Tamano, Metadatos, Ruta, Found, AccessType, Fecha, user_id_)
+            VALUES (?, ?, ?, ?, ?, ?, 1, 'normal', NOW(), ?)
+        ");
+        $stmtInsFile->bind_param("ississi", $newFileId, $filename, $encriptadoVal, $fileSize, $metadata, $folderPrefix, $userId);
+        $stmtInsFile->execute();
+        $stmtInsFile->close();
+    }
+
+    // =====================================================================
+    // 14b. Subir el archivo oficial a S3 DESPUÉS de preparar la BD.
+    // =====================================================================
     $s3->putObject([
         'Bucket'      => $bucket,
         'Key'         => $originalS3Key,
@@ -1148,80 +1340,66 @@ if ($isCreation) {
         'ACL'         => 'private'
     ]);
 
-// =====================================================================
-// 14c. 🚀 SINCRONIZACIÓN CON TABLAS LEGACY (FileS3 y S3Folders)
-// =====================================================================
-// $userId ya viene validado y autorizado desde el paso 0/2.5
-$filename = basename($originalS3Key);
-$folderPrefix = dirname($originalS3Key);
-if ($folderPrefix === '.') $folderPrefix = '';
-$fileSize = strlen($newContent);
+    $s3Saved = true;
 
-// ✅ IMPORTANTE: Calcular el hash ANTES de cualquier INSERT
-// ✅ CORRECCIÓN: se incluye el user_id_ en el hash porque `Encriptado` tiene
-// una UNIQUE KEY global en la BD; sin esto, dos usuarios con el mismo s3_key
-// (root_prefix repetido entre proyectos de distintos dueños) chocarían entre sí.
-$encriptadoVal = hash('sha256', $userId . '|' . $originalS3Key);
-
-// A) Sincronizar Carpeta (S3Folders)
-if ($folderPrefix !== '') {
-    $stmtFolder = $db_connection->prepare("SELECT id_ FROM S3Folders WHERE user_id_ = ? AND Prefix = ? LIMIT 1");
-    $stmtFolder->bind_param("is", $userId, $folderPrefix);
-    $stmtFolder->execute();
-    $resFolder = $stmtFolder->get_result();
-    
-    if ($resFolder->num_rows === 0) {
-        $newFolderId = next_id($db_connection, 'S3Folders', 'id_');
-        $folderName = basename($folderPrefix);
-        $parentPrefix = dirname($folderPrefix);
-        if ($parentPrefix === '.') $parentPrefix = '';
-
-        // ✅ PrefixHash se calcula automáticamente (GENERATED ALWAYS AS)
-        $stmtInsFolder = $db_connection->prepare("
-            INSERT INTO S3Folders (id_, user_id_, Prefix, Nombre, ParentPrefix, Found, AccessType, CreatedAt, UpdatedAt)
-            VALUES (?, ?, ?, ?, ?, 1, 'normal', NOW(), NOW())
-        ");
-        $stmtInsFolder->bind_param("iisss", $newFolderId, $userId, $folderPrefix, $folderName, $parentPrefix);
-        $stmtInsFolder->execute();
-        $stmtInsFolder->close();
-    }
-    $stmtFolder->close();
-}
-
-// B) Sincronizar Archivo (FileS3)
-$stmtFile = $db_connection->prepare("SELECT id_, Tamano FROM FileS3 WHERE user_id_ = ? AND Ruta = ? AND Nombre = ? LIMIT 1");
-$stmtFile->bind_param("iss", $userId, $folderPrefix, $filename);
-$stmtFile->execute();
-$resFile = $stmtFile->get_result();
-$fileRow = $resFile->fetch_assoc();
-$stmtFile->close();
-
-if ($fileRow) {
-    $stmtUpdFile = $db_connection->prepare("UPDATE FileS3 SET Tamano = ?, Fecha = NOW(), Found = 1 WHERE id_ = ?");
-    $stmtUpdFile->bind_param("ii", $fileSize, $fileRow['id_']);
-    $stmtUpdFile->execute();
-    $stmtUpdFile->close();
-} else {
-    $newFileId = next_id($db_connection, 'FileS3', 'id_');
-    $metadata = json_encode(['source' => 'ai_editor', 'project_id' => $projectId, 's3_key' => $originalS3Key]);
-    
-    $stmtInsFile = $db_connection->prepare("
-        INSERT INTO FileS3 (id_, Nombre, Encriptado, Tamano, Metadatos, Ruta, Found, AccessType, Fecha, user_id_)
-        VALUES (?, ?, ?, ?, ?, ?, 1, 'normal', NOW(), ?)
-    ");
-    $stmtInsFile->bind_param("ississi", $newFileId, $filename, $encriptadoVal, $fileSize, $metadata, $folderPrefix, $userId);
-    $stmtInsFile->execute();
-    $stmtInsFile->close();
-}
-
-    // ✅ Todo salió bien: confirmamos la transacción
     $db_connection->commit();
+    $dbCommitted = true;
+
 } catch (Throwable $e) {
-    // ✅ CORRECCIÓN: si algo falla a mitad de camino, revertimos los cambios en BD
-    // (el archivo ya subido a S3 en el paso 14b queda huérfano, pero la BD queda consistente)
-    $db_connection->rollback();
+    try {
+        if ($db_connection instanceof mysqli) {
+            $db_connection->rollback();
+        }
+    } catch (Throwable $rb) {
+        error_log("Error adicional en rollback: " . $rb->getMessage());
+    }
+
     error_log("Error en Paso 14 (S3/BD Sync): " . $e->getMessage());
-    jexit(['ok' => false, 'error' => 'No se pudo guardar el archivo en S3/BD: ' . $e->getMessage()], 500);
+
+    $compensated = false;
+
+    if ($s3Saved) {
+        try {
+            if (!$isCreation && !empty($backupS3Key)) {
+                // Restaurar respaldo anterior.
+                $s3->copyObject([
+                    'Bucket' => $bucket,
+                    'CopySource' => urlencode($bucket . '/' . $backupS3Key),
+                    'Key' => $originalS3Key
+                ]);
+            } else {
+                // Si era creación, eliminar el objeto que quedó escrito.
+                $s3->deleteObject([
+                    'Bucket' => $bucket,
+                    'Key' => $originalS3Key
+                ]);
+            }
+
+            $compensated = true;
+        } catch (Throwable $comp) {
+            error_log("No se pudo compensar S3 tras error en BD: " . $comp->getMessage());
+        }
+    }
+
+    if ($s3Saved && !$compensated) {
+        jexit([
+            'ok' => false,
+            's3_saved' => true,
+            'db_committed' => false,
+            'error' => 'El archivo se guardó en S3, pero falló la BD y no se pudo revertir automáticamente.',
+            'details' => $e->getMessage(),
+            'warnings' => [
+                'El objeto S3 quedó escrito.',
+                'La transacción de BD fue revertida o no pudo confirmarse.',
+                'Revisa ProjectSources, FileS3 y FileVersions para sincronizar manualmente.'
+            ]
+        ], 500);
+    }
+
+    jexit([
+        'ok' => false,
+        'error' => 'No se pudo guardar el archivo en S3/BD: ' . $e->getMessage()
+    ], 500);
 }
 
 // ===== 14d. RESUMEN PROFESIONAL DEL TRABAJO (modelo revisor de código) =====
@@ -1235,6 +1413,7 @@ try {
     $stmtUpdSummary->execute();
     $stmtUpdSummary->close();
 } catch (Throwable $e) {
+    $warnings[] = 'No se pudo actualizar diff_summary: ' . $e->getMessage();
     error_log("No se pudo actualizar diff_summary: " . $e->getMessage());
 }
 
@@ -1254,21 +1433,37 @@ try {
 // ===== 15. Respuesta exitosa con Análisis de Impacto =====
 $downloadUrl = 'descargar.php?archivo=' . urlencode($source['s3_key']) . '&nombre=' . urlencode($targetFilename);
 
+// ✅ NUEVO: Consolidar warnings de todo el flujo (S3/BD + indexación)
+$finalWarnings = $warnings ?? [];
+
+if (empty($indexResult['ok']) && !empty($indexResult['error'])) {
+    $finalWarnings[] = 'Indexación secundaria fallida: ' . $indexResult['error'];
+}
+
+if (!empty($finalWarnings)) {
+    error_log('code_edit.php terminó con warnings: ' . json_encode($finalWarnings, JSON_UNESCAPED_UNICODE));
+}
+
 jexit([
-    'ok'             => true,
-    'message'        => "✅ Archivo oficial actualizado (respaldo .ver0 creado).",
-    'filename'       => $targetFilename,
-    'new_version'    => $nextVersion,
-    'download_url'   => $downloadUrl,
-    'diff_summary'   => $diffSummary,
-    'summary_model'  => $summaryResult['model'],
-    'model_used'     => $attemptLog[count($attemptLog) - 1]['model'],
-    'complexity'     => $category ?? 'unknown',
-    'indexed'        => (bool)($indexResult['ok'] ?? false),
-    'index_error'    => $indexResult['ok'] ? null : ($indexResult['error'] ?? null),
-    'needs_indexing' => false,
-    'scout_info'     => $scoutResult ?? null,
-    // 🚀 NUEVO: Datos para el Orquestador / Frontend
+    'ok'              => true,
+    's3_saved'        => true,
+    'db_committed'    => $dbCommitted ?? true,
+    'message'         => empty($finalWarnings)
+        ? "✅ Archivo oficial actualizado" . ($isCreation ? " (creado)." : " (respaldo .ver0 creado).")
+        : "✅ Archivo guardado en S3, pero con advertencias secundarias.",
+    'filename'        => $targetFilename,
+    'new_version'     => $nextVersion,
+    'download_url'    => $downloadUrl,
+    'diff_summary'    => $diffSummary,
+    'summary_model'   => $summaryResult['model'],
+    'model_used'      => $attemptLog[count($attemptLog) - 1]['model'],
+    'complexity'      => $category ?? 'unknown',
+    'indexed'         => (bool)($indexResult['ok'] ?? false),
+    'index_error'     => $indexResult['ok'] ? null : ($indexResult['error'] ?? null),
+    'needs_indexing'  => false,
+    'scout_info'      => $scoutResult ?? null,
+    'warnings'        => array_values($finalWarnings),
+    // 🚀 Datos para el Orquestador / Frontend
     'impact_analysis' => $impactAnalysis,
     'next_steps'      => $impactAnalysis['is_multi_file']
         ? "⚠️ Esta edición afecta a " . count($impactAnalysis['affected_files']) . " archivos más. Se recomienda aplicar refactor en cascada."

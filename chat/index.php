@@ -504,7 +504,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </label>
 </div>
 </div>
-
+<!--
 <hr>
 <div class="settings-section">
 <div class="settings-section-title">Proyecto activo</div>
@@ -516,41 +516,8 @@ Proyecto: <span id="sbCurrentProject">Ninguno</span> ·
 Sesión: <span id="sbCurrentSession">Ninguna</span> ·
 Fuentes indexadas: <span id="sbSourcesCount">0</span>
 </div>
-</div>
+</div>-->
 
-<hr>
-<div class="settings-section">
-<div class="settings-section-title">Apariencia</div>
-<div class="mb-2">
-<div class="small text-muted mb-1">Color de acento</div>
-<div class="d-flex flex-wrap" style="gap:.4rem;">
-<button class="btn btn-sm btn-outline-success js-set-theme" data-theme="theme-neon-green" type="button">Verde</button>
-<button class="btn btn-sm btn-outline-info js-set-theme" data-theme="theme-neon-blue" type="button">Azul</button>
-<button class="btn btn-sm btn-outline-danger js-set-theme" data-theme="theme-neon-red" type="button">Rojo</button>
-<button class="btn btn-sm btn-outline-warning js-set-theme" data-theme="theme-neon-yellow" type="button">Amarillo</button>
-</div>
-</div>
-<div class="mb-2">
-<div class="small text-muted mb-1">Modo</div>
-<div class="d-flex flex-wrap" style="gap:.4rem;">
-<button class="btn btn-sm btn-outline-secondary js-set-mode" data-mode="theme-dark" type="button"><i class="fas fa-moon mr-1"></i>Oscuro</button>
-<button class="btn btn-sm btn-outline-secondary js-set-mode" data-mode="theme-light" type="button"><i class="fas fa-sun mr-1"></i>Claro</button>
-</div>
-</div>
-<div class="mb-2">
-<div class="small text-muted mb-1">Visión</div>
-<div class="d-flex flex-wrap" style="gap:.4rem;">
-<button class="btn btn-sm btn-outline-secondary js-set-vision" data-vision="vision-normal" type="button">Normal</button>
-<button class="btn btn-sm btn-outline-secondary js-set-vision" data-vision="vision-myopia" type="button">Miopía</button>
-<button class="btn btn-sm btn-outline-secondary js-set-vision" data-vision="vision-protanopia" type="button">Protanopia</button>
-<button class="btn btn-sm btn-outline-secondary js-set-vision" data-vision="vision-deuteranopia" type="button">Deuteranopia</button>
-<button class="btn btn-sm btn-outline-secondary js-set-vision" data-vision="vision-tritanopia" type="button">Tritanopia</button>
-</div>
-</div>
-<button class="btn btn-sm btn-outline-secondary" id="btnToggleAscii" type="button">
-<i class="fas fa-terminal mr-1"></i> Alternar ASCII
-</button>
-</div>
 
 <hr>
 <div class="settings-section">
@@ -567,9 +534,9 @@ Fuentes indexadas: <span id="sbSourcesCount">0</span>
         <button class="btn btn-sm btn-outline-info" id="btnOpenProceduralMemory" title="Ver, editar y eliminar memoria procedural" type="button">
             <i class="fas fa-brain mr-1"></i> Ver y editar memoria
         </button>
-        <button id="btnContextViewer" class="btn btn-sm btn-outline-info" title="Ver, editar y eliminar contexto activo de sesión y proyecto" type="button">
+        <!--<button id="btnContextViewer" class="btn btn-sm btn-outline-info" title="Ver, editar y eliminar contexto activo de sesión y proyecto" type="button">
             <i class="fas fa-database"></i> Inspector de Contexto
-        </button>
+        </button>-->
         <button id="btnAiDataControl" class="btn btn-sm btn-outline-warning" title="Control avanzado de datos internos de la IA" type="button">
             <i class="fas fa-sliders-h"></i> Control IA
         </button>
@@ -577,22 +544,55 @@ Fuentes indexadas: <span id="sbSourcesCount">0</span>
     </div>
     <small class="text-muted mt-1 d-block" id="proceduralExtractionStatus"></small>
     
+<hr>
+<div class="settings-section">
+    <div class="settings-section-title">🔄 Mantenimiento de IA</div>
+    <p class="small text-muted mb-2">
+        Ejecuta manualmente los procesos de mantenimiento. Útil cuando necesitas resultados inmediatos.
+        <br><strong>Orden:</strong> 1️⃣ Embeddings → 2️⃣ Compresión
+    </p>
+    <div class="d-flex flex-wrap" style="gap:.5rem;">
+        <button id="btnRunEmbeddings" class="btn btn-sm btn-outline-primary" type="button">
+            <i class="fas fa-vector-square mr-1"></i> 1. Procesar Embeddings
+        </button>
+        <button id="btnRunCompression" class="btn btn-sm btn-outline-success" type="button">
+            <i class="fas fa-compress-arrows-alt mr-1"></i> 2. Comprimir Sesiones
+        </button>
+        <button id="btnRunBoth" class="btn btn-sm btn-outline-warning" type="button">
+            <i class="fas fa-sync-alt mr-1"></i> Ejecutar Ambos (Secuencial)
+        </button>
+    </div>
+    <div class="mt-2">
+        <small class="text-muted d-block" id="maintenanceStatus"></small>
+        <div class="progress d-none" id="maintenanceProgress" style="height: 8px; margin-top: 8px;">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+        </div>
+    </div>
+</div>
 
+</div>
 
+<hr>
+<div class="settings-section">
+<div class="settings-section-title">Apariencia</div>
+<div class="mb-2">
+<div class="small text-muted mb-1">Modo</div>
+<div class="d-flex flex-wrap" style="gap:.4rem;">
+<button class="btn btn-sm btn-outline-secondary js-set-mode" data-mode="theme-dark" type="button"><i class="fas fa-moon mr-1"></i>Oscuro</button>
+<button class="btn btn-sm btn-outline-secondary js-set-mode" data-mode="theme-light" type="button"><i class="fas fa-sun mr-1"></i>Claro</button>
+</div>
+</div>
 </div>
 <hr>
 <div class="settings-section">
 <div class="settings-section-title">Cuenta</div>
 <div class="d-flex flex-wrap" style="gap:.5rem;">
-<button id="btnSyncS3" class="btn btn-sm btn-outline-secondary" type="button">
+<!--<button id="btnSyncS3" class="btn btn-sm btn-outline-secondary" type="button">
 <i class="fas fa-rotate mr-1"></i> Sincronizar S3
-</button>
+</button>-->
 <button id="btnRecargar" class="btn btn-sm btn-outline-secondary" onclick="recargarPagina()" type="button">
 <i class="fas fa-sync-alt mr-1"></i> Recargar página
 </button>
-<a href="https://drive.esforzados.com/michat/s3chatstats.php" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-info">
-<i class="fas fa-comment-dots mr-1"></i> Ir al Stats
-</a>
 <a href="logout.php" class="btn btn-sm btn-outline-danger">
 <i class="fas fa-sign-out-alt mr-1"></i> Cerrar sesión
 </a>
@@ -655,9 +655,9 @@ Fuentes indexadas: <span id="sbSourcesCount">0</span>
 <input type="text" class="form-control" id="projectFramework" placeholder="Ej: Laravel, React...">
 </div>
 <div class="form-group col-md-4">
-<label>Prefijo S3 (Ruta base)</label>
-<input type="text" class="form-control bg-light" id="projectRootPrefix" readonly placeholder="Se genera automático">
-<small class="form-text text-muted">Los archivos se guardarán en: Data/Chat/Uploads/{FECHA}/{SLUG}/</small>
+    <label>Prefijo S3 (Ruta base)</label>
+    <input type="text" class="form-control bg-light" id="projectRootPrefix" readonly placeholder="Se genera automático">
+    <small class="form-text text-muted">Los archivos se guardarán en: Data/Chat/Uploads/{user_id}/{project_id}/</small>
 </div>
 </div>
 <div class="d-flex justify-content-end mt-3">
@@ -690,8 +690,10 @@ Fuentes indexadas: <span id="sbSourcesCount">0</span>
 </div>
 <hr>
 <p class="text-muted small mb-2">
-<i class="fas fa-info-circle"></i> Los nuevos archivos se guardarán en:
-<code id="projectUploadPath" class="bg-light px-1">Data/Chat/Uploads/YYYY/MM/DD/slug-proyecto/</code>
+    <i class="fas fa-info-circle"></i> Los nuevos archivos se guardarán en:
+    <code id="projectUploadPath" class="bg-light px-1">Data/Chat/Uploads/{user_id}/{project_id}/</code>
+    <br>
+    <small class="text-muted" style="font-size:0.65rem;">Todos los archivos del proyecto se almacenan en la misma carpeta, independientemente de las sesiones.</small>
 </p>
 <div class="form-group">
 <label for="projectFilesInput"><i class="fas fa-upload"></i> Selecciona archivos nuevos</label>
@@ -935,5 +937,137 @@ role="progressbar" style="width: 0%">0%</div>
   }
 })();
 </script>
+
+<script>
+// =====================================================================
+// 🔄 MANTENIMIENTO MANUAL: Botones para ejecutar crons desde UI
+// =====================================================================
+(function () {
+    'use strict';
+    
+    const SECRET = 'Z1!xC6@vB3#nM8$kL4*jH9^gF2&dS7';
+    const statusEl = document.getElementById('maintenanceStatus');
+    const progressEl = document.getElementById('maintenanceProgress');
+    const progressBar = progressEl?.querySelector('.progress-bar');
+    
+    // ✅ Helper seguro para mostrar toasts (compatible con chat.js)
+    function safeToast(title, message, type = 'info') {
+        if (window.chatUtils && typeof window.chatUtils.showToast === 'function') {
+            window.chatUtils.showToast(title, message, type);
+        } else {
+            // Fallback: crear toast directamente
+            const container = document.getElementById('chatToasts') || document.getElementById('incomingToasts');
+            if (!container) { alert(title + ': ' + message); return; }
+            const toast = document.createElement('div');
+            toast.className = 'chat-toast';
+            toast.innerHTML = '<div class="ct-title">' + title + '</div><div class="small">' + message + '</div>';
+            if (type === 'success') toast.style.borderLeftColor = '#00ff66';
+            if (type === 'danger') toast.style.borderLeftColor = '#ff5a5a';
+            if (type === 'warning') toast.style.borderLeftColor = '#ffd861';
+            container.appendChild(toast);
+            setTimeout(() => { if (toast.parentNode) toast.remove(); }, 5000);
+        }
+    }
+    
+    function setStatus(msg, type = 'info') {
+        if (!statusEl) return;
+        statusEl.textContent = msg;
+        statusEl.className = 'text-' + type + ' d-block mt-2';
+    }
+    
+    function showProgress(show, percent = 0) {
+        if (!progressEl || !progressBar) return;
+        progressEl.classList.toggle('d-none', !show);
+        if (show) progressBar.style.width = percent + '%';
+    }
+    
+    async function runEmbeddings() {
+        setStatus('⏳ Procesando embeddings pendientes...', 'info');
+        showProgress(true, 30);
+        try {
+            const url = 'process_embedding_queue.php?batch=10&key=' + encodeURIComponent(SECRET);
+            const r = await fetch(url, { credentials: 'same-origin' });
+            const j = await r.json();
+            
+            if (j.ok) {
+                const msg = '✅ Embeddings procesados: ' + j.succeeded + ' exitosos, ' + j.failed + ' fallidos';
+                setStatus(msg, 'success');
+                safeToast('Embeddings', msg, 'success');
+            } else {
+                throw new Error(j.error || j.message || 'Error desconocido');
+            }
+        } catch (e) {
+            setStatus('❌ Error: ' + e.message, 'danger');
+            safeToast('Error', e.message, 'danger');
+        } finally {
+            showProgress(false);
+        }
+    }
+    
+    async function runCompression() {
+        setStatus('⏳ Comprimiendo sesiones...', 'info');
+        showProgress(true, 60);
+        try {
+            const url = 'compress_session_context.php?key=' + encodeURIComponent(SECRET);
+            const r = await fetch(url, { credentials: 'same-origin' });
+            const j = await r.json();
+            
+            if (j.ok) {
+                const msg = '✅ Compresión completada: ' + j.sessions_processed + ' sesiones, ' + j.extracted_knowledge + ' conocimientos extraídos';
+                setStatus(msg, 'success');
+                safeToast('Compresión', msg, 'success');
+            } else {
+                throw new Error((j.errors && j.errors.join(', ')) || j.message || 'Error desconocido');
+            }
+        } catch (e) {
+            setStatus('❌ Error: ' + e.message, 'danger');
+            safeToast('Error', e.message, 'danger');
+        } finally {
+            showProgress(false);
+        }
+    }
+    
+    async function runBoth() {
+        setStatus('⏳ Ejecutando ambos procesos en secuencia...', 'info');
+        showProgress(true, 10);
+        
+        try {
+            // Paso 1: Embeddings
+            setStatus('⏳ Paso 1/2: Procesando embeddings...', 'info');
+            showProgress(true, 30);
+            await runEmbeddings();
+            
+            // Espera de 5 segundos entre procesos 
+            setStatus('⏳ Esperando 5 segundos antes del siguiente proceso...', 'info');
+            showProgress(true, 50);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            // Paso 2: Compresión
+            setStatus('⏳ Paso 2/2: Comprimiendo sesiones...', 'info');
+            showProgress(true, 70);
+            await runCompression();
+            
+            showProgress(true, 100);
+            setStatus('✅ Ambos procesos completados exitosamente', 'success');
+            safeToast('Mantenimiento', 'Procesos completados', 'success');
+            
+            setTimeout(() => showProgress(false), 2000);
+        } catch (e) {
+            setStatus('❌ Error en la secuencia: ' + e.message, 'danger');
+        }
+    }
+    
+    // Wire up buttons
+    const btnEmbeddings = document.getElementById('btnRunEmbeddings');
+    const btnCompression = document.getElementById('btnRunCompression');
+    const btnBoth = document.getElementById('btnRunBoth');
+    
+    if (btnEmbeddings) btnEmbeddings.addEventListener('click', runEmbeddings);
+    if (btnCompression) btnCompression.addEventListener('click', runCompression);
+    if (btnBoth) btnBoth.addEventListener('click', runBoth);
+    
+})();
+</script>
+
 </body>
 </html>

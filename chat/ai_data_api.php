@@ -12,6 +12,11 @@
  */
 
 header('Content-Type: application/json; charset=utf-8');
+// CRÍTICO: evitar que warnings/notices de PHP rompan el JSON con HTML
+ini_set('display_errors', '0');
+@ini_set('display_startup_errors', '0');
+error_reporting(E_ALL);
+
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -166,10 +171,56 @@ function prompt_compilation_allowed_status(): array
 // =====================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $userId = get_user_id();
-
     if ($userId <= 0) {
         json_out(['ok' => false, 'error' => 'Usuario inválido'], 401);
     }
+
+    // =================================================================
+    // NUEVO: lista sesiones y proyectos para los selectores del panel
+    // Uso: ai_data_api.php?list=selectors
+    // =================================================================
+    if (isset($_GET['list']) && $_GET['list'] === 'selectors') {
+        try {
+            $sessions = [];
+            $projects = [];
+
+            $stmt = db()->prepare("
+                SELECT cs.id_, cs.title, cs.project_id_, cs.status, cs.updated_at,
+                       p.name AS project_name
+                FROM ChatSessions cs
+                LEFT JOIN Projects p ON p.id_ = cs.project_id_
+                WHERE cs.user_id_ = ?
+                ORDER BY cs.updated_at DESC
+                LIMIT 300
+            ");
+            if (!$stmt) throw new RuntimeException('Prepare sesiones: ' . db()->error);
+            $stmt->bind_param('i', $userId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) $sessions[] = $row;
+            $stmt->close();
+
+            $stmt = db()->prepare("
+                SELECT id_, name, slug
+                FROM Projects
+                WHERE user_id_ = ? AND status <> 'deleted'
+                ORDER BY name ASC
+                LIMIT 300
+            ");
+            if (!$stmt) throw new RuntimeException('Prepare proyectos: ' . db()->error);
+            $stmt->bind_param('i', $userId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) $projects[] = $row;
+            $stmt->close();
+
+            json_out(['ok' => true, 'sessions' => $sessions, 'projects' => $projects]);
+        } catch (Throwable $e) {
+            json_out(['ok' => false, 'error' => 'Error listando selectores: ' . $e->getMessage()], 500);
+        }
+    }
+
+   
 
     $sessionId = (int)($_GET['session_id'] ?? 0);
     $projectId = (int)($_GET['project_id'] ?? 0);

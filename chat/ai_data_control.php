@@ -481,48 +481,70 @@ if ($projectId > 0) {
         .control-header { padding: 16px; }
         .control-header h1 { font-size: 1.2rem; }
     }
+
+.ctx-form label {
+display: block;
+font-size: 0.78rem;
+font-weight: 700;
+color: var(--text-strong) !important;
+margin: 12px 0 6px 0;
+}
+.ctx-form label:first-child {
+margin-top: 0;
+}
 </style>
 </head>
 <body class="ui-theme theme-neon-green">
 
 <div class="control-header">
-    <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
-        <div style="display: flex; align-items: center; gap: 16px;">
-            <a href="index.php" style="color: var(--text-soft); text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
-                <i class="fas fa-arrow-left"></i> Volver
-            </a>
-
-            <div>
-                <h1>
-                    <i class="fas fa-database"></i>
-                    Control de Datos IA
-                </h1>
-                <div style="color: var(--text-soft); font-size: 0.85rem; margin-top: 5px;">
-                    <i class="fas fa-comment-dots"></i>
-                    <?= htmlspecialchars($sessionTitle ?: 'Sin sesión') ?>
-                    <?= $sessionId > 0 ? '(#' . $sessionId . ')' : '' ?>
-                    &nbsp;·&nbsp;
-                    <i class="fas fa-briefcase"></i>
-                    <?= htmlspecialchars($projectName ?: 'Sin proyecto') ?>
-                    <?= $projectId > 0 ? '(#' . $projectId . ')' : '' ?>
-                </div>
-            </div>
-        </div>
-
-        <button class="btn-control" onclick="loadData()">
-            <i class="fas fa-sync"></i> Actualizar
-        </button>
-    </div>
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
+<div style="display: flex; align-items: center; gap: 16px;">
+<a href="index.php" style="color: var(--text-soft); text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
+<i class="fas fa-arrow-left"></i> Volver
+</a>
+<div>
+<h1>
+<i class="fas fa-database"></i>
+Control de Datos IA
+</h1>
+<div style="color: var(--text-soft); font-size: 0.85rem; margin-top: 5px;">
+<i class="fas fa-comment-dots"></i>
+<span id="hdrSessionName"><?= htmlspecialchars($sessionTitle ?: 'Sin sesión') ?><?= $sessionId > 0 ? ' (#' . $sessionId . ')' : '' ?></span>
+&nbsp;·&nbsp;
+<i class="fas fa-briefcase"></i>
+<span id="hdrProjectName"><?= htmlspecialchars($projectName ?: 'Sin proyecto') ?><?= $projectId > 0 ? ' (#' . $projectId . ')' : '' ?></span>
+</div>
+</div>
+</div>
+<button class="btn-control" onclick="loadData()">
+<i class="fas fa-sync"></i> Actualizar
+</button>
+</div>
+<!-- NUEVO: selectores de sesión y proyecto -->
+<div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 14px;">
+<label style="font-size: 0.78rem; font-weight: 700; color: var(--text-soft); margin: 0;">SESIÓN</label>
+<select id="selectorSession" class="form-select-dark" style="width: auto; min-width: 260px; max-width: 420px; padding: 7px 10px;">
+<option value="0">Cargando sesiones…</option>
+</select>
+<label style="font-size: 0.78rem; font-weight: 700; color: var(--text-soft); margin: 0;">PROYECTO</label>
+<select id="selectorProject" class="form-select-dark" style="width: auto; min-width: 220px; max-width: 360px; padding: 7px 10px;">
+<option value="0">Cargando proyectos…</option>
+</select>
+</div>
 </div>
 
+
 <div class="control-container">
-    <div class="tab-bar">
-        <button class="tab-btn active" data-tab="session"><i class="fas fa-comment-dots"></i> Sesión</button>
-        <button class="tab-btn" data-tab="project"><i class="fas fa-briefcase"></i> Proyecto</button>
-        <button class="tab-btn" data-tab="chunks"><i class="fas fa-puzzle-piece"></i> Chunks/Embeddings</button>
-        <button class="tab-btn" data-tab="prompt"><i class="fas fa-magic"></i> Prompt Compilado</button>
-        <button class="tab-btn" data-tab="cache"><i class="fas fa-layer-group"></i> Cache/Herramientas</button>
-    </div>
+    
+<div class="tab-bar">
+<button class="tab-btn active" data-tab="session"><i class="fas fa-comment-dots"></i> Sesión</button>
+<button class="tab-btn" data-tab="project"><i class="fas fa-briefcase"></i> Proyecto</button>
+<button class="tab-btn" data-tab="chunks"><i class="fas fa-puzzle-piece"></i> Chunks/Embeddings</button>
+<button class="tab-btn" data-tab="prompt"><i class="fas fa-magic"></i> Prompt Compilado</button>
+<button class="tab-btn" data-tab="cache"><i class="fas fa-layer-group"></i> Cache/Herramientas</button>
+<button class="tab-btn" data-tab="attachments"><i class="fas fa-paperclip"></i> Adjuntos</button>
+<button class="tab-btn" data-tab="context"><i class="fas fa-brain"></i> Contexto</button>
+</div>
 
     <div id="content">
         <div class="loading">
@@ -543,8 +565,9 @@ if ($projectId > 0) {
 </div>
 
 <script>
-const sessionId = <?= (int)$sessionId ?>;
-const projectId = <?= (int)$projectId ?>;
+let sessionId = <?= (int)$sessionId ?>;
+let projectId = <?= (int)$projectId ?>;
+let SELECTORS = { sessions: [], projects: [] };
 
 let DATA = null;
 let activeTab = 'session';
@@ -614,8 +637,26 @@ async function loadData() {
             throw new Error(data.error || 'Error desconocido');
         }
 
-        DATA = data;
-        renderActiveTab();
+            DATA = data;
+            // Si la API resolvió un proyecto, sincronizar
+            if (DATA.project_id && Number(DATA.project_id) > 0 && Number(DATA.project_id) !== projectId) {
+                projectId = Number(DATA.project_id);
+                const selProject = document.getElementById('selectorProject');
+                if (selProject) selProject.value = String(projectId);
+            }
+            syncUrl();
+            // Actualizar encabezado
+            const hdrS = document.getElementById('hdrSessionName');
+            const hdrP = document.getElementById('hdrProjectName');
+            if (hdrS && DATA.session) {
+                hdrS.textContent = (DATA.session.title || 'Sesión #' + sessionId) + ' (#' + sessionId + ')';
+            } else if (hdrS && sessionId <= 0) {
+                hdrS.textContent = 'Sin sesión';
+            }
+            if (hdrP && DATA.project_name) {
+                hdrP.textContent = DATA.project_name + ' (#' + projectId + ')';
+            }
+            renderActiveTab();
     } catch (error) {
         container.innerHTML = `
             <div class="empty-state">
@@ -631,24 +672,26 @@ async function loadData() {
 }
 
 function renderActiveTab() {
-    const container = document.getElementById('content');
-
-    if (!DATA) {
-        container.innerHTML = '<div class="loading">Sin datos.</div>';
-        return;
-    }
-
-    if (activeTab === 'session') {
-        container.innerHTML = renderSessionTab();
-    } else if (activeTab === 'project') {
-        container.innerHTML = renderProjectTab();
-    } else if (activeTab === 'chunks') {
-        container.innerHTML = renderChunksTab();
-    } else if (activeTab === 'prompt') {
-        container.innerHTML = renderPromptTab();
-    } else if (activeTab === 'cache') {
-        container.innerHTML = renderCacheTab();
-    }
+const container = document.getElementById('content');
+if (!DATA) {
+container.innerHTML = '<div class="loading">Sin datos.</div>';
+return;
+}
+if (activeTab === 'session') {
+container.innerHTML = renderSessionTab();
+} else if (activeTab === 'project') {
+container.innerHTML = renderProjectTab();
+} else if (activeTab === 'chunks') {
+container.innerHTML = renderChunksTab();
+} else if (activeTab === 'prompt') {
+container.innerHTML = renderPromptTab();
+} else if (activeTab === 'cache') {
+container.innerHTML = renderCacheTab();
+} else if (activeTab === 'attachments') {
+renderAttachmentsTab();
+} else if (activeTab === 'context') {
+renderContextTab();
+}
 }
 
 function renderSessionTab() {
@@ -1581,7 +1624,824 @@ function promptStatusClass(status) {
     return 'badge-warning';
 }
 
-loadData();
+// =====================================================================
+// NUEVO: SELECTORES DE SESIÓN Y PROYECTO
+// =====================================================================
+async function loadSelectors() {
+    const selSession = document.getElementById('selectorSession');
+    const selProject = document.getElementById('selectorProject');
+    try {
+        const r = await fetch('ai_data_api.php?list=selectors', {
+            credentials: 'same-origin',
+            cache: 'no-cache'
+        });
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || 'Error cargando selectores');
+
+        SELECTORS.sessions = j.sessions || [];
+        SELECTORS.projects = j.projects || [];
+
+        selSession.innerHTML = '<option value="0">— Sin sesión —</option>' +
+            SELECTORS.sessions.map(s => {
+                const proj = s.project_name ? ' · ' + s.project_name : '';
+                return '<option value="' + Number(s.id_) + '">' +
+                    escapeHtml((s.title || 'Sesión #' + s.id_) + ' (#' + s.id_ + proj + ')') +
+                    '</option>';
+            }).join('');
+
+        selProject.innerHTML = '<option value="0">— Sin proyecto —</option>' +
+            SELECTORS.projects.map(p =>
+                '<option value="' + Number(p.id_) + '">' +
+                escapeHtml(p.name + ' (#' + p.id_ + ')') +
+                '</option>'
+            ).join('');
+
+        selSession.value = String(sessionId || 0);
+        selProject.value = String(projectId || 0);
+
+        selSession.onchange = () => {
+            sessionId = parseInt(selSession.value, 10) || 0;
+            const s = SELECTORS.sessions.find(x => Number(x.id_) === sessionId);
+            if (s && Number(s.project_id_) > 0) {
+                projectId = Number(s.project_id_);
+                selProject.value = String(projectId);
+            } else {
+                projectId = 0;
+                selProject.value = '0';
+            }
+            syncUrl();
+            loadData();
+        };
+
+        selProject.onchange = () => {
+            projectId = parseInt(selProject.value, 10) || 0;
+            syncUrl();
+            loadData();
+        };
+    } catch (e) {
+        console.error('Error cargando selectores:', e);
+        if (selSession) selSession.innerHTML = '<option value="0">Error cargando sesiones</option>';
+        if (selProject) selProject.innerHTML = '<option value="0">Error cargando proyectos</option>';
+    }
+}
+
+function syncUrl() {
+    const qs = new URLSearchParams();
+    if (sessionId > 0) qs.set('session_id', String(sessionId));
+    if (projectId > 0) qs.set('project_id', String(projectId));
+    const url = 'ai_data_control.php' + (qs.toString() ? '?' + qs.toString() : '');
+    history.replaceState(null, '', url);
+}
+
+// =====================================================================
+// ADJUNTOS DE SESIÓN (SessionContextBlocks file/file_chunk)
+// =====================================================================
+let ATTACHMENTS_DATA = null;
+let ATTACHMENTS_LOADING = false;
+
+async function loadAttachments() {
+    if (sessionId <= 0) {
+        ATTACHMENTS_DATA = null;
+        return;
+    }
+    ATTACHMENTS_LOADING = true;
+    try {
+        const r = await fetch(`session_attachment_inspector.php?session_id=${sessionId}`, {
+            credentials: 'same-origin',
+            cache: 'no-cache'
+        });
+        const text = await r.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            throw new Error('El servidor devolvió HTML en lugar de JSON: ' + text.slice(0, 200));
+        }
+        if (!data.ok) throw new Error(data.error || 'Error desconocido');
+        ATTACHMENTS_DATA = data;
+    } catch (e) {
+        ATTACHMENTS_DATA = { ok: false, error: e.message };
+    } finally {
+        ATTACHMENTS_LOADING = false;
+    }
+}
+
+function renderAttachmentsTab() {
+    const container = document.getElementById('content');
+
+    if (sessionId <= 0) {
+        container.innerHTML = emptyState('fa-paperclip', 'Sin sesión', 'Selecciona una sesión para ver sus archivos adjuntos indexados.');
+        return;
+    }
+
+    if (ATTACHMENTS_LOADING) {
+        container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin fa-3x"></i><p style="margin-top:20px;">Cargando adjuntos...</p></div>';
+        return;
+    }
+
+    // Cargar datos si aún no se han cargado
+    if (!ATTACHMENTS_DATA) {
+        loadAttachments().then(() => renderAttachmentsTab());
+        container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin fa-3x"></i><p style="margin-top:20px;">Cargando adjuntos...</p></div>';
+        return;
+    }
+
+    if (!ATTACHMENTS_DATA.ok) {
+        container.innerHTML = `
+<div class="empty-state">
+<i class="fas fa-exclamation-triangle"></i>
+<h3>Error al cargar adjuntos</h3>
+<p>${escapeHtml(ATTACHMENTS_DATA.error || 'Error desconocido')}</p>
+<button class="btn-control" onclick="ATTACHMENTS_DATA=null; renderAttachmentsTab();" style="margin-top:20px;">
+<i class="fas fa-sync"></i> Reintentar
+</button>
+</div>`;
+        return;
+    }
+
+    const { stats, files } = ATTACHMENTS_DATA;
+
+    // Tarjetas de estadísticas
+    let html = `
+<div class="panel-card">
+<div class="panel-card-body">
+<div class="section-title">
+<div class="section-title-left">
+<i class="fas fa-paperclip"></i>
+Adjuntos Indexados de la Sesión
+</div>
+<button class="btn-control" onclick="ATTACHMENTS_DATA=null; renderAttachmentsTab();">
+<i class="fas fa-sync"></i> Actualizar
+</button>
+</div>
+<div class="info-grid">
+<div class="info-item">
+<div class="info-label">Archivos Indexados</div>
+<div class="info-value">${stats.total_files}</div>
+</div>
+<div class="info-item">
+<div class="info-label">Total de Chunks</div>
+<div class="info-value">${stats.total_chunks}</div>
+</div>
+<div class="info-item">
+<div class="info-label">Chunks con Embedding</div>
+<div class="info-value">${stats.chunks_with_embedding} / ${stats.total_chunks}</div>
+</div>
+<div class="info-item">
+<div class="info-label">Chunks Pendientes</div>
+<div class="info-value" style="color:${stats.chunks_pending > 0 ? 'var(--danger)' : 'var(--ok)'};">${stats.chunks_pending}</div>
+</div>
+<div class="info-item">
+<div class="info-label">Tokens Totales</div>
+<div class="info-value">${Number(stats.total_tokens).toLocaleString()}</div>
+</div>
+</div>
+`;
+
+    if (!files || files.length === 0) {
+        html += emptyState('fa-file-circle-xmark', 'No hay adjuntos indexados', 'Esta sesión no tiene archivos procesados con los botones "Indexar" o "Semántica".');
+    } else {
+        files.forEach((file, fileIndex) => {
+            const summaryStatus = file.summary ? (file.summary.has_embedding ? 'success' : 'pending') : null;
+            const chunksReady = file.chunks.filter(c => c.has_embedding).length;
+            const chunksTotal = file.chunks.length;
+            const allReady = chunksReady === chunksTotal && chunksTotal > 0;
+
+            html += `
+<div class="subcard" style="margin-top:16px;">
+<div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center; cursor:pointer;" onclick="toggleAttachmentFile(${fileIndex})">
+<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+<i class="fas fa-file-code" style="color:var(--accent);"></i>
+<strong>${escapeHtml(file.filename)}</strong>
+${summaryStatus === 'success' ? '<span class="badge-mini badge-success"><i class="fas fa-brain"></i> Semántica lista</span>' : ''}
+${summaryStatus === 'pending' ? '<span class="badge-mini badge-danger"><i class="fas fa-clock"></i> Semántica pendiente</span>' : ''}
+${allReady ? '<span class="badge-mini badge-success"><i class="fas fa-check"></i> Listo para RAG</span>' : ''}
+</div>
+<div style="display:flex; gap:8px; align-items:center;">
+<span style="font-size:0.75rem; color:var(--text-soft);">
+${chunksReady}/${chunksTotal} chunks con embedding
+</span>
+<i class="fas fa-chevron-down" id="att-toggle-${fileIndex}" style="color:var(--accent); transition:transform .2s;"></i>
+</div>
+</div>
+<div style="font-size:0.72rem; color:var(--text-soft); margin-top:6px;">
+<i class="fas fa-folder"></i> ${escapeHtml(file.s3_path || 'N/A')}
+${file.summary ? ` · <i class="fas fa-coins"></i> ${file.summary.token_count} tokens (resumen)` : ''}
+</div>
+<div id="att-file-${fileIndex}" style="display:none; margin-top:12px;">
+`;
+
+            // Resumen semántico
+            if (file.summary) {
+                html += `
+<div style="margin-bottom:12px;">
+<div style="font-size:0.75rem; font-weight:700; color:var(--ok); margin-bottom:8px; text-transform:uppercase; letter-spacing:.05em;">
+<i class="fas fa-brain"></i> Resumen Semántico
+${file.summary.has_embedding ? ' · <span style="color:var(--ok);">Embedding listo</span>' : ' · <span style="color:var(--danger);">Pendiente</span>'}
+</div>
+<div class="subcard" style="border-left:3px solid var(--ok);">
+<div style="display:flex; gap:12px; flex-wrap:wrap; font-size:0.72rem; color:var(--text-soft); margin-bottom:8px;">
+<span><i class="fas fa-coins"></i> ${file.summary.token_count} tokens</span>
+${file.summary.embedding_model ? `<span><i class="fas fa-vector-square"></i> ${file.summary.embedding_dimensions}D</span>` : ''}
+${file.summary.embedding_model ? `<span><i class="fas fa-robot"></i> ${escapeHtml(file.summary.embedding_model)}</span>` : ''}
+<span><i class="fas fa-clock"></i> ${formatDate(file.summary.created_at)}</span>
+</div>
+<div class="mono-preview">${escapeHtml(file.summary.content_preview)}</div>
+</div>
+</div>
+`;
+            }
+
+            // Chunks
+            if (file.chunks && file.chunks.length > 0) {
+                html += `
+<div style="font-size:0.75rem; font-weight:700; color:var(--warn); margin-bottom:8px; text-transform:uppercase; letter-spacing:.05em;">
+<i class="fas fa-puzzle-piece"></i> Fragmentos Indexados (${file.chunks.length})
+</div>
+`;
+                file.chunks.forEach((chunk, chunkIndex) => {
+                    const chunkLabel = chunk.chunk_info
+                        ? `Chunk ${chunk.chunk_info.current} de ${chunk.chunk_info.total}`
+                        : `Chunk ${chunkIndex + 1}`;
+                    html += `
+<div class="subcard" style="border-left:3px solid ${chunk.has_embedding ? 'var(--warn)' : 'var(--danger)'}; margin-bottom:8px;">
+<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+<span class="badge-mini ${chunk.has_embedding ? 'badge-warning' : 'badge-danger'}">
+${chunk.has_embedding ? '<i class="fas fa-check"></i>' : '<i class="fas fa-clock"></i>'}
+${chunkLabel}
+</span>
+<div style="display:flex; gap:10px; flex-wrap:wrap; font-size:0.72rem; color:var(--text-soft);">
+<span><i class="fas fa-coins"></i> ${chunk.token_count} tokens</span>
+${chunk.has_embedding ? `<span><i class="fas fa-vector-square"></i> ${chunk.embedding_dimensions}D</span>` : ''}
+${chunk.embedding_model ? `<span><i class="fas fa-robot"></i> ${escapeHtml(chunk.embedding_model)}</span>` : ''}
+<span><i class="fas fa-clock"></i> ${formatDate(chunk.created_at)}</span>
+</div>
+</div>
+<div class="mono-preview" style="max-height:200px;">${escapeHtml(chunk.content_preview)}</div>
+</div>
+`;
+                });
+            }
+
+            html += `
+</div>
+</div>
+`;
+        });
+    }
+
+    html += `
+</div>
+</div>
+`;
+
+    container.innerHTML = html;
+}
+
+function toggleAttachmentFile(index) {
+    const content = document.getElementById(`att-file-${index}`);
+    const icon = document.getElementById(`att-toggle-${index}`);
+    if (!content) return;
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        if (icon) icon.style.transform = 'rotate(180deg)';
+    } else {
+        content.style.display = 'none';
+        if (icon) icon.style.transform = 'rotate(0deg)';
+    }
+}
+
+
+// =====================================================================
+// CONTEXTO DE SESIÓN Y PROYECTO (get_context.php)
+// =====================================================================
+let CONTEXT_DATA = null;
+let CONTEXT_LOADING = false;
+
+async function loadContext() {
+    if (sessionId <= 0 && projectId <= 0) {
+        CONTEXT_DATA = null;
+        return;
+    }
+    CONTEXT_LOADING = true;
+    try {
+        const qs = new URLSearchParams();
+        if (sessionId > 0) qs.set('session_id', sessionId);
+        if (projectId > 0) qs.set('project_id', projectId);
+        
+        const r = await fetch(`get_context.php?${qs.toString()}`, {
+            credentials: 'same-origin',
+            cache: 'no-cache'
+        });
+        const text = await r.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            throw new Error('El servidor devolvió HTML en lugar de JSON: ' + text.slice(0, 200));
+        }
+        if (!data.ok) throw new Error(data.error || 'Error desconocido');
+        CONTEXT_DATA = data;
+    } catch (e) {
+        CONTEXT_DATA = { ok: false, error: e.message };
+    } finally {
+        CONTEXT_LOADING = false;
+    }
+}
+
+function renderContextTab() {
+    const container = document.getElementById('content');
+
+    if (sessionId <= 0 && projectId <= 0) {
+        container.innerHTML = emptyState('fa-brain', 'Sin sesión ni proyecto', 'Selecciona una sesión o proyecto para ver su contexto activo.');
+        return;
+    }
+
+    if (CONTEXT_LOADING) {
+        container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin fa-3x"></i><p style="margin-top:20px;">Cargando contexto...</p></div>';
+        return;
+    }
+
+    if (!CONTEXT_DATA) {
+        loadContext().then(() => renderContextTab());
+        container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin fa-3x"></i><p style="margin-top:20px;">Cargando contexto...</p></div>';
+        return;
+    }
+
+    if (!CONTEXT_DATA.ok) {
+        container.innerHTML = `
+<div class="empty-state">
+<i class="fas fa-exclamation-triangle"></i>
+<h3>Error al cargar contexto</h3>
+<p>${escapeHtml(CONTEXT_DATA.error || 'Error desconocido')}</p>
+<button class="btn-control" onclick="CONTEXT_DATA=null; renderContextTab();" style="margin-top:20px;">
+<i class="fas fa-sync"></i> Reintentar
+</button>
+</div>`;
+        return;
+    }
+
+    const projectContext = CONTEXT_DATA.project_context || [];
+    const sessionContext = CONTEXT_DATA.session_context || [];
+    const sessionSummary = CONTEXT_DATA.session_summary || null;
+
+    const projectCount = projectContext.length;
+    const sessionCount = sessionContext.length;
+    const totalTokens = sessionContext.reduce((sum, b) => sum + (parseInt(b.token_count, 10) || 0), 0);
+    const level = sessionSummary && sessionSummary.context_level ? parseInt(sessionSummary.context_level, 10) : 0;
+
+    let html = `
+<div class="panel-card">
+<div class="panel-card-body">
+<div class="section-title">
+<div class="section-title-left">
+<i class="fas fa-brain"></i>
+Contexto Activo de Sesión y Proyecto
+</div>
+<button class="btn-control" onclick="CONTEXT_DATA=null; renderContextTab();">
+<i class="fas fa-sync"></i> Actualizar
+</button>
+</div>
+
+<div class="info-grid">
+<div class="info-item">
+<div class="info-label">Proyecto</div>
+<div class="info-value">${escapeHtml(projectId > 0 ? (DATA.project_name || '#' + projectId) : 'Ninguno')}</div>
+</div>
+<div class="info-item">
+<div class="info-label">Sesión</div>
+<div class="info-value">${escapeHtml(sessionId > 0 ? (DATA.session?.title || '#' + sessionId) : 'Ninguna')}</div>
+</div>
+<div class="info-item">
+<div class="info-label">Contexto de Proyecto</div>
+<div class="info-value" style="color:${projectCount > 0 ? 'var(--ok)' : 'var(--warn)'};">${projectCount}</div>
+</div>
+<div class="info-item">
+<div class="info-label">Bloques de Sesión</div>
+<div class="info-value" style="color:${sessionCount > 0 ? 'var(--ok)' : 'var(--warn)'};">${sessionCount}</div>
+</div>
+<div class="info-item">
+<div class="info-label">Nivel de Compresión</div>
+<div class="info-value">${level}</div>
+</div>
+<div class="info-item">
+<div class="info-label">Tokens en Bloques</div>
+<div class="info-value">${totalTokens.toLocaleString()}</div>
+</div>
+</div>
+`;
+
+    // =============================================================
+    // RESUMEN MAESTRO DE LA SESIÓN (con editar/vaciar)
+    // =============================================================
+    if (sessionId > 0) {
+        html += `
+<div class="section-title" style="margin-top:20px;">
+<div class="section-title-left">
+<i class="fas fa-book"></i>
+Resumen Maestro de la Sesión
+</div>
+<div style="display:flex; gap:8px;">
+<button class="btn-control" onclick="openEditSessionSummary()">
+<i class="fas fa-pen"></i> Editar
+</button>
+${sessionSummary && sessionSummary.context_summary ? `
+<button class="btn-control danger" onclick="deleteSessionSummary()">
+<i class="fas fa-eraser"></i> Vaciar
+</button>
+` : ''}
+</div>
+</div>
+`;
+        if (sessionSummary && sessionSummary.context_summary) {
+            html += `
+<div class="subcard" style="border-left:3px solid var(--ok);">
+<div style="display:flex; gap:12px; flex-wrap:wrap; font-size:0.72rem; color:var(--text-soft); margin-bottom:8px;">
+<span><i class="fas fa-layer-group"></i> Nivel ${level}</span>
+${sessionSummary.last_compressed_at ? `<span><i class="fas fa-clock"></i> Última compresión: ${formatDate(sessionSummary.last_compressed_at)}</span>` : ''}
+</div>
+<div class="mono-preview" style="max-height:300px;">${escapeHtml(sessionSummary.context_summary)}</div>
+</div>
+`;
+        } else {
+            html += `
+<div class="subcard" style="border-left:3px solid var(--text-soft);">
+<div class="mono-preview" style="color:var(--text-soft); font-style:italic;">Sin resumen maestro. Haz clic en "Editar" para escribir uno.</div>
+</div>
+`;
+        }
+    }
+
+    // =============================================================
+    // CONTEXTO DEL PROYECTO (con agregar/editar/eliminar/vaciar)
+    // =============================================================
+    if (projectId > 0) {
+        html += `
+<div class="section-title" style="margin-top:20px;">
+<div class="section-title-left">
+<i class="fas fa-briefcase"></i>
+Contexto del Proyecto (${projectCount})
+</div>
+<div style="display:flex; gap:8px;">
+<button class="btn-control" onclick="openNewProjectContext()">
+<i class="fas fa-plus"></i> Agregar
+</button>
+${projectCount > 0 ? `
+<button class="btn-control danger" onclick="clearProjectContext()">
+<i class="fas fa-trash"></i> Vaciar proyecto
+</button>
+` : ''}
+</div>
+</div>
+`;
+        if (projectCount === 0) {
+            html += emptyState('fa-folder-open', 'Sin contexto de proyecto', 'No hay registros en ProjectContext para este proyecto.');
+        } else {
+            const typeColors = {
+                'rule': 'var(--danger)',
+                'decision': 'var(--accent)',
+                'fact': 'var(--ok)',
+                'style': 'var(--accent-2)',
+                'todo': 'var(--warn)',
+                'note': 'var(--text-soft)'
+            };
+            const typeLabels = {
+                'rule': 'Regla',
+                'decision': 'Decisión',
+                'fact': 'Hecho',
+                'style': 'Estilo',
+                'todo': 'Pendiente',
+                'note': 'Nota'
+            };
+            projectContext.forEach(ctx => {
+                const color = typeColors[ctx.type] || 'var(--text-soft)';
+                const label = typeLabels[ctx.type] || ctx.type;
+                const ctxId = Number(ctx.id_ || ctx.id || 0);
+                html += `
+<div class="subcard" style="border-left:3px solid ${color};">
+<div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+<span class="badge-mini" style="border-color:${color}; color:${color}; background:rgba(255,255,255,0.05);">
+<i class="fas fa-layer-group"></i> ${escapeHtml(label)}
+</span>
+${ctx.created_at ? `<span style="font-size:0.72rem; color:var(--text-soft);"><i class="fas fa-clock"></i> ${formatDate(ctx.created_at)}</span>` : ''}
+</div>
+<div style="display:flex; gap:6px;">
+<button class="btn-control" onclick="openEditProjectContext(${ctxId})" style="padding:4px 8px; font-size:0.75rem;">
+<i class="fas fa-pen"></i>
+</button>
+<button class="btn-control danger" onclick="deleteProjectContextItem(${ctxId})" style="padding:4px 8px; font-size:0.75rem;">
+<i class="fas fa-trash"></i>
+</button>
+</div>
+</div>
+${ctx.title ? `<div style="font-weight:700; color:var(--text-strong); margin-bottom:6px;">${escapeHtml(ctx.title)}</div>` : ''}
+<div class="mono-preview">${escapeHtml(ctx.content || '')}</div>
+</div>
+`;
+            });
+        }
+    }
+
+    // =============================================================
+    // BLOQUES DE SESIÓN (con editar/eliminar/vaciar)
+    // =============================================================
+    if (sessionId > 0) {
+        html += `
+<div class="section-title" style="margin-top:20px;">
+<div class="section-title-left">
+<i class="fas fa-comments"></i>
+Bloques de Sesión (${sessionCount})
+</div>
+${sessionCount > 0 ? `
+<button class="btn-control danger" onclick="clearSessionContext()">
+<i class="fas fa-trash"></i> Vaciar sesión
+</button>
+` : ''}
+</div>
+`;
+        if (sessionCount === 0) {
+            html += emptyState('fa-cube', 'Sin bloques de sesión', 'No hay bloques de contexto registrados para esta sesión.');
+        } else {
+            const typeColors = {
+                'primordial': 'var(--warn)',
+                'level_0': 'var(--text-soft)',
+                'level_1': 'var(--accent-2)',
+                'level_2': 'var(--accent)',
+                'level_3': 'var(--danger)'
+            };
+            const typeLabels = {
+                'primordial': '👑 Primordial',
+                'level_0': 'Nivel 0 (Crudo)',
+                'level_1': 'Nivel 1 (Resumen)',
+                'level_2': 'Nivel 2 (Macro)',
+                'level_3': 'Nivel 3 (Épico)'
+            };
+            sessionContext.forEach(ctx => {
+                const color = typeColors[ctx.block_type] || 'var(--text-soft)';
+                const label = typeLabels[ctx.block_type] || ctx.block_type;
+                const ctxId = Number(ctx.id_ || ctx.id || 0);
+                html += `
+<div class="subcard" style="border-left:3px solid ${color};">
+<div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+<span class="badge-mini" style="border-color:${color}; color:${color}; background:rgba(255,255,255,0.05);">
+<i class="fas fa-cube"></i> ${escapeHtml(label)}
+</span>
+<span style="font-size:0.72rem; color:var(--text-soft);">
+<span><i class="fas fa-coins"></i> ${parseInt(ctx.token_count, 10) || 0} tokens</span>
+${ctx.created_at ? ' · <i class="fas fa-clock"></i> ' + formatDate(ctx.created_at) : ''}
+</span>
+</div>
+<div style="display:flex; gap:6px;">
+<button class="btn-control" onclick="openEditSessionBlock(${ctxId})" style="padding:4px 8px; font-size:0.75rem;">
+<i class="fas fa-pen"></i>
+</button>
+<button class="btn-control danger" onclick="deleteSessionBlockItem(${ctxId})" style="padding:4px 8px; font-size:0.75rem;">
+<i class="fas fa-trash"></i>
+</button>
+</div>
+</div>
+<div class="mono-preview">${escapeHtml(ctx.content_preview || ctx.content || 'Sin vista previa')}</div>
+${ctx.s3_path ? `<div style="font-size:0.72rem; color:var(--accent-2); margin-top:6px;"><i class="fas fa-folder"></i> ${escapeHtml(ctx.s3_path)}</div>` : ''}
+</div>
+`;
+            });
+        }
+    }
+
+    html += `
+</div>
+</div>
+`;
+
+    container.innerHTML = html;
+}
+
+// =====================================================================
+// ACCIONES DE CONTEXTO (context_actions.php)
+// =====================================================================
+async function sendContextAction(payload) {
+    const response = await fetch('context_actions.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        cache: 'no-cache',
+        body: JSON.stringify(payload)
+    });
+    const text = await response.text();
+    let data;
+    try {
+        data = JSON.parse(text);
+    } catch (e) {
+        throw new Error('Respuesta inválida del servidor: ' + text.slice(0, 220));
+    }
+    if (!data.ok) {
+        throw new Error(data.error || 'Error desconocido');
+    }
+    return data;
+}
+
+async function runContextAction(payload) {
+    try {
+        await sendContextAction(payload);
+        closeModal();
+        notify('Operación completada.');
+        CONTEXT_DATA = null;
+        renderContextTab();
+    } catch (e) {
+        notify(e.message, true);
+    }
+}
+
+// ===== PROYECTO: FORMULARIOS =====
+function projectTypeOptions(selected) {
+    const types = [
+        { value: 'rule', label: 'Regla' },
+        { value: 'decision', label: 'Decisión' },
+        { value: 'fact', label: 'Hecho' },
+        { value: 'style', label: 'Estilo' },
+        { value: 'todo', label: 'Pendiente' },
+        { value: 'note', label: 'Nota' }
+    ];
+    return types.map(t => `<option value="${t.value}" ${selected === t.value ? 'selected' : ''}>${t.label}</option>`).join('');
+}
+
+function blockTypeOptions(selected) {
+    const types = ['primordial', 'level_0', 'level_1', 'level_2', 'level_3'];
+    return types.map(t => `<option value="${t}" ${selected === t ? 'selected' : ''}>${t}</option>`).join('');
+}
+
+function openNewProjectContext() {
+    if (projectId <= 0) {
+        notify('Debes tener un proyecto activo para agregar contexto.', true);
+        return;
+    }
+    openModal('Agregar Contexto de Proyecto', `
+<div class="ctx-form">
+<label class="form-label">Tipo</label>
+<select id="ctxProjectType" class="form-select-dark">${projectTypeOptions('note')}</select>
+<label class="form-label">Título</label>
+<input id="ctxProjectTitle" class="form-control-dark" type="text" placeholder="Ej: Regla de arquitectura">
+<label class="form-label">Contenido</label>
+<textarea id="ctxProjectContent" class="form-control-dark" placeholder="Escribe aquí el contexto del proyecto..."></textarea>
+</div>
+`, `
+<button class="btn-control" onclick="closeModal()">Cancelar</button>
+<button class="btn-control" onclick="createProjectContextAction()">
+<i class="fas fa-save"></i> Guardar
+</button>
+`);
+}
+
+function openEditProjectContext(id) {
+    const item = (CONTEXT_DATA.project_context || []).find(x => Number(x.id_ || x.id) === id);
+    if (!item) return;
+    openModal('Editar Contexto de Proyecto', `
+<div class="ctx-form">
+<label class="form-label">Tipo</label>
+<select id="ctxProjectType" class="form-select-dark">${projectTypeOptions(item.type)}</select>
+<label class="form-label">Título</label>
+<input id="ctxProjectTitle" class="form-control-dark" type="text" value="${escapeAttr(item.title || '')}">
+<label class="form-label">Contenido</label>
+<textarea id="ctxProjectContent" class="form-control-dark">${escapeHtml(item.content || '')}</textarea>
+</div>
+`, `
+<button class="btn-control" onclick="closeModal()">Cancelar</button>
+<button class="btn-control" onclick="saveProjectContextAction(${id})">
+<i class="fas fa-save"></i> Guardar
+</button>
+`);
+}
+
+async function createProjectContextAction() {
+    await runContextAction({
+        action: 'create_project_context',
+        project_id: projectId,
+        type: document.getElementById('ctxProjectType').value,
+        title: document.getElementById('ctxProjectTitle').value,
+        content: document.getElementById('ctxProjectContent').value
+    });
+}
+
+async function saveProjectContextAction(id) {
+    await runContextAction({
+        action: 'update_project_context',
+        project_id: projectId,
+        id: id,
+        type: document.getElementById('ctxProjectType').value,
+        title: document.getElementById('ctxProjectTitle').value,
+        content: document.getElementById('ctxProjectContent').value
+    });
+}
+
+async function deleteProjectContextItem(id) {
+    if (!confirm('¿Eliminar este registro de contexto del proyecto?')) return;
+    await runContextAction({
+        action: 'delete_project_context',
+        project_id: projectId,
+        id: id
+    });
+}
+
+async function clearProjectContext() {
+    if (!confirm('¿Eliminar TODO el contexto registrado para este proyecto? Esta acción no se puede deshacer.')) return;
+    await runContextAction({
+        action: 'clear_project_context',
+        project_id: projectId
+    });
+}
+
+// ===== SESIÓN: RESUMEN MAESTRO =====
+function openEditSessionSummary() {
+    const current = CONTEXT_DATA.session_summary && CONTEXT_DATA.session_summary.context_summary
+        ? String(CONTEXT_DATA.session_summary.context_summary)
+        : '';
+    openModal('Editar Resumen Maestro de la Sesión', `
+<div class="ctx-form">
+<label class="form-label">Resumen</label>
+<textarea id="ctxSummaryContent" class="form-control-dark" style="min-height: 220px;">${escapeHtml(current)}</textarea>
+</div>
+`, `
+<button class="btn-control" onclick="closeModal()">Cancelar</button>
+<button class="btn-control" onclick="saveSessionSummaryAction()">
+<i class="fas fa-save"></i> Guardar
+</button>
+`);
+}
+
+async function saveSessionSummaryAction() {
+    await runContextAction({
+        action: 'update_session_summary',
+        session_id: sessionId,
+        context_summary: document.getElementById('ctxSummaryContent').value
+    });
+}
+
+async function deleteSessionSummary() {
+    if (!confirm('¿Vaciar el resumen maestro de esta sesión?')) return;
+    await runContextAction({
+        action: 'update_session_summary',
+        session_id: sessionId,
+        context_summary: ''
+    });
+}
+
+// ===== SESIÓN: BLOQUES =====
+function openEditSessionBlock(id) {
+    const item = (CONTEXT_DATA.session_context || []).find(x => Number(x.id_ || x.id) === id);
+    if (!item) return;
+    openModal('Editar Bloque de Sesión', `
+<div class="ctx-form">
+<label class="form-label">Tipo de bloque</label>
+<select id="ctxBlockType" class="form-select-dark">${blockTypeOptions(item.block_type || 'level_0')}</select>
+<label class="form-label">Tokens (opcional)</label>
+<input id="ctxBlockTokens" class="form-control-dark" type="number" min="0" value="${parseInt(item.token_count, 10) || 0}">
+<label class="form-label">Contenido</label>
+<textarea id="ctxBlockContent" class="form-control-dark">${escapeHtml(item.content_preview || item.content || '')}</textarea>
+</div>
+`, `
+<button class="btn-control" onclick="closeModal()">Cancelar</button>
+<button class="btn-control" onclick="saveSessionBlockAction(${id})">
+<i class="fas fa-save"></i> Guardar
+</button>
+`);
+}
+
+async function saveSessionBlockAction(id) {
+    await runContextAction({
+        action: 'update_session_block',
+        session_id: sessionId,
+        id: id,
+        block_type: document.getElementById('ctxBlockType').value,
+        content_preview: document.getElementById('ctxBlockContent').value,
+        token_count: document.getElementById('ctxBlockTokens').value
+    });
+}
+
+async function deleteSessionBlockItem(id) {
+    if (!confirm('¿Eliminar este bloque de contexto de la sesión?')) return;
+    await runContextAction({
+        action: 'delete_session_block',
+        session_id: sessionId,
+        id: id
+    });
+}
+
+async function clearSessionContext() {
+    if (!confirm('¿Eliminar TODOS los bloques de contexto de esta sesión? Esta acción no se puede deshacer.')) return;
+    await runContextAction({
+        action: 'clear_session_context',
+        session_id: sessionId
+    });
+}
+
+
+// =====================================================================
+// ARRANQUE
+// =====================================================================
+// Arranque: primero cargar selectores, luego los datos
+loadSelectors().finally(() => loadData());
 </script>
 </body>
 </html>
