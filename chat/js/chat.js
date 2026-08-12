@@ -119,7 +119,7 @@
       }
     }
     function buildS3Url(key) {
-      return '../descargar.php?archivo=' + encodeURIComponent(key) + '&nombre=' + encodeURIComponent(key.split('/').pop());
+      return 'descargar.php?archivo=' + encodeURIComponent(key) + '&nombre=' + encodeURIComponent(key.split('/').pop());
     }
     function scrollMessagesToBottom() {
       if (el.messages) el.messages.scrollTop = el.messages.scrollHeight;
@@ -1157,7 +1157,7 @@ if ((editMatch || createMatch) && currentProjectId) {
     fd.append('project_id', String(currentProjectId));
     fd.append('target_filename', targetFilename);
     fd.append('instruction', instruction);
-    const r = await fetch('../code_edit.php', { 
+    const r = await fetch('code_edit.php', { 
       method:'POST', 
       credentials:'same-origin', 
       body: fd 
@@ -1166,12 +1166,40 @@ if ((editMatch || createMatch) && currentProjectId) {
     if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
     const action = isCreation ? 'creado' : 'actualizado';
     const replyText = `✅ **${j.filename}** ${action} exitosamente (versión **v${j.new_version}**).\n\n📝 *Instrucción:* ${esc(j.diff_summary)}\n\n🤖 *Modelo usado:* \`${j.model_used || 'desconocido'}\`\n\n📂 *Ruta S3:* \`${j.download_url || 'N/A'}\``;
+    
+    // ✅ GUARDAR PREGUNTA Y RESPUESTA EN BD (ChatMessages)
+try {
+    const fdSave = new FormData();
+    fdSave.append('session_id', String(currentSessionId));
+    fdSave.append('user_text', text);
+    fdSave.append('reply_text', replyText);
+    fdSave.append('model_used', j.model_used || 'code_edit_direct');
+
+    const rSave = await fetch('chat_save_edit.php', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: fdSave
+    });
+
+    if (rSave.ok) {
+        const jSave = await rSave.json();
+        if (jSave.ok && jSave.saved) {
+            console.log('✅ Edición guardada en BD:', jSave.saved);
+        }
+    } else {
+        console.warn('⚠️ No se pudo guardar la edición en BD. HTTP:', rSave.status);
+    }
+} catch (saveErr) {
+    console.warn('⚠️ Error guardando edición en BD:', saveErr);
+    // No bloquear por esto
+}
+    
     pushLocal('assistant', replyText, { created_at: new Date().toISOString() });
     await loadProjectSources(currentProjectId);
     setStatus('🔄 Actualizando índice de conocimientos...');
     const fdIndex = new FormData();
     fdIndex.append('project_id', String(currentProjectId));
-    fetch('../index_project_sources.php', { method: 'POST', credentials: 'same-origin', body: fdIndex })
+    fetch('index_project_sources.php', { method: 'POST', credentials: 'same-origin', body: fdIndex })
       .then(async (res) => {
         try {
           const jIdx = await res.json();
@@ -1265,7 +1293,7 @@ if (lastUserMsg) {
             setStatus('🔄 Actualizando índice de conocimientos...');
             const fdIndex = new FormData();
             fdIndex.append('project_id', String(currentProjectId));
-            fetch('../index_project_sources.php', { method: 'POST', credentials: 'same-origin', body: fdIndex })
+            fetch('index_project_sources.php', { method: 'POST', credentials: 'same-origin', body: fdIndex })
               .then(async (res) => {
                 try {
                   const j = await res.json();
@@ -1722,23 +1750,33 @@ function renderProjectSources() {
         alert('Error eliminando proyecto: ' + e.message);
       }
     }
+
 const slugInput = document.getElementById('projectSlug');
 const prefixInput = document.getElementById('projectRootPrefix');
+
 if (slugInput && prefixInput) {
-  slugInput.addEventListener('input', () => {
-    const slug = slugInput.value.trim().replace(/[^a-z0-9-]/gi, '').toLowerCase();
-    if (slug) {
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-      const day = String(now.getDate()).padStart(2, '0');
-      const uid = getUserId() || '0';
-      prefixInput.value = `Data/Chat/Uploads/${uid}/${year}/${month}/${day}/${slug}/`;
-    } else {
-      prefixInput.value = '';
-    }
-  });
+    slugInput.addEventListener('input', () => {
+        const slug = slugInput.value.trim().replace(/[^a-z0-9-]/gi, '').toLowerCase();
+        if (slug) {
+            const uid = getUserId() || '0';
+            
+            // Verificar si estamos editando un proyecto existente 
+            const projectIdField = document.getElementById('projectId');
+            const projectId = projectIdField ? projectIdField.value : '';
+            
+            if (projectId && projectId !== '') {
+                // ✅ EDICIÓN: Mostrar la ruta real con el ID del proyecto
+                prefixInput.value = `Data/Chat/Uploads/${uid}/${projectId}/`;
+            } else {
+                // ✅ CREACIÓN: Mostrar placeholder porque el ID se asignará al guardar
+                prefixInput.value = `Data/Chat/Uploads/${uid}/{project_id}/`;
+            }
+        } else {
+            prefixInput.value = '';
+        }
+    });
 }
+
 async function saveProject(e) {
   e.preventDefault();
   const projectId = document.getElementById('projectId').value;
@@ -1823,124 +1861,159 @@ async function saveProject(e) {
         setStatus('');
       }, 600);
     }
+//para el modal de subir archivos
 function openProjectSourcesModal() {
-  if (!currentProjectId) { 
-    alert('⚠️ Selecciona un proyecto primero en el panel lateral.'); 
-    return; 
-  }
-  const modal = document.getElementById('modalProjectSources');
-  if (!modal) return;
-  const project = projects.find(p => p.id === currentProjectId);
-  if (project) {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const path = `Data/Chat/Uploads/${year}/${month}/${day}/${project.slug}/`;
-    const pathEl = document.getElementById('projectUploadPath');
-    if (pathEl) pathEl.textContent = path;
-  }
-  const modalList = document.getElementById('modalSourcesList');
-  if (modalList) {
-    if (projectSources.length === 0) {
-      modalList.innerHTML = '<div class="list-group-item text-muted small">No hay fuentes agregadas aún.</div>';
-    } else {
-      modalList.innerHTML = projectSources.map(s => {
-        const statusClass = s.status || 'pending';
-        const statusText = { 'pending': 'Pendiente', 'indexed': 'Indexado', 'stale': 'Desactualizado', 'error': 'Error' }[statusClass] || statusClass;
-        const badgeClass = statusClass === 'indexed' ? 'success' : statusClass === 'error' ? 'danger' : 'warning';
-        return `<div class="list-group-item d-flex justify-content-between align-items-center py-2" data-id="${s.id}">
-          <div class="text-truncate" style="max-width: 70%;" title="${esc(s.filename)}">
-            <i class="fas fa-file-code mr-1 text-muted"></i> ${esc(s.filename)}
-          </div>
-          <div class="d-flex align-items-center" style="gap: 8px;">
-            <span class="badge badge-${badgeClass}" style="font-size: 0.7rem;">${statusText}</span>
-            <button class="btn btn-sm btn-outline-danger btn-delete-modal-source" data-id="${s.id}" title="Eliminar fuente" style="padding: 0 .4rem;">
-              <i class="fas fa-trash"></i>
-            </button>
-          </div>
-        </div>`;
-      }).join('');
-      modalList.querySelectorAll('.btn-delete-modal-source').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const id = parseInt(btn.getAttribute('data-id'), 10);
-          deleteProjectSource(id); 
-        });
-      });
+    if (!currentProjectId) {
+        alert('⚠️ Selecciona un proyecto primero en el panel lateral.');
+        return;
     }
-  }
-  const progress = document.getElementById('projectUploadProgress');
-  const result = document.getElementById('projectUploadResult');
-  if (progress) progress.classList.add('d-none');
-  if (result) result.classList.add('d-none');
-  const fileInput = document.getElementById('projectFilesInput');
-  if (fileInput) fileInput.value = '';
-    jQuery(modal).modal('show'); 
+    const modal = document.getElementById('modalProjectSources');
+    if (!modal) return;
+    
+    const project = projects.find(p => p.id === currentProjectId);
+    if (project) {
+        // ✅ CORREGIDO: Usar la misma ruta que el backend
+        const userId = document.getElementById('chatUserId') ? document.getElementById('chatUserId').value : 1;
+        const path = `Data/Chat/Uploads/${userId}/${currentProjectId}/`;
+        const pathEl = document.getElementById('projectUploadPath');
+        if (pathEl) pathEl.textContent = path;
+    }
+    
+    const modalList = document.getElementById('modalSourcesList');
+    if (modalList) {
+        if (projectSources.length === 0) {
+            modalList.innerHTML = '<div class="list-group-item text-muted small">No hay fuentes agregadas aún.</div>';
+        } else {
+            modalList.innerHTML = projectSources.map(s => {
+                const statusClass = s.status || 'pending';
+                const statusText = {
+                    'pending': 'Pendiente',
+                    'indexed': 'Indexado',
+                    'stale': 'Desactualizado',
+                    'error': 'Error'
+                }[statusClass] || statusClass;
+                const badgeClass = statusClass === 'indexed' ? 'success' : statusClass === 'error' ? 'danger' : 'warning';
+                return `<div class="list-group-item d-flex justify-content-between align-items-center py-2" data-id="${s.id}">
+                    <div class="text-truncate" style="max-width: 70%;" title="${esc(s.filename)}">
+                        <i class="fas fa-file-code mr-1 text-muted"></i> ${esc(s.filename)}
+                    </div>
+                    <div class="d-flex align-items-center" style="gap: 8px;">
+                        <span class="badge badge-${badgeClass}" style="font-size: 0.7rem;">${statusText}</span>
+                        <button class="btn btn-sm btn-outline-danger btn-delete-modal-source" data-id="${s.id}" title="Eliminar fuente" style="padding: 0 .4rem;">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>`;
+            }).join('');
+            
+            modalList.querySelectorAll('.btn-delete-modal-source').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const id = parseInt(btn.getAttribute('data-id'), 10);
+                    deleteProjectSource(id);
+                });
+            });
+        }
+    }
+    
+    const progress = document.getElementById('projectUploadProgress');
+    const result = document.getElementById('projectUploadResult');
+    if (progress) progress.classList.add('d-none');
+    if (result) result.classList.add('d-none');
+    
+    const fileInput = document.getElementById('projectFilesInput');
+    if (fileInput) fileInput.value = '';
+    
+    jQuery(modal).modal('show');
 }
+
+// funcin para subir archivos al proyecto
 async function uploadProjectFiles() {
-  if (!currentProjectId) {
-    alert('⚠️ No hay proyecto seleccionado');
-    return;
-  }
-  const fileInput = document.getElementById('projectFilesInput');
-  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
-    alert('⚠️ Selecciona al menos un archivo');
-    return;
-  }
-  const files = fileInput.files;
-  const fd = new FormData();
-  fd.append('project_id', currentProjectId);
-  for (let i = 0; i < files.length; i++) {
-    fd.append('files[]', files[i], files[i].name);
-  }
-  const progress = document.getElementById('projectUploadProgress');
-  const progressBar = document.getElementById('projectUploadProgressBar');
-  const statusEl = document.getElementById('projectUploadStatus');
-  const result = document.getElementById('projectUploadResult');
-  const successMsg = document.getElementById('projectUploadSuccessMsg');
-  if (progress) progress.classList.remove('d-none');
-  if (result) result.classList.add('d-none');
-  if (progressBar) progressBar.style.width = '30%';
-  if (statusEl) statusEl.textContent = `Subiendo ${files.length} archivo(s)...`;
-  try {
-    const r = await fetch('../project_upload.php', {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: fd
-    });
-    if (progressBar) progressBar.style.width = '80%';
-    const j = toJSONorThrow(await r.text(), r.status, 'Subir archivos');
-    if (!r.ok || j.ok === false) {
-      throw new Error(j.error || `HTTP ${r.status}`);
+    if (!currentProjectId) {
+        alert('⚠️ No hay proyecto seleccionado');
+        return;
     }
-    if (progressBar) {
-      progressBar.style.width = '100%';
-      progressBar.classList.remove('progress-bar-animated');
+    
+    const fileInput = document.getElementById('projectFilesInput');
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+        alert('⚠️ Selecciona al menos un archivo');
+        return;
     }
-    if (statusEl) statusEl.textContent = '¡Completado!';
-    if (successMsg) {
-      let msg = `${j.uploaded.length} archivo(s) subido(s) correctamente.`;
-      if (j.errors && j.errors.length > 0) {
-        msg += `<br><small class="text-warning">${j.errors.length} error(es): ${j.errors.join(', ')}</small>`;
-      }
-      successMsg.innerHTML = msg;
+    
+    const files = fileInput.files;
+    const fd = new FormData();
+    
+    // ✅ AGREGADO: Enviar user_id explícitamente
+    const uid = getUserId();
+    if (uid) fd.append('user_id', uid);
+    
+    fd.append('project_id', currentProjectId);
+    
+    for (let i = 0; i < files.length; i++) {
+        fd.append('files[]', files[i], files[i].name);
     }
-    if (result) result.classList.remove('d-none');
-    await loadProjectSources(currentProjectId);
-    setTimeout(() => {
-      jQuery('#modalProjectSources').modal('hide'); 
-    }, 2000);
-  } catch (e) {
-    console.error('Error subiendo archivos:', e);
-    if (statusEl) statusEl.textContent = 'Error: ' + e.message;
-    if (progressBar) {
-      progressBar.classList.remove('progress-bar-animated');
-      progressBar.classList.add('bg-danger');
+    
+    const progress = document.getElementById('projectUploadProgress');
+    const progressBar = document.getElementById('projectUploadProgressBar');
+    const statusEl = document.getElementById('projectUploadStatus');
+    const result = document.getElementById('projectUploadResult');
+    const successMsg = document.getElementById('projectUploadSuccessMsg');
+    
+    if (progress) progress.classList.remove('d-none');
+    if (result) result.classList.add('d-none');
+    if (progressBar) progressBar.style.width = '30%';
+    if (statusEl) statusEl.textContent = `Subiendo ${files.length} archivo(s)...`;
+    
+    try {
+        const r = await fetch('project_upload.php', {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: fd
+        });
+        
+        if (progressBar) progressBar.style.width = '80%';
+        
+        const j = toJSONorThrow(await r.text(), r.status, 'Subir archivos');
+        
+        if (!r.ok || j.ok === false) {
+            throw new Error(j.error || `HTTP ${r.status}`);
+        }
+        
+        if (progressBar) {
+            progressBar.style.width = '100%';
+            progressBar.classList.remove('progress-bar-animated');
+        }
+        
+        if (statusEl) statusEl.textContent = '¡Completado!';
+        
+        if (successMsg) {
+            let msg = `${j.uploaded.length} archivo(s) subido(s) correctamente.`;
+            if (j.errors && j.errors.length > 0) {
+                msg += `<br><small class="text-warning">${j.errors.length} error(es): ${j.errors.join(', ')}</small>`;
+            }
+            successMsg.innerHTML = msg;
+        }
+        
+        if (result) result.classList.remove('d-none');
+        
+        await loadProjectSources(currentProjectId);
+        
+        setTimeout(() => {
+            jQuery('#modalProjectSources').modal('hide');
+        }, 2000);
+        
+    } catch (e) {
+        console.error('Error subiendo archivos:', e);
+        if (statusEl) statusEl.textContent = 'Error: ' + e.message;
+        if (progressBar) {
+            progressBar.classList.remove('progress-bar-animated');
+            progressBar.classList.add('bg-danger');
+        }
+        alert('Error subiendo archivos: ' + e.message);
     }
-    alert('Error subiendo archivos: ' + e.message);
-  }
 }
+
+
 async function deleteProjectSource(sourceId) {
   if (!confirm('¿Eliminar esta fuente del proyecto? Se borrará el archivo de S3 y todos sus chunks indexados.')) {
     return;
@@ -1948,7 +2021,7 @@ async function deleteProjectSource(sourceId) {
   try {
     const fd = new FormData();
     fd.append('source_id', sourceId);
-    const r = await fetch('../project_source_delete.php', {
+    const r = await fetch('project_source_delete.php', {
       method: 'POST',
       credentials: 'same-origin',
       body: fd
@@ -1977,7 +2050,7 @@ async function indexPendingFromPanel() {
   try {
     const fd = new FormData();
     fd.append('project_id', currentProjectId);
-    const r = await fetch('../index_project_sources.php', {
+    const r = await fetch('index_project_sources.php', {
       method: 'POST',
       credentials: 'same-origin',
       body: fd
@@ -2015,7 +2088,7 @@ async function indexPendingSources() {
   try {
     const fd = new FormData();
     fd.append('project_id', currentProjectId);
-    const r = await fetch('../index_project_sources.php', {
+    const r = await fetch('index_project_sources.php', {
       method: 'POST',
       credentials: 'same-origin',
       body: fd
@@ -3154,8 +3227,30 @@ function getCurrentProjectId() {
 }
 
 function getCurrentSessionId() {
-    if (typeof window.currentSessionId !== 'undefined') return window.currentSessionId;
-    return null;
+    // 1) Variable local del IIFE (capturada por closure - esta SÍ tiene el valor real)
+    if (typeof currentSessionId !== 'undefined' && currentSessionId) {
+        return parseInt(currentSessionId);
+    }
+    // 2) Sesión libre activa en el sidebar principal
+    const freeActive = document.querySelector('#sbChatList .sb-item.active');
+    if (freeActive && freeActive.getAttribute('data-id')) {
+        return parseInt(freeActive.getAttribute('data-id'), 10);
+    }
+    // 3) ✅ NUEVO: Sesión activa DENTRO de un proyecto
+    const projActive = document.querySelector('#sbProjectList .project-session.active');
+    if (projActive && projActive.getAttribute('data-id')) {
+        return parseInt(projActive.getAttribute('data-id'), 10);
+    }
+    // 4) Badge
+    const badge = document.getElementById('chat2SessionBadge');
+    if (badge && badge.dataset && badge.dataset.sessionId) {
+        return parseInt(badge.dataset.sessionId, 10);
+    }
+    // 5) Fallback global
+    if (typeof window.currentSessionId !== 'undefined' && window.currentSessionId) {
+        return parseInt(window.currentSessionId);
+    }
+    return 0;
 }
 
 // Exportar funciones utilitarias para otros módulos
