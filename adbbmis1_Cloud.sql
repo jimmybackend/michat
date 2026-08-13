@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: localhost:3306
--- Tiempo de generación: 12-08-2026 a las 13:48:37
+-- Tiempo de generación: 13-08-2026 a las 14:29:23
 -- Versión del servidor: 8.0.46-37
 -- Versión de PHP: 8.4.24
 
@@ -87,7 +87,8 @@ CREATE TABLE `ChatSessions` (
   `context_embedding` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
   `context_level` tinyint UNSIGNED NOT NULL DEFAULT '0' COMMENT '0: crudo, 1: resumen x5, 2: macro x20, 3: épico x80',
   `last_compressed_at` timestamp NULL DEFAULT NULL COMMENT 'Última vez que se ejecutó la compresión de contexto',
-  `pending_summary` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Bandera anti-ciclo: 1 = hay bloques level_0 nuevos (> RECENT_WINDOW) esperando el resumen del cron; el cron la vuelve a 0 tras procesar'
+  `pending_summary` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Bandera anti-ciclo: 1 = hay bloques level_0 nuevos (> RECENT_WINDOW) esperando el resumen del cron; el cron la vuelve a 0 tras procesar',
+  `memory_summary_updated_at` timestamp NULL DEFAULT NULL COMMENT 'Última vez que Nova Micro reescribió el context_summary'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
 
 -- --------------------------------------------------------
@@ -351,7 +352,10 @@ CREATE TABLE `SessionContextBlocks` (
   `embedding` blob COMMENT 'Vector binario float32 little-endian',
   `embedding_json` json DEFAULT NULL COMMENT 'Fallback legible: [0.012, -0.034, ...]',
   `embedding_model` varchar(120) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `is_memory_summary` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = Resumen generado por memoria selectiva',
+  `memory_hits` int NOT NULL DEFAULT '0' COMMENT 'Veces que se consultó este resumen',
+  `last_memory_used_at` timestamp NULL DEFAULT NULL COMMENT 'Última vez que se usó como memoria'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -621,9 +625,9 @@ ALTER TABLE `SessionContextBlocks`
   ADD PRIMARY KEY (`id_`),
   ADD KEY `idx_scb_session` (`session_id_`),
   ADD KEY `idx_scb_type_locked` (`block_type`,`is_locked`),
-  ADD KEY `fk_scb_q_msg` (`question_msg_id`),
   ADD KEY `fk_scb_a_msg` (`answer_msg_id`),
-  ADD KEY `idx_scb_has_embedding` (`embedding_model`);
+  ADD KEY `idx_scb_has_embedding` (`embedding_model`),
+  ADD KEY `idx_scb_memory_qa` (`question_msg_id`,`answer_msg_id`,`is_memory_summary`);
 
 --
 -- Indices de la tabla `SourceChunks`
