@@ -549,13 +549,13 @@ function detectIsCode(string $text): bool {
 // normales (máximo ahorro).
 // Retorna: ['text' => '...', 'inputTokens' => int, 'outputTokens' => int, 'model' => string]
 // =====================================================================
-function summarizeQAWithAI($bedrock, string $question, string $answer): array {
+function summarizeQAWithAI($bedrock, string $question, string $answer, float $temperature = 0.2, float $topP = 0.9, int $maxTokens = 600, int $seed = 0): array {
     // 1. Detección multi-lenguaje de si el Q&A es sobre código/programación
     $isCode = detectIsCode($question . ' ' . $answer);
 
     // 2. Seleccionar el modelo dinámicamente
     $modelId = $isCode ? 'anthropic.claude-3-5-haiku-20241022-v1:0' : 'amazon.nova-micro-v1:0';
-    
+
     $systemPrompt = "Eres un motor de memoria inteligente. Resume la siguiente pregunta y respuesta en un bloque de conocimiento conciso (máximo 250 palabras).
 
 REGLAS:
@@ -572,14 +572,24 @@ REGLAS:
     $userPrompt = "PREGUNTA:\n" . mb_substr($question, 0, 4000) . "\n\nRESPUESTA:\n" . mb_substr($answer, 0, 6000) . "\n\nGenera el resumen:";
 
     try {
+
+        $sumInferConfig = [
+            'maxTokens'   => max(200, $maxTokens),  // Mínimo 200 para el resumen
+            'temperature' => $temperature,
+            'topP'        => $topP
+        ];
+        // ✅ Solo agregar seed si es mayor a 0
+        if ($seed > 0) {
+            $sumInferConfig['seed'] = $seed;
+        }
+
         $res = $bedrock->converse([
             'modelId' => $modelId,
             'messages' => [['role' => 'user', 'content' => [['text' => $userPrompt]]]],
             'system' => [['text' => $systemPrompt]],
-            // Temperature 0.2 para forzar a la IA a ser factual y no "alucinar" omitiendo datos técnicos
-            'inferenceConfig' => ['maxTokens' => 600, 'temperature' => 0.2, 'topP' => 0.9]
+            'inferenceConfig' => $sumInferConfig
         ]);
-
+        
         $text = '';
         foreach (($res['output']['message']['content'] ?? []) as $block) {
             if (isset($block['text'])) $text .= $block['text'];
@@ -1012,6 +1022,15 @@ if ($model_id === '') jexit(['ok'=>false,'error'=>'Falta parámetro model'], 400
 $temperature = isset($_POST['temperature']) ? (float)$_POST['temperature'] : 0.7;
 $max_tokens  = isset($_POST['max_tokens']) ? max(1,(int)$_POST['max_tokens']) : 1200;
 $top_p       = isset($_POST['top_p']) ? (float)$_POST['top_p'] : 0.9;
+$use_rag = isset($_POST['use_rag']) && $_POST['use_rag'] === '1';
+
+// ✅ Parámetros del COMPILADOR de prompts (Fase 1)
+$compile_temperature = isset($_POST['compile_temperature']) ? (float)$_POST['compile_temperature'] : 0.0;
+$compile_max_tokens  = isset($_POST['compile_max_tokens']) ? max(100,(int)$_POST['compile_max_tokens']) : 200;
+$compile_top_p       = isset($_POST['compile_top_p']) ? (float)$_POST['compile_top_p'] : 0.1;
+$resp_max_tokens     = isset($_POST['resp_max_tokens']) ? max(100,(int)$_POST['resp_max_tokens']) : 1000;
+// ✅ NUEVO: Semilla global para respuestas deterministas (0 = desactivado)
+$seed = isset($_POST['seed']) ? max(0, (int)$_POST['seed']) : 0;
 
 // NUEVO: Parámetros para Human-in-the-loop (Fase 4)
 $compile_only = isset($_POST['compile_only']) && $_POST['compile_only'] === '1';
@@ -1029,6 +1048,10 @@ $sessionData = $resS->fetch_assoc();
 $projectId = (int)($sessionData['project_id_'] ?? 0);
 $stmtS->close();
 $attachmentMode = getSessionAttachmentMode($sessionData['meta'] ?? '');
+// ✅ NUEVO: Si el frontend envió use_rag, sobreescribir el modo de la sesión
+if (isset($_POST['use_rag'])) {
+    $attachmentMode = $use_rag ? 'rag' : 'always';
+}
 
 // ✅ MEMORIA PROCEDURAL: Cargar patrones globales del usuario
 $proceduralMemory = [];
@@ -1525,13 +1548,24 @@ if (isset($retriever)) {
 
 $compilerUserPrompt = $compilerContext . "\n" . $compilerUserPrompt;
 
-        $compilerParams = [
-            'modelId' => $compiler_model,
-            'messages' => [['role' => 'user', 'content' => [['text' => $compilerUserPrompt]]]],
-            'system' => [['text' => $compilerSystemPrompt]],
-            'inferenceConfig' => ['maxTokens' => 1000, 'temperature' => 0.7, 'topP' => 0.9]
-        ];
-        
+
+$compilerInferConfig = [
+    'maxTokens'   => $compile_max_tokens,
+    'temperature' => $compile_temperature,
+    'topP'        => $compile_top_p
+];
+// ✅ Solo agregar seed si es mayor a 0 (algunos modelos no lo soportan)
+if ($seed > 0) {
+    $compilerInferConfig['seed'] = $seed;
+}
+
+$compilerParams = [
+    'modelId' => $compiler_model,
+    'messages' => [['role' => 'user', 'content' => [['text' => $compilerUserPrompt]]]],
+    'system' => [['text' => $compilerSystemPrompt]],
+    'inferenceConfig' => $compilerInferConfig
+];
+
         $compilerRes = $bedrock->converse($compilerParams);
         $compilerBlocks = $compilerRes['output']['message']['content'] ?? [];
         $compilerUsage = $compilerRes['usage'] ?? [];
@@ -1860,8 +1894,13 @@ Parámetros requeridos: project_id, session_id, target_filename (y 'instruction'
     foreach ($contextTexts as $ctx) $userParts[] = ['text' => $ctx];
 
     $messages = [ [ 'role' => 'user', 'content' => $userParts ] ];
-    $inferBase = ['maxTokens' => $max_tokens, 'temperature' => $temperature, 'topP' => $top_p];
 
+$use_max_tokens = $resp_max_tokens > 0 ? $resp_max_tokens : $max_tokens;
+$inferBase = ['maxTokens' => $use_max_tokens, 'temperature' => $temperature, 'topP' => $top_p];
+// ✅ Solo agregar seed si es mayor a 0
+if ($seed > 0) {
+    $inferBase['seed'] = $seed;
+}
     // ===== DEFINICIÓN DE HERRAMIENTAS PARA BEDROCK (Mejorada para edición) =====
     $tools = [
         ['toolSpec' => [
@@ -2065,13 +2104,14 @@ if($stmtA){
 // ====================================================================
 // ✅ METACOGNICIÓN FASE 1 - SMART MEMORY (Única versión, sin duplicados)
 // Nova Micro resume el Q&A ANTES de guardar en SessionContextBlocks.
-// ====================================================================
+// ==================================================================== 
 try {
     $question_msg_for_block = $saved_user_text_id ?: (isset($file_ids[0]) ? $file_ids[0] : null);
     $block_id = next_id($db_connection, 'SessionContextBlocks', 'id_');
     
-    // ✅ SMART MEMORY: Nova Micro resume el Q&A de forma inteligente
-    $summaryData = summarizeQAWithAI($bedrock, $text, $reply_text);
+    // ✅ SMART MEMORY: Nova Micro resume el Q&A usando los mismos parámetros del usuario
+    $summaryData = summarizeQAWithAI($bedrock, $text, $reply_text, $temperature, $top_p, $resp_max_tokens, $seed);
+    
     $preview = $summaryData['text'];
     $token_count = (int)ceil(mb_strlen($preview) / 4);
     

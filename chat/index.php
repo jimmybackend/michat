@@ -10,7 +10,10 @@ if (!isset($_SESSION['usuario']) || empty($_SESSION['usuario'])) {
     header("Location: ../index.php");
     exit;
 }
-
+// ✅ AÑADE ESTO AQUÍ (Generar Token CSRF para el JS)
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
 /**
  * Genera la URL para editar un archivo (si es editable) o verlo.
  * 
@@ -55,6 +58,10 @@ function build_file_s3_key(string $ruta, string $encriptado): string {
 function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION)); }
 
 ?>
+<?php
+$mostrarTruncate = isset($_SESSION['user_id']) && (( $_SESSION['user_id'] ?? '') === 1);
+?>
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -67,7 +74,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 <link rel="icon" href="asistente-de-inteligencia-artificial.gif" type="image/x-icon">
 
-
+<meta name="csrf-token" content="<?php echo htmlspecialchars($_SESSION['csrf_token'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
 <link rel="stylesheet" href="css/chat2.css" />
 <link rel="stylesheet" href="css/design-system.css" />
 </head>
@@ -265,7 +272,6 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 
 
 <div class="card-footer">
-<small id="chat2Status" class="text-muted"></small>
 <div id="chat2Usage" class="text-muted small mt-2"></div>
 <div id="chatToasts" class="chat-toasts"></div>
 <div id="incomingToasts" class="chat-toasts"></div>
@@ -308,6 +314,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
   <i class="fas fa-paper-plane"></i> Enviar
 </button>
 </div>
+<small id="chat2Status" class="text-muted"></small>
 </div>
 
 
@@ -488,21 +495,58 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
   </optgroup>
 
 </select>
-<div class="d-flex align-items-center flex-wrap mt-2" style="gap:.75rem;">
-<div class="custom-control custom-switch">
-<input type="checkbox" class="custom-control-input" id="chat2Auto" checked>
-<label class="custom-control-label" for="chat2Auto" title="Auto-router">Auto-router</label>
+<!-- ============================================= -->
+<!-- 🎲 SEMILLA GLOBAL (todas las IAs)              -->
+<!-- ============================================= -->
+<hr>
+<div class="d-flex align-items-center flex-wrap" style="gap:.75rem;">
+    <label class="mb-0 small d-flex align-items-center" style="gap:.35rem;">
+        <span title="Semilla para forzar respuestas deterministas en TODAS las IAs">🎲 Seed</span>
+        <input id="chat2Seed" type="number" class="form-control form-control-sm" 
+               step="1" min="0" max="999999999" value="42" 
+               title="Semilla global. Si es mayor a 0, todas las IAs usarán esta semilla para respuestas más consistentes. Pon 0 para desactivar." 
+               style="width:110px;">
+    </label>
+    <small class="text-muted">
+        <i class="fas fa-info-circle"></i> 
+        Mismo seed + misma pregunta = misma respuesta. Usa <strong>0</strong> para desactivar.
+    </small>
 </div>
-<label class="mb-0 small d-flex align-items-center" style="gap:.35rem;">Temp
-<input id="chat2Temp" type="number" class="form-control form-control-sm" step="0.1" min="0" max="2" value="0.7" title="temperature" style="width:70px;">
-</label>
-<label class="mb-0 small d-flex align-items-center" style="gap:.35rem;">Max tokens
-<input id="chat2Max" type="number" class="form-control form-control-sm" step="1" min="1" max="4096" value="800" title="max_tokens" style="width:80px;">
-</label>
-<label class="mb-0 small d-flex align-items-center" style="gap:.35rem;">Top P
-<input id="chat2TopP" type="number" class="form-control form-control-sm" step="0.05" min="0.05" max="1" value="0.9" title="top_p" style="width:70px;">
-</label>
+<!-- ============================================= -->
+<!-- 🧠 COMPILADOR DE PROMPTS (Fase 1)             -->
+<!-- ============================================= -->
+<hr>
+<div class="settings-section-title">
+    <i class="fas fa-magic mr-1"></i> Compilador de Prompts
 </div>
+<div class="d-flex align-items-center flex-wrap" style="gap:.75rem;">
+    <label class="mb-0 small d-flex align-items-center" style="gap:.35rem;">
+        <span title="Temperatura del compilador">🌡 Temp</span>
+        <input id="chat2CompTemp" type="number" class="form-control form-control-sm" 
+               step="0.1" min="0" max="2" value="0.0" 
+               title="Temperatura del compilador de prompts" style="width:70px;">
+    </label>
+    <label class="mb-0 small d-flex align-items-center" style="gap:.35rem;">
+        <span title="Máximo de tokens del prompt enriquecido (compilador)">📏 Max tokens Prompt</span>
+        <input id="chat2CompMax" type="number" class="form-control form-control-sm" 
+               step="1" min="100" max="4096" value="200" 
+               title="Máximo de tokens para el prompt enriquecido que genera el compilador" style="width:80px;">
+    </label>
+    <label class="mb-0 small d-flex align-items-center" style="gap:.35rem;">
+        <span title="Máximo de tokens de la respuesta final (modelo principal)">📏 Max tokens Respuesta</span>
+        <input id="chat2RespMax" type="number" class="form-control form-control-sm" 
+               step="1" min="100" max="4096" value="1000" 
+               title="Máximo de tokens para la respuesta final del modelo principal" style="width:80px;">
+    </label>
+    <label class="mb-0 small d-flex align-items-center" style="gap:.35rem;">
+        <span title="Top P del compilador">🎯 Top P</span>
+        <input id="chat2CompTopP" type="number" class="form-control form-control-sm" 
+               step="0.05" min="0.05" max="1" value="0.1" 
+               title="Top P del compilador de prompts" style="width:70px;">
+    </label>
+</div>
+<!-- ============================================= -->
+
 </div>
 <!--
 <hr>
@@ -571,6 +615,92 @@ Fuentes indexadas: <span id="sbSourcesCount">0</span>
 </div>
 
 </div>
+<!-- ✅ BOTONES Y JS PARA TRUNCATE -->
+<?php if ($mostrarTruncate): ?>
+<div style="position:fixed; bottom:20px; right:20px; z-index:9999; background:#1a1a2e; border:2px solid #dc3545; border-radius:12px; padding:16px; max-width:350px; box-shadow:0 8px 32px rgba(220,53,69,0.3);">
+    <h6 style="margin:0 0 8px 0; color:#dc3545; font-weight:700;">
+        <i class="fas fa-exclamation-triangle mr-1"></i> Zona Peligrosa
+    </h6>
+    <p style="font-size:0.75rem; color:#ccc; margin-bottom:10px;">
+        Trunca tablas excepto: <strong>Users</strong>, <strong>TokenUsage</strong>, 
+        <strong>FileS3</strong>, <strong>S3Folders</strong>, <strong>Projects</strong>.
+    </p>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" onclick="adminTruncateTables('dry_run')" 
+                class="btn btn-sm btn-outline-info" style="flex:1;">
+            <i class="fas fa-eye mr-1"></i> Simular
+        </button>
+        <button type="button" onclick="adminTruncateTables('confirm')" 
+                class="btn btn-sm btn-danger" style="flex:1;">
+            <i class="fas fa-trash mr-1"></i> Truncar
+        </button>
+    </div>
+    <pre id="truncate-result" style="white-space:pre-wrap; margin-top:10px; font-size:0.7rem; max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.3); padding:8px; border-radius:6px; color:#0f0; display:none;"></pre>
+</div>
+
+<script>
+async function adminTruncateTables(mode) {
+    const resultBox = document.getElementById('truncate-result');
+    const token = document.querySelector('meta[name="csrf-token"]')?.content;
+
+    if (!token) {
+        alert('Falta el token CSRF. Recarga la página.');
+        return;
+    }
+
+    if (mode === 'confirm') {
+        const ok = confirm(
+            '⚠️ Esto truncará tablas excepto:\n\n' +
+            '• Users\n• TokenUsage\n• FileS3\n• S3Folders\n• Projects\n\n' +
+            'Esta acción NO se puede deshacer.\n\n¿Continuar?'
+        );
+        if (!ok) return;
+    }
+
+    const formData = new FormData();
+    formData.append('action', 'admin_truncate_tables');
+    formData.append('truncate_mode', mode);
+    formData.append('csrf_token', token);
+
+    if (resultBox) {
+        resultBox.style.display = 'block';
+        resultBox.textContent = '⏳ Procesando...';
+    }
+
+    try {
+        // ✅ APUNTA DIRECTAMENTE A truncate.php
+        const response = await fetch('truncate.php', {
+            method: 'POST',
+            body: formData,
+            credentials: 'same-origin'
+        });
+
+        const data = await response.json();
+
+        if (!data.ok) {
+            throw new Error(data.error || 'Error desconocido.');
+        }
+
+        let text = data.message + "\n\n";
+
+        if (Array.isArray(data.tablas) && data.tablas.length) {
+            text += (mode === 'confirm' ? "✅ Tablas truncadas:\n" : "🔍 Tablas que se truncarían:\n") + data.tablas.join("\n");
+        } else {
+            text += "No se procesaron tablas.";
+        }
+
+        if (Array.isArray(data.omitidas) && data.omitidas.length) {
+            text += "\n\n⚠️ Tablas omitidas o inexistentes:\n" + data.omitidas.join("\n");
+        }
+
+        if (resultBox) resultBox.textContent = text;
+    } catch (error) {
+        if (resultBox) resultBox.textContent = '❌ Error: ' + error.message;
+        else alert('Error: ' + error.message);
+    }
+}
+</script>
+<?php endif; ?>
 
 <hr>
 <div class="settings-section">
@@ -596,10 +726,11 @@ Fuentes indexadas: <span id="sbSourcesCount">0</span>
 <a href="logout.php" class="btn btn-sm btn-outline-danger">
 <i class="fas fa-sign-out-alt mr-1"></i> Cerrar sesión
 </a>
+
+</div>
 </div>
 </div>
 
-</div>
 <div class="modal-footer">
 <button type="button" class="btn-ghost" data-dismiss="modal">Cerrar</button>
 </div>
@@ -1068,6 +1199,7 @@ role="progressbar" style="width: 0%">0%</div>
     
 })();
 </script>
-
+</body>
+</html>
 </body>
 </html>

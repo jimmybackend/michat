@@ -326,6 +326,42 @@ if (!$result || $result->num_rows === 0) {
 $projectData = $result->fetch_assoc();
 $stmt->close();
 
+// =====================================================================
+// ✅ PREVENTIVO: Asegurar que Projects.root_prefix sea la ruta canónica
+// Solo se ejecuta si detecta desviación. No hace nada si ya está bien.
+// =====================================================================
+$canonicalProjectRoot = "Data/Chat/Uploads/{$user_id}/{$project_id}/";
+
+$currentProjectRoot = rtrim(
+    trim((string)($projectData['root_prefix'] ?? '')),
+    '/'
+) . '/';
+
+if ($currentProjectRoot !== $canonicalProjectRoot) {
+    $stmtFixRoot = $db_connection->prepare("
+        UPDATE Projects
+        SET root_prefix = ?
+        WHERE id_ = ?
+          AND user_id_ = ?
+    ");
+
+    if ($stmtFixRoot) {
+        $stmtFixRoot->bind_param(
+            'sii',
+            $canonicalProjectRoot,
+            $project_id,
+            $user_id
+        );
+
+        $stmtFixRoot->execute();
+        $stmtFixRoot->close();
+
+        error_log(
+            "project_upload.php: root_prefix corregido para proyecto {$project_id}: {$canonicalProjectRoot}"
+        );
+    }
+}
+
 /*
 * ============================================================
 * VALIDAR ARCHIVOS
@@ -358,10 +394,8 @@ if (
 * NO choca con session_upload.php que usa:
 * Data/Chat/Uploads/{user_id}/{year}/{month}/{day}/{session_id}/
 */
-$rutaDestino =
-    "Data/Chat/Uploads/" .
-    "{$user_id}/" .
-    "{$project_id}/";
+
+$rutaDestino = $canonicalProjectRoot;
 
 /*
 * ============================================================

@@ -57,6 +57,11 @@ function next_id(mysqli $db, string $table, string $col): int {
     return (int)($row['nxt'] ?? 1);
 }
 
+function canonical_project_prefix(int $userId, int $projectId): string
+{
+    return "Data/Chat/Uploads/{$userId}/{$projectId}/";
+}
+
 // ===== 1. Validar parámetros =====
 // action: 'write' (crear/editar, comportamiento histórico de este archivo),
 // 'read' (leer el contenido actual) o 'delete' (eliminar el archivo de S3 + BD).
@@ -112,13 +117,56 @@ if (!class_exists('Aws\\BedrockRuntime\\BedrockRuntimeClient') || !class_exists(
 }
 
 // ===== 2.5. Verificar que el proyecto pertenece al usuario autenticado (antes: sin control) =====
-$stmtOwner = $db_connection->prepare("SELECT id_ FROM Projects WHERE id_ = ? AND user_id_ = ? LIMIT 1");
+$stmtOwner = $db_connection->prepare("
+    SELECT id_, root_prefix
+    FROM Projects
+    WHERE id_ = ?
+      AND user_id_ = ?
+    LIMIT 1
+");
+
 $stmtOwner->bind_param('ii', $projectId, $userId);
 $stmtOwner->execute();
 $ownerRow = $stmtOwner->get_result()->fetch_assoc();
 $stmtOwner->close();
+
 if (!$ownerRow) {
     jexit(['ok' => false, 'error' => 'Proyecto no encontrado o no pertenece al usuario.'], 403);
+}
+
+// =====================================================================
+// ✅ FIX: Forzar ruta canónica del proyecto
+// =====================================================================
+$canonicalRootPrefix = canonical_project_prefix($userId, $projectId);
+
+$currentRootPrefix = rtrim(
+    trim((string)($ownerRow['root_prefix'] ?? '')),
+    '/'
+) . '/';
+
+if ($currentRootPrefix !== $canonicalRootPrefix) {
+    $stmtFixRoot = $db_connection->prepare("
+        UPDATE Projects
+        SET root_prefix = ?
+        WHERE id_ = ?
+          AND user_id_ = ?
+    ");
+
+    if ($stmtFixRoot) {
+        $stmtFixRoot->bind_param(
+            'sii',
+            $canonicalRootPrefix,
+            $projectId,
+            $userId
+        );
+
+        $stmtFixRoot->execute();
+        $stmtFixRoot->close();
+
+        error_log(
+            "code_edit.php: root_prefix corregido para proyecto {$projectId}: {$canonicalRootPrefix}"
+        );
+    }
 }
 
 // ===== 3. Buscar el archivo en ProjectSources (Soporta Creación y Edición) =====
@@ -139,27 +187,20 @@ $stmt->close();
 if (!$source) {
     // ✅ MODO CREACIÓN: El archivo no existe, lo crearemos desde cero
     $isCreation = true;
-    
-    // Necesitamos el root_prefix del proyecto para saber dónde guardarlo en S3
-    $stmtProj = $db_connection->prepare("SELECT root_prefix FROM Projects WHERE id_ = ? LIMIT 1");
-    $stmtProj->bind_param('i', $projectId);
-    $stmtProj->execute();
-    $projRes = $stmtProj->get_result()->fetch_assoc();
-    $stmtProj->close();
-    
-    if (!$projRes) {
-        jexit(['ok' => false, 'error' => 'Proyecto no encontrado.'], 404);
-    }
-    
-    // Simulamos la estructura de $source para que el resto del script no rompa
+
+    // =====================================================================
+    // ✅ FIX: Usar SIEMPRE la ruta canónica del proyecto:
+    // Data/Chat/Uploads/{user_id}/{project_id}/
+    // =====================================================================
     $source = [
         'id_' => 0,
-        's3_key' => rtrim($projRes['root_prefix'], '/') . '/' . $targetFilename,
+        's3_key' => $canonicalRootPrefix . $targetFilename,
         'filename' => $targetFilename,
-        'root_prefix' => $projRes['root_prefix'],
-        'mime_type' => 'text/plain' // Se ajustará luego
+        'root_prefix' => $canonicalRootPrefix,
+        'mime_type' => 'text/plain'
     ];
-    $currentContent = ''; // No hay contenido previo
+
+    $currentContent = '';
 }
 
 // ===== 3.5. Inicializar Cliente S3 (Necesario tanto para leer como para escribir) =====
@@ -173,20 +214,169 @@ try {
 
 // ===== 4. Obtener contenido actual desde S3 (SOLO si NO es creación) =====
 $currentContent = '';
+
+// =====================================================================
+// ✅ FIX 4.0: Normalizar fuentes existentes a la ruta canónica
+// =====================================================================
+// Si ProjectSources.s3_key apunta a una carpeta incorrecta, por ejemplo:
+// Data/Chat/Uploads/1/2026/08/12/num/archivo.php
+// lo movemos/usamos desde:
+// Data/Chat/Uploads/1/1/archivo.php 
+// =====================================================================
+if (!$isCreation && !empty($source['s3_key'])) {
+    $oldS3Key = (string)$source['s3_key'];
+    $expectedS3Key = $canonicalRootPrefix . basename($oldS3Key);
+
+    if ($oldS3Key !== $expectedS3Key) {
+
+        // Evitar collision con otro ProjectSources que ya tenga esa ruta
+        $stmtDup = $db_connection->prepare("
+            SELECT id_
+            FROM ProjectSources
+            WHERE project_id_ = ?
+              AND s3_key = ?
+              AND id_ <> ?
+            LIMIT 1
+        ");
+
+        $stmtDup->bind_param(
+            'isi',
+            $projectId,
+            $expectedS3Key,
+            $source['id_']
+        );
+
+        $stmtDup->execute();
+        $dupRes = $stmtDup->get_result();
+        $dupRow = $dupRes ? $dupRes->fetch_assoc() : null;
+        $stmtDup->close();
+
+        if ($dupRow) {
+            error_log(
+                "code_edit.php: No se pudo normalizar {$oldS3Key} porque {$expectedS3Key} " .
+                "ya pertenece a ProjectSources.id_={$dupRow['id_']}"
+            );
+        } else {
+            $oldExists = false;
+            $newExists = false;
+
+            try {
+                $s3->headObject([
+                    'Bucket' => $bucket,
+                    'Key'    => $oldS3Key
+                ]);
+                $oldExists = true;
+            } catch (Throwable $e) {
+                $oldExists = false;
+            }
+
+            try {
+                $s3->headObject([
+                    'Bucket' => $bucket,
+                    'Key'    => $expectedS3Key
+                ]);
+                $newExists = true;
+            } catch (Throwable $e) {
+                $newExists = false;
+            }
+
+            if (!$newExists && $oldExists) {
+                // Mover el objeto de la ruta vieja a la ruta canónica
+                $s3->copyObject([
+                    'Bucket'     => $bucket,
+                    'CopySource' => urlencode($bucket . '/' . $oldS3Key),
+                    'Key'        => $expectedS3Key,
+                    'ACL'        => 'private'
+                ]);
+
+                $s3->deleteObject([
+                    'Bucket' => $bucket,
+                    'Key'    => $oldS3Key
+                ]);
+
+                error_log(
+                    "code_edit.php: Archivo movido de {$oldS3Key} a {$expectedS3Key}"
+                );
+            } elseif ($newExists && $oldExists) {
+                error_log(
+                    "code_edit.php: Ya existía {$expectedS3Key}; se usará ese. " .
+                    "El viejo {$oldS3Key} quedó como respaldo manual."
+                );
+            } elseif (!$newExists && !$oldExists) {
+                if ($action === 'write') {
+                    // Si no existe en ninguna ruta, pero se va a editar/crear,
+                    // se recreará en la ruta correcta.
+                    $isCreation = true;
+                    $currentContent = '';
+
+                    error_log(
+                        "code_edit.php: {$oldS3Key} no existe en S3. " .
+                        "Se recreará en {$expectedS3Key}"
+                    );
+                } else {
+                    jexit([
+                        'ok' => false,
+                        'error' => "El archivo no existe en S3 ni en {$oldS3Key} ni en {$expectedS3Key}."
+                    ], 404);
+                }
+            }
+
+            // Actualizar ProjectSources.s3_key a la ruta canónica
+            $updKey = $db_connection->prepare("
+                UPDATE ProjectSources
+                SET s3_key = ?
+                WHERE id_ = ?
+                  AND project_id_ = ?
+            ");
+
+            $updKey->bind_param(
+                'sii',
+                $expectedS3Key,
+                $source['id_'],
+                $projectId
+            );
+
+            if ($updKey->execute()) {
+                $source['s3_key'] = $expectedS3Key;
+            } else {
+                error_log(
+                    'code_edit.php: No se pudo actualizar ProjectSources.s3_key: ' .
+                    $updKey->error
+                );
+            }
+
+            $updKey->close();
+        }
+
+        $source['root_prefix'] = $canonicalRootPrefix;
+    }
+}
+
 if (!$isCreation) {
     try {
-        $result = $s3->getObject(['Bucket' => $bucket, 'Key' => $source['s3_key']]);
-        $currentContent = (string) $result['Body'];
+        $result = $s3->getObject([
+            'Bucket' => $bucket,
+            'Key'    => $source['s3_key']
+        ]);
+
+        $currentContent = (string)$result['Body'];
     } catch (Throwable $e) {
-        // 🛡️ AUTO-REPARACIÓN: Si el archivo no existe en S3 (404 / NoSuchKey), 
-        // lo tratamos como una CREACIÓN desde cero en lugar de fallar.
-        if (strpos($e->getMessage(), 'NoSuchKey') !== false || strpos($e->getMessage(), '404 Not Found') !== false) {
-            error_log("ADVERTENCIA: El archivo '{$source['s3_key']}' está en la BD pero no en S3. Se tratará como nueva creación (resucitando registro zombie).");
+        if (
+            strpos($e->getMessage(), 'NoSuchKey') !== false ||
+            strpos($e->getMessage(), '404 Not Found') !== false
+        ) {
+            error_log(
+                "ADVERTENCIA: El archivo '{$source['s3_key']}' está en la BD pero no en S3. " .
+                "Se tratará como nueva creación (resucitando registro zombie)."
+            );
+
             $isCreation = true;
             $currentContent = '';
         } else {
-            // Si es otro error real de S3 (permisos, red, bucket incorrecto), sí fallamos.
-            jexit(['ok' => false, 'error' => 'No se pudo leer el archivo desde S3: ' . $e->getMessage()], 500);
+            jexit([
+                'ok' => false,
+                'error' => 'No se pudo leer el archivo desde S3: ' . $e->getMessage()
+            ], 500);
         }
     }
 }
@@ -1187,12 +1377,12 @@ if (!$success) {
 }
 
 // ===== 14. Éxito: Subir a S3 y Registrar en BD (Incluye sync con FileS3 y S3Folders) =====
-// ✅ FIX: preparar BD antes de escribir S3, y compensar S3 si la BD falla después.
 $warnings = [];
 $s3Saved = false;
 $dbCommitted = false;
 $backupS3Key = null;
-$originalS3Key = $source['s3_key'];
+$canonicalRootPrefix = "Data/Chat/Uploads/{$userId}/{$projectId}/";
+$originalS3Key = $canonicalRootPrefix . basename($source['s3_key']);
 
 try {
     $ext = strtolower(pathinfo($targetFilename, PATHINFO_EXTENSION));
@@ -1209,7 +1399,7 @@ try {
 
     $db_connection->begin_transaction();
 
-    // 14a. Actualizar o Crear en ProjectSources ANTES de putObject.
+    // 14a. Actualizar o Crear en ProjectSources
     if ($isCreation) {
         $stmtCheck = $db_connection->prepare("SELECT id_ FROM ProjectSources WHERE project_id_ = ? AND s3_key = ? LIMIT 1");
         $stmtCheck->bind_param("is", $projectId, $originalS3Key);
@@ -1219,9 +1409,7 @@ try {
         $stmtCheck->close();
 
         if ($existingSource) {
-            // Archivo zombie en BD: actualizar registro existente.
             $sourceId = $existingSource['id_'];
-
             $stmtUpdateSource = $db_connection->prepare("
                 UPDATE ProjectSources
                 SET filename = ?, mime_type = ?, size_bytes = ?, language = ?, status = 'indexed', indexed_at = NOW()
@@ -1230,11 +1418,9 @@ try {
             $stmtUpdateSource->bind_param("ssisi", $targetFilename, $mimeType, $fileSize, $lang, $sourceId);
             $stmtUpdateSource->execute();
             $stmtUpdateSource->close();
-
             $source['id_'] = $sourceId;
         } else {
             $newSourceId = next_id($db_connection, 'ProjectSources', 'id_');
-
             $stmtInsertSource = $db_connection->prepare("
                 INSERT INTO ProjectSources (id_, project_id_, files3_id_, s3_key, filename, mime_type, size_bytes, language, sha256, status, indexed_at)
                 VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, 'indexed', NOW())
@@ -1242,76 +1428,91 @@ try {
             $stmtInsertSource->bind_param("iisssis", $newSourceId, $projectId, $originalS3Key, $targetFilename, $mimeType, $fileSize, $lang);
             $stmtInsertSource->execute();
             $stmtInsertSource->close();
-
             $source['id_'] = $newSourceId;
         }
     } else {
         $backupS3Key = preg_replace('/(\.[a-zA-Z0-9]+)$/i', '.ver0$1', $originalS3Key);
-
         $s3->copyObject([
             'Bucket' => $bucket,
             'CopySource' => urlencode($bucket . '/' . $originalS3Key),
             'Key' => $backupS3Key
         ]);
-
         $updSource = $db_connection->prepare("UPDATE ProjectSources SET status = 'stale' WHERE id_ = ?");
         $updSource->bind_param('i', $source['id_']);
         $updSource->execute();
         $updSource->close();
     }
 
-    // =====================================================================
-    // 14c. SINCRONIZACIÓN CON TABLAS LEGACY (FileS3 y S3Folders)
-    // Se hace ANTES del putObject para poder hacer rollback si falla.
-    // =====================================================================
-    $filename = basename($originalS3Key);
-    $folderPrefix = dirname($originalS3Key);
-    if ($folderPrefix === '.') {
-        $folderPrefix = '';
-    }
+// =====================================================================
+// 14c. SINCRONIZACIÓN CON TABLAS LEGACY (FileS3 y S3Folders)
+// =====================================================================
+$filename = $targetFilename; // ✅ FIX: Usar el nombre original, no un hash
+$folderPrefix = $canonicalRootPrefix;
+$encriptadoVal = $filename; // ✅ FIX: El nombre encriptado es el nombre real del archivo
 
-    $encriptadoVal = hash('sha256', $userId . '|' . $originalS3Key);
+// Crear jerarquía de carpetas
+$foldersToCreate = [
+    "Data/Chat/Uploads/",
+    "Data/Chat/Uploads/{$userId}/",
+    $canonicalRootPrefix
+];
 
-    // A) Sincronizar Carpeta (S3Folders)
-    if ($folderPrefix !== '') {
-        $stmtFolder = $db_connection->prepare("SELECT id_ FROM S3Folders WHERE user_id_ = ? AND Prefix = ? LIMIT 1");
-        $stmtFolder->bind_param("is", $userId, $folderPrefix);
+foreach ($foldersToCreate as $prefix) {
+    $stmtFolder = $db_connection->prepare("
+        SELECT id_ FROM S3Folders WHERE user_id_ = ? AND Prefix = ? LIMIT 1
+    ");
+    if ($stmtFolder) {
+        $stmtFolder->bind_param("is", $userId, $prefix);
         $stmtFolder->execute();
         $resFolder = $stmtFolder->get_result();
+        $folderExists = $resFolder && $resFolder->num_rows > 0;
+        $stmtFolder->close();
 
-        if ($resFolder->num_rows === 0) {
+        if (!$folderExists) {
             $newFolderId = next_id($db_connection, 'S3Folders', 'id_');
-            $folderName = basename($folderPrefix);
-            $parentPrefix = dirname($folderPrefix);
-            if ($parentPrefix === '.') {
-                $parentPrefix = '';
-            }
+            $folderName = basename(rtrim($prefix, '/'));
+            $parentPrefixRaw = dirname(rtrim($prefix, '/'));
+            $parentPrefix = ($parentPrefixRaw === '.' || $parentPrefixRaw === '') 
+                ? '' 
+                : rtrim($parentPrefixRaw, '/') . '/';
 
             $stmtInsFolder = $db_connection->prepare("
                 INSERT INTO S3Folders (id_, user_id_, Prefix, Nombre, ParentPrefix, Found, AccessType, CreatedAt, UpdatedAt)
                 VALUES (?, ?, ?, ?, ?, 1, 'normal', NOW(), NOW())
             ");
-            $stmtInsFolder->bind_param("iisss", $newFolderId, $userId, $folderPrefix, $folderName, $parentPrefix);
-            $stmtInsFolder->execute();
-            $stmtInsFolder->close();
+            if ($stmtInsFolder) {
+                $stmtInsFolder->bind_param("iisss", $newFolderId, $userId, $prefix, $folderName, $parentPrefix);
+                $stmtInsFolder->execute();
+                $stmtInsFolder->close();
+            }
         }
-
-        $stmtFolder->close();
     }
+}
 
-    // B) Sincronizar Archivo (FileS3)
-    $stmtFile = $db_connection->prepare("SELECT id_, Tamano FROM FileS3 WHERE user_id_ = ? AND Ruta = ? AND Nombre = ? LIMIT 1");
+// Sincronizar FileS3
+$files3Id = 0;
+$stmtFile = $db_connection->prepare("
+    SELECT id_, Tamano FROM FileS3 
+    WHERE user_id_ = ? AND Ruta = ? AND Nombre = ? 
+    LIMIT 1
+");
+if ($stmtFile) {
     $stmtFile->bind_param("iss", $userId, $folderPrefix, $filename);
     $stmtFile->execute();
     $resFile = $stmtFile->get_result();
-    $fileRow = $resFile->fetch_assoc();
+    $fileRow = $resFile ? $resFile->fetch_assoc() : null;
     $stmtFile->close();
 
     if ($fileRow) {
-        $stmtUpdFile = $db_connection->prepare("UPDATE FileS3 SET Tamano = ?, Fecha = NOW(), Found = 1 WHERE id_ = ?");
-        $stmtUpdFile->bind_param("ii", $fileSize, $fileRow['id_']);
-        $stmtUpdFile->execute();
-        $stmtUpdFile->close();
+        $stmtUpdFile = $db_connection->prepare("
+            UPDATE FileS3 SET Tamano = ?, Fecha = NOW(), Found = 1 WHERE id_ = ?
+        ");
+        if ($stmtUpdFile) {
+            $stmtUpdFile->bind_param("ii", $fileSize, $fileRow['id_']);
+            $stmtUpdFile->execute();
+            $stmtUpdFile->close();
+            $files3Id = (int)$fileRow['id_'];
+        }
     } else {
         $newFileId = next_id($db_connection, 'FileS3', 'id_');
         $metadata = json_encode([
@@ -1324,14 +1525,33 @@ try {
             INSERT INTO FileS3 (id_, Nombre, Encriptado, Tamano, Metadatos, Ruta, Found, AccessType, Fecha, user_id_)
             VALUES (?, ?, ?, ?, ?, ?, 1, 'normal', NOW(), ?)
         ");
-        $stmtInsFile->bind_param("ississi", $newFileId, $filename, $encriptadoVal, $fileSize, $metadata, $folderPrefix, $userId);
-        $stmtInsFile->execute();
-        $stmtInsFile->close();
+        if ($stmtInsFile) {
+            $stmtInsFile->bind_param("ississi", $newFileId, $filename, $encriptadoVal, $fileSize, $metadata, $folderPrefix, $userId);
+            if ($stmtInsFile->execute()) {
+                $files3Id = (int)$newFileId;
+            }
+            $stmtInsFile->close();
+        }
     }
+}
 
-    // =====================================================================
-    // 14b. Subir el archivo oficial a S3 DESPUÉS de preparar la BD.
-    // =====================================================================
+// Vincular FileS3 con ProjectSources
+if ($files3Id > 0) {
+    $sourceIdForLink = (int)($source['id_'] ?? 0);
+    if ($sourceIdForLink > 0) {
+        $stmtLink = $db_connection->prepare("
+            UPDATE ProjectSources SET files3_id_ = ? WHERE id_ = ? AND project_id_ = ?
+        ");
+        if ($stmtLink) {
+            $stmtLink->bind_param("iii", $files3Id, $sourceIdForLink, $projectId);
+            $stmtLink->execute();
+            $stmtLink->close();
+        }
+    }
+}
+
+
+    // 14b. Subir a S3
     $s3->putObject([
         'Bucket'      => $bucket,
         'Key'         => $originalS3Key,
@@ -1339,7 +1559,6 @@ try {
         'ContentType' => $mimeType,
         'ACL'         => 'private'
     ]);
-
     $s3Saved = true;
 
     $db_connection->commit();
@@ -1357,27 +1576,23 @@ try {
     error_log("Error en Paso 14 (S3/BD Sync): " . $e->getMessage());
 
     $compensated = false;
-
     if ($s3Saved) {
         try {
             if (!$isCreation && !empty($backupS3Key)) {
-                // Restaurar respaldo anterior.
                 $s3->copyObject([
                     'Bucket' => $bucket,
                     'CopySource' => urlencode($bucket . '/' . $backupS3Key),
                     'Key' => $originalS3Key
                 ]);
             } else {
-                // Si era creación, eliminar el objeto que quedó escrito.
                 $s3->deleteObject([
                     'Bucket' => $bucket,
                     'Key' => $originalS3Key
                 ]);
             }
-
             $compensated = true;
         } catch (Throwable $comp) {
-            error_log("No se pudo compensar S3 tras error en BD: " . $comp->getMessage());
+            error_log("No se pudo compensar S3: " . $comp->getMessage());
         }
     }
 
@@ -1386,13 +1601,8 @@ try {
             'ok' => false,
             's3_saved' => true,
             'db_committed' => false,
-            'error' => 'El archivo se guardó en S3, pero falló la BD y no se pudo revertir automáticamente.',
+            'error' => 'El archivo se guardó en S3, pero falló la BD.',
             'details' => $e->getMessage(),
-            'warnings' => [
-                'El objeto S3 quedó escrito.',
-                'La transacción de BD fue revertida o no pudo confirmarse.',
-                'Revisa ProjectSources, FileS3 y FileVersions para sincronizar manualmente.'
-            ]
         ], 500);
     }
 
@@ -1402,11 +1612,10 @@ try {
     ], 500);
 }
 
-// ===== 14d. RESUMEN PROFESIONAL DEL TRABAJO (modelo revisor de código) =====
-// Se genera a partir del código YA subido a S3, no de la instrucción cruda,
-// para no perder nombres de variables/funciones/clases en la memoria de la sesión.
+// ===== 14d. RESUMEN PROFESIONAL DEL TRABAJO =====
 $summaryResult = summarizeCodeChange($bedrock, $db_connection, $sessionId, $newVersionId, $instruction, $targetFilename, $newContent, $isCreation);
 $diffSummary = $summaryResult['text'];
+
 try {
     $stmtUpdSummary = $db_connection->prepare("UPDATE FileVersions SET diff_summary = ? WHERE id_ = ?");
     $stmtUpdSummary->bind_param('si', $diffSummary, $newVersionId);
@@ -1414,58 +1623,45 @@ try {
     $stmtUpdSummary->close();
 } catch (Throwable $e) {
     $warnings[] = 'No se pudo actualizar diff_summary: ' . $e->getMessage();
-    error_log("No se pudo actualizar diff_summary: " . $e->getMessage());
 }
 
-// ===== 14e. INDEXACIÓN REAL (chunks + embeddings) DEL ARCHIVO GENERADO =====
-// Antes esto dependía de que el frontend llamara después a index_project_sources.php;
-// si esa llamada fallaba o el usuario no esperaba, el archivo quedaba marcado como
-// 'indexed' en la BD sin tener chunks/embeddings reales, y la IA no podía "verlo"
-// en búsquedas posteriores. Ahora se indexa aquí mismo, con el contenido en memoria.
+// ===== 14e. INDEXACIÓN REAL =====
 $indexResult = ['ok' => false, 'error' => 'no ejecutado'];
 try {
-    $indexResult = indexProjectSourceContent($db_connection, $bedrock, $projectId, (int)$source['id_'], $targetFilename, $newContent);
+    if (function_exists('indexProjectSourceContent')) {
+        $indexResult = indexProjectSourceContent($db_connection, $bedrock, $projectId, (int)$source['id_'], $targetFilename, $newContent);
+    }
 } catch (Throwable $e) {
     $indexResult = ['ok' => false, 'error' => $e->getMessage()];
-    error_log("Error indexando {$targetFilename} tras code_edit: " . $e->getMessage());
 }
 
-// ===== 15. Respuesta exitosa con Análisis de Impacto =====
+// ===== 15. Respuesta exitosa =====
 $downloadUrl = 'descargar.php?archivo=' . urlencode($source['s3_key']) . '&nombre=' . urlencode($targetFilename);
 
-// ✅ NUEVO: Consolidar warnings de todo el flujo (S3/BD + indexación)
 $finalWarnings = $warnings ?? [];
-
 if (empty($indexResult['ok']) && !empty($indexResult['error'])) {
     $finalWarnings[] = 'Indexación secundaria fallida: ' . $indexResult['error'];
-}
-
-if (!empty($finalWarnings)) {
-    error_log('code_edit.php terminó con warnings: ' . json_encode($finalWarnings, JSON_UNESCAPED_UNICODE));
 }
 
 jexit([
     'ok'              => true,
     's3_saved'        => true,
     'db_committed'    => $dbCommitted ?? true,
-    'message'         => empty($finalWarnings)
-        ? "✅ Archivo oficial actualizado" . ($isCreation ? " (creado)." : " (respaldo .ver0 creado).")
-        : "✅ Archivo guardado en S3, pero con advertencias secundarias.",
+    'message'         => "✅ Archivo " . ($isCreation ? "creado" : "actualizado") . " exitosamente (versión v{$nextVersion}).",
     'filename'        => $targetFilename,
     'new_version'     => $nextVersion,
     'download_url'    => $downloadUrl,
     'diff_summary'    => $diffSummary,
     'summary_model'   => $summaryResult['model'],
-    'model_used'      => $attemptLog[count($attemptLog) - 1]['model'],
+    'model_used'      => $attemptLog[count($attemptLog) - 1]['model'] ?? 'unknown',
     'complexity'      => $category ?? 'unknown',
     'indexed'         => (bool)($indexResult['ok'] ?? false),
     'index_error'     => $indexResult['ok'] ? null : ($indexResult['error'] ?? null),
     'needs_indexing'  => false,
     'scout_info'      => $scoutResult ?? null,
     'warnings'        => array_values($finalWarnings),
-    // 🚀 Datos para el Orquestador / Frontend
-    'impact_analysis' => $impactAnalysis,
-    'next_steps'      => $impactAnalysis['is_multi_file']
-        ? "⚠️ Esta edición afecta a " . count($impactAnalysis['affected_files']) . " archivos más. Se recomienda aplicar refactor en cascada."
+    'impact_analysis' => $impactAnalysis ?? [],
+    'next_steps'      => ($impactAnalysis['is_multi_file'] ?? false)
+        ? "⚠️ Esta edición afecta a " . count($impactAnalysis['affected_files']) . " archivos más."
         : "Edición contenida en un solo archivo."
 ]);
