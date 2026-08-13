@@ -60,6 +60,10 @@
         respMax: $('#chat2RespMax'),
         seed: $('#chat2Seed'),
         auto: $('#chat2Auto'),
+            questionMemoryEnabled: $('#chatQuestionMemoryEnabled'),
+            questionMemoryScope: $('input[name="chatQuestionMemoryScope"]:checked'),
+            questionMemoryMaxCandidates: $('#chatQuestionMemoryMaxCandidates'),
+            questionMemoryWindowLines: $('#chatQuestionMemoryWindowLines'),
       messages: $('#chat2Messages'),
       status: $('#chat2Status'),
       usage: $('#chat2Usage'),
@@ -1134,6 +1138,12 @@ const resp_max_tokens  = el.respMax ? parseInt(el.respMax.value, 10) : 1000;
 const seed_value       = el.seed ? parseInt(el.seed.value, 10) : 42;
 const useAuto = el.auto ? el.auto.checked : true;
 const useRag = getAttachmentModeCheckbox() ? getAttachmentModeCheckbox().checked : true;
+// ✅ Memoria selectiva de preguntas anteriores
+const useQuestionMemory = el.questionMemoryEnabled ? el.questionMemoryEnabled.checked : true;
+const questionMemoryScope = document.querySelector('input[name="chatQuestionMemoryScope"]:checked')?.value || 'project';
+const questionMemoryMaxCandidates = el.questionMemoryMaxCandidates ? parseInt(el.questionMemoryMaxCandidates.value, 10) : 20;
+const questionMemoryWindowLines = el.questionMemoryWindowLines ? parseInt(el.questionMemoryWindowLines.value, 10) : 5;
+
       if (pendingFiles.length > 0 && !text) {
         suggestAttachmentsHeader();
         setStatus('Agrega un mensaje para enviar junto con tus archivos.');
@@ -1261,6 +1271,11 @@ fdCompile.append('compile_top_p', String(comp_top_p));
 fdCompile.append('resp_max_tokens', String(resp_max_tokens));
 fdCompile.append('seed', String(seed_value));
 fdCompile.append('use_rag', useRag ? '1' : '0');
+fdCompile.append('use_question_memory', useQuestionMemory ? '1' : '0');
+fdCompile.append('question_memory_scope', questionMemoryScope);
+fdCompile.append('question_memory_max_candidates', String(questionMemoryMaxCandidates));
+fdCompile.append('question_memory_window_lines', String(questionMemoryWindowLines));
+
         fdCompile.append('compile_only', '1');
         if (pendingFiles.length > 0) {
           pendingFiles.forEach(({file}) => fdCompile.append('files[]', file, file.name));
@@ -1304,6 +1319,12 @@ fdRespond.append('max_tokens', String(resp_max_tokens));
 fdRespond.append('top_p', String(top_p));
 fdRespond.append('seed', String(seed_value));
 fdRespond.append('use_rag', useRag ? '1' : '0');
+
+fdRespond.append('use_question_memory', useQuestionMemory ? '1' : '0');
+fdRespond.append('question_memory_scope', questionMemoryScope);
+fdRespond.append('question_memory_max_candidates', String(questionMemoryMaxCandidates));
+fdRespond.append('question_memory_window_lines', String(questionMemoryWindowLines));
+
           const rRespond = await fetch(API.send, { method:'POST', credentials:'same-origin', body: fdRespond });
           const jRespond = toJSONorThrow(await rRespond.text(), rRespond.status, 'Enviar mensaje');
           if (!rRespond.ok || jRespond.ok === false) throw new Error(jRespond.error || `HTTP ${rRespond.status}`);
@@ -1346,6 +1367,23 @@ fdRespond.append('use_rag', useRag ? '1' : '0');
             const u = jRespond.usage;
             setUsage(`Tokens ~ prompt ${u.prompt_tokens||0} + completion ${u.completion_tokens||0} = ${u.total_tokens||0}`);
           }
+// ✅ Mostrar estado de memoria selectiva si el backend lo envía
+if (jRespond.memory_used !== undefined) {
+    const memStatusEl = document.getElementById('chatQuestionMemoryStatus');
+    const memTextEl = document.getElementById('chatQuestionMemoryStatusText');
+    if (memStatusEl && memTextEl) {
+        memStatusEl.style.display = 'block';
+        if (jRespond.memory_used) {
+            const qCount = (jRespond.memory_question_ids || []).length;
+            const fCount = jRespond.memory_fragments || 0;
+            memTextEl.textContent = `Última respuesta usó memoria: ${qCount} pregunta(s) consultada(s), ${fCount} fragmento(s) inyectado(s).`;
+            memTextEl.style.color = '#00cc66';
+        } else {
+            memTextEl.textContent = 'Última respuesta no requirió memoria de preguntas anteriores.';
+            memTextEl.style.color = '';
+        }
+    }
+}
         } else {
           if (jCompile.reply) {
             pushLocal('assistant', jCompile.reply, { created_at: new Date().toISOString() });
