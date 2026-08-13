@@ -51,10 +51,15 @@
       archive: $('#chat2Archive'),
       restore: $('#chat2Restore'),
       model: $('#chat2Model'),
-      auto: $('#chat2Auto'),
-      temp: $('#chat2Temp'),
-      max: $('#chat2Max'),
-      topP: $('#chat2TopP'),
+        temp: $('#chat2Temp'),
+        max: $('#chat2Max'),
+        topP: $('#chat2TopP'),
+        compTemp: $('#chat2CompTemp'),
+        compMax: $('#chat2CompMax'),
+        compTopP: $('#chat2CompTopP'),
+        respMax: $('#chat2RespMax'),
+        seed: $('#chat2Seed'),
+        auto: $('#chat2Auto'),
       messages: $('#chat2Messages'),
       status: $('#chat2Status'),
       usage: $('#chat2Usage'),
@@ -1118,9 +1123,17 @@ function showPromptApprovalModal(compiledPrompt, compilationId) {
       const auto = !!(el.auto && el.auto.checked);
       const model = requireModelSelected();
       if (!model) return;
-      const temperature = el.temp ? parseFloat(el.temp.value) : 0.7;
-      const max_tokens = el.max ? parseInt(el.max.value, 10) : 800;
-      const top_p = el.topP ? parseFloat(el.topP.value) : 0.9;
+      
+const temperature = el.temp ? parseFloat(el.temp.value) : 0.7;
+const max_tokens = el.max ? parseInt(el.max.value, 10) : 800;
+const top_p = el.topP ? parseFloat(el.topP.value) : 0.9;
+const comp_temperature = el.compTemp ? parseFloat(el.compTemp.value) : 0.0;
+const comp_max_tokens  = el.compMax ? parseInt(el.compMax.value, 10) : 200;
+const comp_top_p       = el.compTopP ? parseFloat(el.compTopP.value) : 0.1;
+const resp_max_tokens  = el.respMax ? parseInt(el.respMax.value, 10) : 1000;
+const seed_value       = el.seed ? parseInt(el.seed.value, 10) : 42;
+const useAuto = el.auto ? el.auto.checked : true;
+const useRag = getAttachmentModeCheckbox() ? getAttachmentModeCheckbox().checked : true;
       if (pendingFiles.length > 0 && !text) {
         suggestAttachmentsHeader();
         setStatus('Agrega un mensaje para enviar junto con tus archivos.');
@@ -1239,9 +1252,15 @@ try {
         fdCompile.append('text', text);
         fdCompile.append('auto', auto ? '1' : '0');
         fdCompile.append('model', model);
-        fdCompile.append('temperature', String(temperature));
-        fdCompile.append('max_tokens', String(max_tokens));
-        fdCompile.append('top_p', String(top_p));
+fdCompile.append('temperature', String(temperature));
+fdCompile.append('max_tokens', String(max_tokens));
+fdCompile.append('top_p', String(top_p));
+fdCompile.append('compile_temperature', String(comp_temperature));
+fdCompile.append('compile_max_tokens', String(comp_max_tokens));
+fdCompile.append('compile_top_p', String(comp_top_p));
+fdCompile.append('resp_max_tokens', String(resp_max_tokens));
+fdCompile.append('seed', String(seed_value));
+fdCompile.append('use_rag', useRag ? '1' : '0');
         fdCompile.append('compile_only', '1');
         if (pendingFiles.length > 0) {
           pendingFiles.forEach(({file}) => fdCompile.append('files[]', file, file.name));
@@ -1280,9 +1299,11 @@ if (lastUserMsg) {
           fdRespond.append('compiled_prompt', approved.prompt); 
           fdRespond.append('compilation_id', String(approved.compilation_id));
           fdRespond.append('model', model);
-          fdRespond.append('temperature', String(temperature));
-          fdRespond.append('max_tokens', String(max_tokens));
-          fdRespond.append('top_p', String(top_p));
+fdRespond.append('temperature', String(temperature));
+fdRespond.append('max_tokens', String(resp_max_tokens));
+fdRespond.append('top_p', String(top_p));
+fdRespond.append('seed', String(seed_value));
+fdRespond.append('use_rag', useRag ? '1' : '0');
           const rRespond = await fetch(API.send, { method:'POST', credentials:'same-origin', body: fdRespond });
           const jRespond = toJSONorThrow(await rRespond.text(), rRespond.status, 'Enviar mensaje');
           if (!rRespond.ok || jRespond.ok === false) throw new Error(jRespond.error || `HTTP ${rRespond.status}`);
@@ -1308,7 +1329,7 @@ if (lastUserMsg) {
                 }
               })
               .catch(err => {
-                console.error('Error indexando en segundo plano:', err);
+                console.error('Error indexando en segundo plano:', err); 
                 setStatus('');
               });
           }
@@ -1340,7 +1361,7 @@ if (lastUserMsg) {
         setStatus('');
         isSending = false;
       }
-    }
+    } 
     function clearQueue(){
       pendingFiles = [];
       renderQueue();
