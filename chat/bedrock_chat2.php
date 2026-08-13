@@ -22,6 +22,15 @@ define('SESSION_RECENT_WINDOW', 5);
 // ===== Acumulador de notas/errores =====
 $errors = [];
 
+// ✅ MEMORIA SELECTIVA DE PREGUNTAS ANTERIORES
+$qm_file = __DIR__ . '/question_memory.php';
+if (file_exists($qm_file)) {
+    require_once $qm_file;
+    error_log("QM: question_memory.php CARGADO OK");
+} else {
+    error_log("QM: question_memory.php NO ENCONTRADO en: " . $qm_file);
+}
+
 // ===== Helpers =====
 function jexit($arr, $code=200){ http_response_code($code); echo json_encode($arr, JSON_UNESCAPED_UNICODE); exit; }
 
@@ -1024,6 +1033,12 @@ $max_tokens  = isset($_POST['max_tokens']) ? max(1,(int)$_POST['max_tokens']) : 
 $top_p       = isset($_POST['top_p']) ? (float)$_POST['top_p'] : 0.9;
 $use_rag = isset($_POST['use_rag']) && $_POST['use_rag'] === '1';
 
+// ✅ MEMORIA SELECTIVA: parámetros del frontend
+$use_question_memory = !isset($_POST['use_question_memory']) || $_POST['use_question_memory'] === '1';
+$question_memory_scope = isset($_POST['question_memory_scope']) ? (string)$_POST['question_memory_scope'] : 'project';
+$question_memory_max_candidates = isset($_POST['question_memory_max_candidates']) ? max(5, (int)$_POST['question_memory_max_candidates']) : QM_MAX_CANDIDATES;
+$question_memory_window_lines = isset($_POST['question_memory_window_lines']) ? max(2, (int)$_POST['question_memory_window_lines']) : QM_WINDOW_LINES;
+
 // ✅ Parámetros del COMPILADOR de prompts (Fase 1)
 $compile_temperature = isset($_POST['compile_temperature']) ? (float)$_POST['compile_temperature'] : 0.0;
 $compile_max_tokens  = isset($_POST['compile_max_tokens']) ? max(100,(int)$_POST['compile_max_tokens']) : 200;
@@ -1752,6 +1767,39 @@ if ($compilation_id > 0 && isset($_POST['compiled_prompt']) && trim($_POST['comp
     }
 }
 
+// ---------------------------------------------------------
+// 1.8. MEMORIA SELECTIVA DE PREGUNTAS ANTERIORES
+// ---------------------------------------------------------
+$questionMemoryContext = '';
+if ($use_question_memory && function_exists('qm_retrieve_memory_context')) {
+        error_log("QM: Ejecutando qm_retrieve_memory_context, scope=$question_memory_scope");
+    try {
+        $questionMemoryContext = qm_retrieve_memory_context(
+            $db_connection,
+            $bedrock,
+            $session_id,
+            $user_id,
+            $projectId,
+            $text,
+            $saved_user_text_id,
+            [
+                'seed' => $seed,
+                'temperature' => $compile_temperature,
+                'top_p' => $compile_top_p,
+                'scope' => $question_memory_scope,
+                'max_candidates' => $question_memory_max_candidates,
+                'window_lines' => $question_memory_window_lines,
+            ]
+        );
+        error_log("QM: Contexto devuelto: " . mb_strlen($questionMemoryContext) . " chars");
+    } catch (Throwable $e) {
+        error_log("QM: ERROR: " . $e->getMessage());
+        $errors[] = 'Memoria selectiva: ' . $e->getMessage();
+    }
+} else {
+    error_log("QM: NO SE EJECUTA - use_question_memory=" . ($use_question_memory ? '1' : '0') 
+              . ", function_exists=" . (function_exists('qm_retrieve_memory_context') ? '1' : '0'));
+}
     // ---------------------------------------------------------
     // 2. CONSTRUIR EL PROMPT FINAL (Versión Definitiva) 
     // ---------------------------------------------------------
@@ -1843,6 +1891,18 @@ if (!empty($attachmentContext)) {
     $systemPrompt .= "\n[ARCHIVOS ADJUNTOS DE ESTA SESIÓN]\n";
     $systemPrompt .= "El siguiente contenido proviene de archivos adjuntos reales de esta conversación. Úsalo solo si es relevante para la pregunta actual.\n";
     $systemPrompt .= $attachmentContext;
+}
+
+// ✅ INYECTAR MEMORIA SELECTIVA DE PREGUNTAS ANTERIORES
+if (!empty($questionMemoryContext)) {
+    $systemPrompt .= "
+
+[MEMORIA SELECTIVA DE PREGUNTAS ANTERIORES]
+La siguiente información proviene de preguntas y respuestas anteriores del usuario.
+Úsala como contexto para mantener continuidad y precisión.
+Los fragmentos exactos contienen datos reales de respuestas previas.
+
+" . $questionMemoryContext;
 }
 
     // ✅ INSTRUCCIONES DEL PROYECTO (solo si la sesión tiene proyecto)
@@ -2105,6 +2165,14 @@ if($stmtA){
 // ✅ METACOGNICIÓN FASE 1 - SMART MEMORY (Única versión, sin duplicados)
 // Nova Micro resume el Q&A ANTES de guardar en SessionContextBlocks.
 // ==================================================================== 
+// ====================================================================
+// ✅ SMART MEMORY DESACTIVADO: La memoria selectiva ahora genera
+// resúmenes solo cuando se consulta una pregunta anterior.
+// Para reactivar el resumen automático por cada respuesta,
+// cambia $use_old_smart_memory a true.
+// ====================================================================
+$use_old_smart_memory = false;
+if ($use_old_smart_memory) {
 try {
     $question_msg_for_block = $saved_user_text_id ?: (isset($file_ids[0]) ? $file_ids[0] : null);
     $block_id = next_id($db_connection, 'SessionContextBlocks', 'id_');
@@ -2214,6 +2282,7 @@ if (($summaryData['inputTokens'] ?? 0) > 0 || ($summaryData['outputTokens'] ?? 0
 } catch (Throwable $e) {
     $errors[] = 'Metacognición (Smart Memory): ' . $e->getMessage();
 }
+} // fin $use_old_smart_memory
 
 
 // ====================================================================
@@ -2266,13 +2335,15 @@ try {
 
 // ===== Salida =====
 $out = [
-  'ok'               => true,
-  'saved'            => ['user_text_id'=>$saved_user_text_id, 'file_ids'=>$file_ids, 'assistant_id'=>$assistant_id],
-  'reply'            => $reply_text,
-  'compiled_prompt'  => $compiled_prompt,
-  'usage'            => $usage,
-  'action'           => $action,
-  'router'           => $router
+    'ok'               => true,
+    'saved'            => ['user_text_id'=>$saved_user_text_id, 'file_ids'=>$file_ids, 'assistant_id'=>$assistant_id],
+    'reply'            => $reply_text,
+    'compiled_prompt'  => $compiled_prompt,
+    'usage'            => $usage,
+    'action'           => $action,
+    'router'           => $router,
+    'memory_used'      => !empty($questionMemoryContext),
 ];
+
 if (!empty($errors)) $out['notes'] = $errors;
 jexit($out);

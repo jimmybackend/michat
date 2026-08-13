@@ -272,9 +272,7 @@ $mostrarTruncate = isset($_SESSION['user_id']) && (( $_SESSION['user_id'] ?? '')
 
 
 <div class="card-footer">
-<div id="chat2Usage" class="text-muted small mt-2"></div>
-<div id="chatToasts" class="chat-toasts"></div>
-<div id="incomingToasts" class="chat-toasts"></div>
+<small id="chat2Status" class="text-muted"></small>
 <div class="form-group mb-2">
 <textarea id="chat2Input" class="form-control" rows="3" placeholder="Escribe tu mensaje… (Enter = enviar, Shift+Enter = salto)"></textarea>
 </div>
@@ -314,7 +312,11 @@ $mostrarTruncate = isset($_SESSION['user_id']) && (( $_SESSION['user_id'] ?? '')
   <i class="fas fa-paper-plane"></i> Enviar
 </button>
 </div>
-<small id="chat2Status" class="text-muted"></small>
+
+<div id="chat2Usage" class="text-muted small mt-2"></div>
+<div id="chatToasts" class="chat-toasts"></div>
+<div id="incomingToasts" class="chat-toasts"></div>
+
 </div>
 
 
@@ -545,6 +547,82 @@ $mostrarTruncate = isset($_SESSION['user_id']) && (( $_SESSION['user_id'] ?? '')
                title="Top P del compilador de prompts" style="width:70px;">
     </label>
 </div>
+
+<!-- ============================================= -->
+<!-- 🧠 MEMORIA SELECTIVA DE PREGUNTAS ANTERIORES  -->
+<!-- ============================================= -->
+<hr>
+<div class="settings-section">
+<div class="settings-section-title">
+<i class="fas fa-brain mr-1"></i> Memoria Selectiva de Preguntas
+</div>
+<p class="small text-muted mb-2">
+Cuando haces una pregunta, el sistema busca en tus preguntas anteriores
+si alguna contiene la respuesta. Extrae solo el fragmento útil y lo
+inyecta como contexto. Reduce tokens y mejora la precisión.
+</p>
+
+<div class="d-flex flex-column" style="gap:.75rem;">
+
+<!-- Activar/desactivar memoria selectiva -->
+<label class="mb-0 small d-flex align-items-center" style="gap:.5rem; cursor:pointer;">
+<input type="checkbox" id="chatQuestionMemoryEnabled" checked
+title="Si está activo, el sistema buscará en preguntas anteriores antes de responder."
+style="width:16px; height:16px;">
+<span>
+<strong>Usar memoria selectiva de preguntas anteriores</strong>
+<br><small class="text-muted">Recomendado: activado siempre para respuestas más precisas</small>
+</span>
+</label>
+
+<!-- Alcance de búsqueda -->
+<div class="d-flex align-items-center flex-wrap" style="gap:.75rem; padding-left:1.5rem;">
+<label class="mb-0 small" style="font-weight:600;">Alcance de búsqueda:</label>
+<div class="form-check form-check-inline">
+<input class="form-check-input" type="radio" name="chatQuestionMemoryScope"
+id="chatQuestionMemoryScopeSession" value="session">
+<label class="form-check-label small" for="chatQuestionMemoryScopeSession">
+<i class="fas fa-comment mr-1"></i>Solo esta sesión
+</label>
+</div>
+<div class="form-check form-check-inline">
+<input class="form-check-input" type="radio" name="chatQuestionMemoryScope"
+id="chatQuestionMemoryScopeProject" value="project" checked>
+<label class="form-check-label small" for="chatQuestionMemoryScopeProject">
+<i class="fas fa-briefcase mr-1"></i>Todo el proyecto
+</label>
+</div>
+</div>
+
+<!-- Opciones avanzadas -->
+<div class="d-flex align-items-center flex-wrap" style="gap:.75rem; padding-left:1.5rem;">
+<label class="mb-0 small d-flex align-items-center" style="gap:.35rem;">
+<span title="Máximo de preguntas anteriores que se revisan como candidatas">📋 Candidatas</span>
+<input id="chatQuestionMemoryMaxCandidates" type="number"
+class="form-control form-control-sm"
+step="1" min="5" max="50" value="20"
+title="Máximo de preguntas anteriores que se pasan a la IA para evaluar relevancia"
+style="width:70px;">
+</label>
+<label class="mb-0 small d-flex align-items-center" style="gap:.35rem;">
+<span title="Líneas arriba y abajo de cada coincidencia encontrada">📐 Ventana ±</span>
+<input id="chatQuestionMemoryWindowLines" type="number"
+class="form-control form-control-sm"
+step="1" min="2" max="15" value="5"
+title="Cantidad de líneas de contexto arriba y abajo de cada coincidencia"
+style="width:60px;">
+</label>
+</div>
+
+<!-- Estado de memoria (informativo) -->
+<div id="chatQuestionMemoryStatus" class="small text-muted" style="padding-left:1.5rem; display:none;">
+<i class="fas fa-info-circle mr-1"></i>
+<span id="chatQuestionMemoryStatusText">—</span>
+</div>
+
+</div>
+</div>
+
 <!-- ============================================= -->
 
 </div>
