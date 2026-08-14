@@ -55,7 +55,7 @@ if (!$db instanceof mysqli) {
 }
 
 // 3. Lógica de Truncado
-$excluir = ['Users', 'TokenUsage', 'FileS3', 'S3Folders', 'Projects'];
+$excluir = ['Users', 'TokenUsage', 'FileS3', 'S3Folders', 'Projects', 'UserAIAgentConfigs', 'UserPreferences'];
 
 $tablas = [
     'AccessControl', 'ChatMessages', 'ChatSessions', 'ChunkEmbeddings',
