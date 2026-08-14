@@ -8,6 +8,12 @@
  * Reemplaza las variables hardcodeadas en bedrock_chat2.php con valores dinámicos
  * obtenidos de la BD, permitiendo administración centralizada de prompts.
  */
+ 
+
+error_reporting(E_ALL);
+ini_set('display_errors', 0); // No mostrar en pantalla
+ini_set('log_errors', 1);
+ini_set('error_log', __DIR__ . '/debug_error.log');
 
 // Prevenir acceso directo y cargar bootstrap si es necesario
 if (!isset($db_connection) || !($db_connection instanceof mysqli)) {
