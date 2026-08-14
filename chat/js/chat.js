@@ -121,12 +121,35 @@
     function setUsage(txt) {
       if (el.usage) el.usage.textContent = txt || '';
     }
-    function toJSONorThrow(text, status, label) {
-      try { return JSON.parse(text); }
-      catch {
-        throw new Error(`${label} no devolvió JSON (HTTP ${status}). Respuesta: ${text.slice(0, 280)}`);
-      }
+function toJSONorThrow(text, status, label) {
+    // ✅ Detectar respuesta vacía explícitamente
+    if (!text || text.trim() === '') {
+        throw new Error(
+            `${label}: El servidor devolvió respuesta VACÍA (HTTP ${status}). ` +
+            `Esto suele ser un timeout del servidor o un error fatal en PHP. ` +
+            `Revisa el log de errores de PHP.`
+        );
     }
+    
+    // ✅ Detectar HTML de error de PHP
+    if (text.trim().startsWith('<') || text.includes('<b>Fatal error</b>') || text.includes('<b>Warning</b>')) {
+        console.error(`${label}: El servidor devolvió HTML en lugar de JSON:`, text.slice(0, 500));
+        throw new Error(
+            `${label}: El servidor devolvió un error PHP en lugar de JSON. ` +
+            `Detalle: ${text.slice(0, 200)}`
+        );
+    }
+    
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        console.error(`${label}: Error parseando JSON. Respuesta cruda:`, text.slice(0, 500));
+        throw new Error(
+            `${label} no devolvió JSON válido (HTTP ${status}). ` +
+            `Respuesta: ${text.slice(0, 280)}`
+        );
+    }
+}
     function buildS3Url(key) {
       return 'descargar.php?archivo=' + encodeURIComponent(key) + '&nombre=' + encodeURIComponent(key.split('/').pop());
     }
@@ -1121,140 +1144,129 @@ function showPromptApprovalModal(compiledPrompt, compilationId) {
         });
     });
 }
-    async function sendMessage() {
-      if (isSending) return;
-      const text = (el.input && el.input.value) ? el.input.value.trim() : '';
-      const auto = !!(el.auto && el.auto.checked);
-      const model = requireModelSelected();
-      if (!model) return;
-      
-const temperature = el.temp ? parseFloat(el.temp.value) : 0.7;
-const max_tokens = el.max ? parseInt(el.max.value, 10) : 800;
-const top_p = el.topP ? parseFloat(el.topP.value) : 0.9;
-const comp_temperature = el.compTemp ? parseFloat(el.compTemp.value) : 0.0;
-const comp_max_tokens  = el.compMax ? parseInt(el.compMax.value, 10) : 200;
-const comp_top_p       = el.compTopP ? parseFloat(el.compTopP.value) : 0.1;
-const resp_max_tokens  = el.respMax ? parseInt(el.respMax.value, 10) : 1000;
-const seed_value       = el.seed ? parseInt(el.seed.value, 10) : 42;
-const useAuto = el.auto ? el.auto.checked : true;
-const useRag = getAttachmentModeCheckbox() ? getAttachmentModeCheckbox().checked : true;
-// ✅ Memoria selectiva de preguntas anteriores
-const useQuestionMemory = el.questionMemoryEnabled ? el.questionMemoryEnabled.checked : true;
-const questionMemoryScope = document.querySelector('input[name="chatQuestionMemoryScope"]:checked')?.value || 'project';
-const questionMemoryMaxCandidates = el.questionMemoryMaxCandidates ? parseInt(el.questionMemoryMaxCandidates.value, 10) : 20;
-const questionMemoryWindowLines = el.questionMemoryWindowLines ? parseInt(el.questionMemoryWindowLines.value, 10) : 5;
 
-      if (pendingFiles.length > 0 && !text) {
+async function sendMessage() {
+    if (isSending) return;
+
+    const text = (el.input && el.input.value) ? el.input.value.trim() : '';
+    const auto = !!(el.auto && el.auto.checked);
+    const model = requireModelSelected();
+    if (!model) return;
+
+    const temperature = el.temp ? parseFloat(el.temp.value) : 0.7;
+    const max_tokens = el.max ? parseInt(el.max.value, 10) : 800;
+    const top_p = el.topP ? parseFloat(el.topP.value) : 0.9;
+    const comp_temperature = el.compTemp ? parseFloat(el.compTemp.value) : 0.0;
+    const comp_max_tokens  = el.compMax ? parseInt(el.compMax.value, 10) : 200;
+    const comp_top_p       = el.compTopP ? parseFloat(el.compTopP.value) : 0.1;
+    const resp_max_tokens  = el.respMax ? parseInt(el.respMax.value, 10) : 1000;
+    const seed_value       = el.seed ? parseInt(el.seed.value, 10) : 42;
+    const useAuto = el.auto ? el.auto.checked : true;
+    const useRag = getAttachmentModeCheckbox() ? getAttachmentModeCheckbox().checked : true;
+
+    const useQuestionMemory = el.questionMemoryEnabled ? el.questionMemoryEnabled.checked : true;
+    const questionMemoryScope = document.querySelector('input[name="chatQuestionMemoryScope"]:checked')?.value || 'project';
+    const questionMemoryMaxCandidates = el.questionMemoryMaxCandidates ? parseInt(el.questionMemoryMaxCandidates.value, 10) : 20;
+    const questionMemoryWindowLines = el.questionMemoryWindowLines ? parseInt(el.questionMemoryWindowLines.value, 10) : 5;
+
+    if (pendingFiles.length > 0 && !text) {
         suggestAttachmentsHeader();
         setStatus('Agrega un mensaje para enviar junto con tus archivos.');
         el.input && el.input.focus();
         return;
-      }
-      if (!text && pendingFiles.length === 0) {
+    }
+    if (!text && pendingFiles.length === 0) {
         el.input && el.input.focus();
         return;
-      }
-      if (!currentSessionId) {
-        try {
-          const created = await createSession(text.slice(0, 64) || 'Nueva conversación (Auto)');
-          currentSessionId = created.id;
-          await loadSessions();
-        } catch (e) {
-          pushLocal('assistant', '⚠️ Error creando sesión: ' + e.message);
-          return;
-        }
-      }
-const editMatch = text.match(/(?:edita|modifica|cambia|actualiza)\s+(?:el\s+archivo\s+)?([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)\s+(?:para\s+|y\s+)?(.+)/i);
-const createMatch = text.match(/(?:crea|crear|genera|generar|haz|has)\s+(?:un\s+)?(?:archivo|clase|módulo|script)\s+(?:llamado|denominado|con\s+nombre|nombrado)?\s*([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)\s+(?:en\s+la\s+(?:raíz|carpeta)\s+del\s+proyecto\s+)?(?:con|que\s+(?:tenga|contenga|tenga)|para)\s+(.+)/i);
-if ((editMatch || createMatch) && currentProjectId) {
-  const match = editMatch || createMatch;
-  const targetFilename = match[1];
-  const instruction = match[2];
-  const isCreation = !!createMatch;
-  isSending = true;
-  setStatus(`🔪 ${isCreation ? 'Creando' : 'Editando'} ${targetFilename}…`);
-  pushLocal('user', text, { created_at: new Date().toISOString() });
-  try {
-    const fd = new FormData();
-    fd.append('session_id', String(currentSessionId));
-    fd.append('project_id', String(currentProjectId));
-    fd.append('target_filename', targetFilename);
-    fd.append('instruction', instruction);
-    const r = await fetch('code_edit.php', { 
-      method:'POST', 
-      credentials:'same-origin', 
-      body: fd 
-    });
-    const j = toJSONorThrow(await r.text(), r.status, isCreation ? 'Crear código' : 'Editar código');
-    if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
-    const action = isCreation ? 'creado' : 'actualizado';
-    const replyText = `✅ **${j.filename}** ${action} exitosamente (versión **v${j.new_version}**).\n\n📝 *Instrucción:* ${esc(j.diff_summary)}\n\n🤖 *Modelo usado:* \`${j.model_used || 'desconocido'}\`\n\n📂 *Ruta S3:* \`${j.download_url || 'N/A'}\``;
-    
-    // ✅ GUARDAR PREGUNTA Y RESPUESTA EN BD (ChatMessages)
-try {
-    const fdSave = new FormData();
-    fdSave.append('session_id', String(currentSessionId));
-    fdSave.append('user_text', text);
-    fdSave.append('reply_text', replyText);
-    fdSave.append('model_used', j.model_used || 'code_edit_direct');
-
-    const rSave = await fetch('chat_save_edit.php', {
-        method: 'POST',
-        credentials: 'same-origin',
-        body: fdSave
-    });
-
-    if (rSave.ok) {
-        const jSave = await rSave.json();
-        if (jSave.ok && jSave.saved) {
-            console.log('✅ Edición guardada en BD:', jSave.saved);
-        }
-    } else {
-        console.warn('⚠️ No se pudo guardar la edición en BD. HTTP:', rSave.status);
     }
-} catch (saveErr) {
-    console.warn('⚠️ Error guardando edición en BD:', saveErr);
-    // No bloquear por esto
-}
-    
-    pushLocal('assistant', replyText, { created_at: new Date().toISOString() });
-    await loadProjectSources(currentProjectId);
-    setStatus('🔄 Actualizando índice de conocimientos...');
-    const fdIndex = new FormData();
-    fdIndex.append('project_id', String(currentProjectId));
-    fetch('index_project_sources.php', { method: 'POST', credentials: 'same-origin', body: fdIndex })
-      .then(async (res) => {
+    if (!currentSessionId) {
         try {
-          const jIdx = await res.json();
-          if (jIdx.ok) {
-            setStatus(`✅ Índice actualizado (${jIdx.indexed_count || 1} archivo procesado).`);
-            setTimeout(() => setStatus(''), 4000);
-            await loadProjectSources(currentProjectId);
-          }
-        } catch (err) {
-          console.error('Error parseando indexación:', err);
-          setStatus('');
+            const created = await createSession(text.slice(0, 64) || 'Nueva conversación (Auto)');
+            currentSessionId = created.id;
+            await loadSessions();
+        } catch (e) {
+            pushLocal('assistant', '⚠️ Error creando sesión: ' + e.message);
+            return;
         }
-      })
-      .catch(err => {
-        console.error('Error indexando:', err);
-        setStatus('');
-      });
-  } catch (e) {
-    console.error(e);
-    pushLocal('assistant', '⚠️ Error al procesar el archivo: ' + e.message);
-  } finally {
-    setStatus('');
-    isSending = false;
-    if (el.input) el.input.value = '';
-    clearQueue();
-  }
-  return; 
-}
-      isSending = true;
-      setStatus('Compilando prompt…');
-      pushLocal('user', text, { created_at: new Date().toISOString() });
-      try {
+    }
+
+    // ============================================================
+    // DETECCIÓN DE EDICIÓN DE CÓDIGO (sin cambios)
+    // ============================================================
+    const editMatch = text.match(/(?:edita|modifica|cambia|actualiza)\s+(?:el\s+archivo\s+)?([a-zA-Z0-9_.-]+.[a-zA-Z0-9]+)\s+(?:para\s+|y\s+)?(.+)/i);
+    const createMatch = text.match(/(?:crea|crear|genera|generar|haz|has)\s+(?:un\s+)?(?:archivo|clase|módulo|script)\s+(?:llamado|denominado|con\s+nombre|nombrado)?\s*([a-zA-Z0-9_.-]+.[a-zA-Z0-9]+)\s+(?:en\s+la\s+(?:raíz|carpeta)\s+del\s+proyecto\s+)?(?:con|que\s+(?:tenga|contenga|tenga)|para)\s+(.+)/i);
+
+    if ((editMatch || createMatch) && currentProjectId) {
+        const match = editMatch || createMatch;
+        const targetFilename = match[1];
+        const instruction = match[2];
+        const isCreation = !!createMatch;
+        isSending = true;
+        setStatus(`🔪 ${isCreation ? 'Creando' : 'Editando'} ${targetFilename}…`);
+        pushLocal('user', text, { created_at: new Date().toISOString() });
+        try {
+            const fd = new FormData();
+            fd.append('session_id', String(currentSessionId));
+            fd.append('project_id', String(currentProjectId));
+            fd.append('target_filename', targetFilename);
+            fd.append('instruction', instruction);
+            const r = await fetch('code_edit.php', { method:'POST', credentials:'same-origin', body: fd });
+            const j = toJSONorThrow(await r.text(), r.status, isCreation ? 'Crear código' : 'Editar código');
+            if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+            const action = isCreation ? 'creado' : 'actualizado';
+            const replyText = `✅ **${j.filename}** ${action} exitosamente (versión **v${j.new_version}**).\n\n📝 *Instrucción:* ${esc(j.diff_summary)}\n\n🤖 *Modelo usado:* \`${j.model_used || 'desconocido'}\`\n\n📂 Ruta S3: \`${j.download_url || 'N/A'}\``;
+            try {
+                const fdSave = new FormData();
+                fdSave.append('session_id', String(currentSessionId));
+                fdSave.append('user_text', text);
+                fdSave.append('reply_text', replyText);
+                fdSave.append('model_used', j.model_used || 'code_edit_direct');
+                const rSave = await fetch('chat_save_edit.php', { method: 'POST', credentials: 'same-origin', body: fdSave });
+                if (rSave.ok) {
+                    const jSave = await rSave.json();
+                    if (jSave.ok && jSave.saved) console.log('✅ Edición guardada en BD:', jSave.saved);
+                }
+            } catch (saveErr) { console.warn('⚠️ Error guardando edición en BD:', saveErr); }
+            pushLocal('assistant', replyText, { created_at: new Date().toISOString() });
+            await loadProjectSources(currentProjectId);
+            setStatus('🔄 Actualizando índice de conocimientos...');
+            const fdIndex = new FormData();
+            fdIndex.append('project_id', String(currentProjectId));
+            fetch('index_project_sources.php', { method: 'POST', credentials: 'same-origin', body: fdIndex })
+                .then(async (res) => {
+                    try {
+                        const jIdx = await res.json();
+                        if (jIdx.ok) {
+                            setStatus(`✅ Índice actualizado (${jIdx.indexed_count || 1} archivo procesado).`);
+                            setTimeout(() => setStatus(''), 4000);
+                            await loadProjectSources(currentProjectId);
+                        }
+                    } catch (err) { setStatus(''); }
+                })
+                .catch(() => setStatus(''));
+        } catch (e) {
+            console.error(e);
+            pushLocal('assistant', '⚠️ Error al procesar el archivo: ' + e.message);
+        } finally {
+            setStatus('');
+            isSending = false;
+            if (el.input) el.input.value = '';
+            clearQueue();
+        }
+        return;
+    }
+
+    // ============================================================
+    // FLUJO PRINCIPAL: FASE 1 (compile) → FASE 2 (respond)
+    // ============================================================
+    isSending = true;
+    setStatus('Compilando prompt…');
+    pushLocal('user', text, { created_at: new Date().toISOString() });
+
+    try {
+        // ──────────────────────────────────────────────────────
+        // FASE 1: COMPILAR PROMPT (timeout 2 min)
+        // ──────────────────────────────────────────────────────
         const fdCompile = new FormData();
         fdCompile.append('session_id', String(currentSessionId));
         const uid = getUserId();
@@ -1262,144 +1274,237 @@ try {
         fdCompile.append('text', text);
         fdCompile.append('auto', auto ? '1' : '0');
         fdCompile.append('model', model);
-fdCompile.append('temperature', String(temperature));
-fdCompile.append('max_tokens', String(max_tokens));
-fdCompile.append('top_p', String(top_p));
-fdCompile.append('compile_temperature', String(comp_temperature));
-fdCompile.append('compile_max_tokens', String(comp_max_tokens));
-fdCompile.append('compile_top_p', String(comp_top_p));
-fdCompile.append('resp_max_tokens', String(resp_max_tokens));
-fdCompile.append('seed', String(seed_value));
-fdCompile.append('use_rag', useRag ? '1' : '0');
-fdCompile.append('use_question_memory', useQuestionMemory ? '1' : '0');
-fdCompile.append('question_memory_scope', questionMemoryScope);
-fdCompile.append('question_memory_max_candidates', String(questionMemoryMaxCandidates));
-fdCompile.append('question_memory_window_lines', String(questionMemoryWindowLines));
-
+        fdCompile.append('temperature', String(temperature));
+        fdCompile.append('max_tokens', String(max_tokens));
+        fdCompile.append('top_p', String(top_p));
+        fdCompile.append('compile_temperature', String(comp_temperature));
+        fdCompile.append('compile_max_tokens', String(comp_max_tokens));
+        fdCompile.append('compile_top_p', String(comp_top_p));
+        fdCompile.append('resp_max_tokens', String(resp_max_tokens));
+        fdCompile.append('seed', String(seed_value));
+        fdCompile.append('use_rag', useRag ? '1' : '0');
+        fdCompile.append('use_question_memory', useQuestionMemory ? '1' : '0');
+        fdCompile.append('question_memory_scope', questionMemoryScope);
+        fdCompile.append('question_memory_max_candidates', String(questionMemoryMaxCandidates));
+        fdCompile.append('question_memory_window_lines', String(questionMemoryWindowLines));
         fdCompile.append('compile_only', '1');
         if (pendingFiles.length > 0) {
-          pendingFiles.forEach(({file}) => fdCompile.append('files[]', file, file.name));
+            pendingFiles.forEach(({file}) => fdCompile.append('files[]', file, file.name));
         }
-        const rCompile = await fetch(API.send, { method:'POST', credentials:'same-origin', body: fdCompile });
-        const jCompile = toJSONorThrow(await rCompile.text(), rCompile.status, 'Compilar prompt');
+
+        // ✅ FETCH CON TIMEOUT (2 minutos para compile)
+        const compileController = new AbortController();
+        const compileTimeoutId = setTimeout(() => compileController.abort(), 120000);
+
+        let rCompile;
+        try {
+            rCompile = await fetch(API.send, {
+                method: 'POST',
+                credentials: 'same-origin',
+                body: fdCompile,
+                signal: compileController.signal
+            });
+        } catch (fetchErr) {
+            clearTimeout(compileTimeoutId);
+            if (fetchErr.name === 'AbortError') {
+                throw new Error('⏱️ Timeout compilando prompt (2 min). Intenta de nuevo.');
+            }
+            throw fetchErr;
+        } finally {
+            clearTimeout(compileTimeoutId);
+        }
+
+        const compileText = await rCompile.text();
+        console.log('📥 Fase 1 (compile) respuesta:', compileText.length > 0 ? compileText.slice(0, 200) + '...' : '(VACÍA)');
+        const jCompile = toJSONorThrow(compileText, rCompile.status, 'Compilar prompt');
         if (!rCompile.ok || jCompile.ok === false) throw new Error(jCompile.error || `HTTP ${rCompile.status}`);
+
+        // ──────────────────────────────────────────────────────
+        // FASE 1.5: MODAL DE APROBACIÓN
+        // ──────────────────────────────────────────────────────
         if (jCompile.phase === 'compile_only' && jCompile.compiled_prompt) {
-          const approved = await showPromptApprovalModal(jCompile.compiled_prompt, jCompile.compilation_id);
-          if (!approved) {
-            setStatus('');
-            isSending = false;
-            const lastMsg = el.messages.lastElementChild;
-            if (lastMsg && lastMsg.classList.contains('chat-user')) {
-              lastMsg.remove();
-            }
-            return; 
-          }
-         /* 
-          const lastUserMsg = el.messages.querySelector('.chat-msg.user:last-child');
-          if (lastUserMsg) {
-            const contentDiv = lastUserMsg.querySelector('div > div') || lastUserMsg.querySelector('div');
-            if (contentDiv) {
-              contentDiv.innerHTML = mdToHtml(approved.prompt);
-            }
-          }*/
-const lastUserMsg = el.messages.querySelector('.chat-msg.user:last-child');
-if (lastUserMsg) {
-  lastUserMsg.remove();
-}
-          setStatus('Generando respuesta…');
-          const fdRespond = new FormData();
-          fdRespond.append('session_id', String(currentSessionId));
-          if (uid) fdRespond.append('user_id', uid);
-          fdRespond.append('text', text); 
-          fdRespond.append('compiled_prompt', approved.prompt); 
-          fdRespond.append('compilation_id', String(approved.compilation_id));
-          fdRespond.append('model', model);
-fdRespond.append('temperature', String(temperature));
-fdRespond.append('max_tokens', String(resp_max_tokens));
-fdRespond.append('top_p', String(top_p));
-fdRespond.append('seed', String(seed_value));
-fdRespond.append('use_rag', useRag ? '1' : '0');
-
-fdRespond.append('use_question_memory', useQuestionMemory ? '1' : '0');
-fdRespond.append('question_memory_scope', questionMemoryScope);
-fdRespond.append('question_memory_max_candidates', String(questionMemoryMaxCandidates));
-fdRespond.append('question_memory_window_lines', String(questionMemoryWindowLines));
-
-          const rRespond = await fetch(API.send, { method:'POST', credentials:'same-origin', body: fdRespond });
-          const jRespond = toJSONorThrow(await rRespond.text(), rRespond.status, 'Enviar mensaje');
-          if (!rRespond.ok || jRespond.ok === false) throw new Error(jRespond.error || `HTTP ${rRespond.status}`);
-          if (jRespond.reply) {
-            pushLocal('assistant', jRespond.reply, { created_at: new Date().toISOString() });
-          }
-          if (currentProjectId && jRespond.reply && (jRespond.reply.includes('actualizado') || jRespond.reply.includes('modificado') || jRespond.needs_indexing)) {
-            setStatus('🔄 Actualizando índice de conocimientos...');
-            const fdIndex = new FormData();
-            fdIndex.append('project_id', String(currentProjectId));
-            fetch('index_project_sources.php', { method: 'POST', credentials: 'same-origin', body: fdIndex })
-              .then(async (res) => {
-                try {
-                  const j = await res.json();
-                  if (j.ok) {
-                    setStatus(`✅ Índice actualizado (${j.indexed_count || 1} archivo procesado). La IA ya puede leer los cambios.`);
-                    setTimeout(() => setStatus(''), 4000);
-                    await loadProjectSources(currentProjectId);
-                  }
-                } catch (err) {
-                  console.error('Error parseando respuesta de indexación:', err);
-                  setStatus('');
-                }
-              })
-              .catch(err => {
-                console.error('Error indexando en segundo plano:', err); 
+            const approved = await showPromptApprovalModal(jCompile.compiled_prompt, jCompile.compilation_id);
+            if (!approved) {
                 setStatus('');
-              });
-          }
-          const action = (jRespond.action || '').toLowerCase();
-          const improved = jRespond.router && jRespond.router.improved_prompt ? String(jRespond.router.improved_prompt) : (text || '');
-          if (action === 'gen_image') {
-            await autoGenerateImage(improved);
-          } else if (action === 'gen_video') {
-            await autoGenerateVideo(improved);
-          } else {
+                isSending = false;
+                const lastMsg = el.messages.lastElementChild;
+                if (lastMsg && lastMsg.classList.contains('chat-user')) lastMsg.remove();
+                return;
+            }
+
+            const lastUserMsg = el.messages.querySelector('.chat-msg.user:last-child');
+            if (lastUserMsg) lastUserMsg.remove();
+
+            // ──────────────────────────────────────────────────
+            // FASE 2: RESPUESTA FINAL (timeout 10 min)
+            // ──────────────────────────────────────────────────
+            setStatus('Generando respuesta…');
+
+            const fdRespond = new FormData();
+            fdRespond.append('session_id', String(currentSessionId));
+            if (uid) fdRespond.append('user_id', uid);
+            fdRespond.append('text', text);
+            fdRespond.append('compiled_prompt', approved.prompt);
+            fdRespond.append('compilation_id', String(approved.compilation_id));
+            fdRespond.append('model', model);
+            fdRespond.append('temperature', String(temperature));
+            fdRespond.append('max_tokens', String(resp_max_tokens));
+            fdRespond.append('top_p', String(top_p));
+            fdRespond.append('seed', String(seed_value));
+            fdRespond.append('use_rag', useRag ? '1' : '0');
+            fdRespond.append('use_question_memory', useQuestionMemory ? '1' : '0');
+            fdRespond.append('question_memory_scope', questionMemoryScope);
+            fdRespond.append('question_memory_max_candidates', String(questionMemoryMaxCandidates));
+            fdRespond.append('question_memory_window_lines', String(questionMemoryWindowLines));
+
+            // ✅ FETCH CON TIMEOUT (10 minutos para respond)
+            const respondController = new AbortController();
+            const respondTimeoutId = setTimeout(() => respondController.abort(), 600000);
+
+            let rRespond;
+            try {
+                rRespond = await fetch(API.send, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    body: fdRespond,
+                    signal: respondController.signal
+                });
+            } catch (fetchErr) {
+                clearTimeout(respondTimeoutId);
+                if (fetchErr.name === 'AbortError') {
+                    // ✅ TIMEOUT: El servidor sigue procesando en background.
+                    // Esperar y recargar la sesión para ver si se guardó.
+                    console.warn('⏱️ Timeout en Fase 2. Esperando 10s y recargando sesión...');
+                    setStatus('⏱️ La IA está procesando (tardó más de 10 min). Verificando si se guardó la respuesta...');
+                    await new Promise(resolve => setTimeout(resolve, 10000));
+                    await selectSession(currentSessionId);
+                    setStatus('');
+                    isSending = false;
+                    if (el.input) el.input.value = '';
+                    clearQueue();
+                    return;
+                }
+                throw fetchErr;
+            } finally {
+                clearTimeout(respondTimeoutId);
+            }
+
+            const respondText = await rRespond.text();
+            console.log('📥 Fase 2 (respond) respuesta:', respondText.length > 0 ? respondText.slice(0, 300) + '...' : '(VACÍA)');
+
+            // ✅ RESPUESTA VACÍA: El servidor procesó todo pero el proxy cortó la conexión.
+            // Los datos SÍ se guardaron en BD. Recargar la sesión.
+            if (!respondText || respondText.trim() === '') {
+                console.warn('⚠️ Respuesta vacía del servidor. El mensaje probablemente se guardó en BD. Recargando sesión en 5s...');
+                setStatus('⚠️ El servidor tardó demasiado y la respuesta se cortó. Verificando si la IA ya respondió...');
+
+                // Esperar 5 segundos para que PHP termine de guardar en BD
+                await new Promise(resolve => setTimeout(resolve, 5000));
+
+                // Recargar la sesión para mostrar el mensaje guardado
+                await selectSession(currentSessionId);
+
+                setStatus('');
+                isSending = false;
+                if (el.input) el.input.value = '';
+                clearQueue();
+                return;
+            }
+
+            // ✅ Parsear JSON normalmente
+            let jRespond;
+            try {
+                jRespond = JSON.parse(respondText);
+            } catch (parseErr) {
+                console.error('❌ Error parseando JSON de Fase 2. Respuesta cruda:', respondText.slice(0, 500));
+                // Si no es JSON pero hay contenido, puede ser un error PHP
+                if (respondText.includes('<b>Fatal error') || respondText.includes('<b>Warning')) {
+                    throw new Error('Error PHP en el servidor: ' + respondText.slice(0, 200));
+                }
+                throw new Error('La respuesta no es JSON válido: ' + respondText.slice(0, 200));
+            }
+
+            if (!rRespond.ok || jRespond.ok === false) throw new Error(jRespond.error || `HTTP ${rRespond.status}`);
+
+            // ✅ Mostrar respuesta
+            if (jRespond.reply) {
+                pushLocal('assistant', jRespond.reply, { created_at: new Date().toISOString() });
+            }
+
+            // Indexación post-edición
+            if (currentProjectId && jRespond.reply && (jRespond.reply.includes('actualizado') || jRespond.reply.includes('modificado') || jRespond.needs_indexing)) {
+                setStatus('🔄 Actualizando índice de conocimientos...');
+                const fdIndex = new FormData();
+                fdIndex.append('project_id', String(currentProjectId));
+                fetch('index_project_sources.php', { method: 'POST', credentials: 'same-origin', body: fdIndex })
+                    .then(async (res) => {
+                        try {
+                            const j = await res.json();
+                            if (j.ok) {
+                                setStatus(`✅ Índice actualizado (${j.indexed_count || 1} archivo procesado).`);
+                                setTimeout(() => setStatus(''), 4000);
+                                await loadProjectSources(currentProjectId);
+                            }
+                        } catch (err) { setStatus(''); }
+                    })
+                    .catch(() => setStatus(''));
+            }
+
+            const action = (jRespond.action || '').toLowerCase();
+            const improved = jRespond.router && jRespond.router.improved_prompt ? String(jRespond.router.improved_prompt) : (text || '');
+            if (action === 'gen_image') {
+                await autoGenerateImage(improved);
+            } else if (action === 'gen_video') {
+                await autoGenerateVideo(improved);
+            } else {
+                await selectSession(currentSessionId);
+            }
+
+            if (jRespond.usage) {
+                const u = jRespond.usage;
+                setUsage(`Tokens ~ prompt ${u.prompt_tokens||0} + completion ${u.completion_tokens||0} = ${u.total_tokens||0}`);
+            }
+
+            // Estado de memoria selectiva
+            if (jRespond.memory_used !== undefined) {
+                const memStatusEl = document.getElementById('chatQuestionMemoryStatus');
+                const memTextEl = document.getElementById('chatQuestionMemoryStatusText');
+                if (memStatusEl && memTextEl) {
+                    memStatusEl.style.display = 'block';
+                    if (jRespond.memory_used) {
+                        const qCount = (jRespond.memory_question_ids || []).length;
+                        const fCount = jRespond.memory_fragments || 0;
+                        memTextEl.textContent = `Última respuesta usó memoria: ${qCount} pregunta(s) consultada(s), ${fCount} fragmento(s) inyectado(s).`;
+                        memTextEl.style.color = '#00cc66';
+                    } else {
+                        memTextEl.textContent = 'Última respuesta no requirió memoria de preguntas anteriores.';
+                        memTextEl.style.color = '';
+                    }
+                }
+            }
+
+        } else {
+            // ──────────────────────────────────────────────────
+            // SIN COMPILACIÓN: respuesta directa
+            // ──────────────────────────────────────────────────
+            if (jCompile.reply) {
+                pushLocal('assistant', jCompile.reply, { created_at: new Date().toISOString() });
+            }
             await selectSession(currentSessionId);
-          }
-          if (jRespond.usage) {
-            const u = jRespond.usage;
-            setUsage(`Tokens ~ prompt ${u.prompt_tokens||0} + completion ${u.completion_tokens||0} = ${u.total_tokens||0}`);
-          }
-// ✅ Mostrar estado de memoria selectiva si el backend lo envía
-if (jRespond.memory_used !== undefined) {
-    const memStatusEl = document.getElementById('chatQuestionMemoryStatus');
-    const memTextEl = document.getElementById('chatQuestionMemoryStatusText');
-    if (memStatusEl && memTextEl) {
-        memStatusEl.style.display = 'block';
-        if (jRespond.memory_used) {
-            const qCount = (jRespond.memory_question_ids || []).length;
-            const fCount = jRespond.memory_fragments || 0;
-            memTextEl.textContent = `Última respuesta usó memoria: ${qCount} pregunta(s) consultada(s), ${fCount} fragmento(s) inyectado(s).`;
-            memTextEl.style.color = '#00cc66';
-        } else {
-            memTextEl.textContent = 'Última respuesta no requirió memoria de preguntas anteriores.';
-            memTextEl.style.color = '';
         }
-    }
-}
-        } else {
-          if (jCompile.reply) {
-            pushLocal('assistant', jCompile.reply, { created_at: new Date().toISOString() });
-          }
-          await selectSession(currentSessionId);
-        }
+
         if (el.input) el.input.value = '';
         clearQueue();
-      } catch (e) {
-        console.error(e);
+
+    } catch (e) {
+        console.error('❌ Error en sendMessage:', e);
         pushLocal('assistant', '⚠️ Error: ' + e.message);
-      } finally {
+    } finally {
         setStatus('');
         isSending = false;
-      }
-    } 
+    }
+}
+
     function clearQueue(){
       pendingFiles = [];
       renderQueue();
