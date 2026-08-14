@@ -1,6 +1,6 @@
 <?php
 putenv('AWS_EC2_METADATA_DISABLED=true'); // <- evita IMDS (169.254.169.254)
-
+ob_start();
 // bedrock_chat2.php — Chat directo a Amazon Bedrock (Converse)
 // con soporte de adjuntos, OCR (Textract), RAG, Tool Use (Function Calling) y Metacognición (Fase 1)
 
@@ -53,7 +53,62 @@ if (file_exists($qm_file)) {
 }
 
 // ===== Helpers =====
-function jexit($arr, $code=200){ http_response_code($code); echo json_encode($arr, JSON_UNESCAPED_UNICODE); exit; }
+function jexit($arr, $code=200){
+    // Limpiar cualquier output previo (warnings, notices, BOM)
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+    
+    http_response_code($code);
+    header('Content-Type: application/json; charset=utf-8');
+    
+    $json = json_encode($arr, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    
+    if ($json === false) {
+        // json_encode falló: loguear y enviar fallback
+        $jsonError = json_last_error_msg();
+        error_log("jexit: json_encode FALLÓ: " . $jsonError);
+        
+        // Sanitizar recursivamente el array para eliminar caracteres inválidos
+        $arr = sanitizeForJson($arr);
+        $json = json_encode($arr, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        
+        if ($json === false) {
+            // Último recurso: respuesta mínima
+            $json = '{"ok":false,"error":"Error interno al serializar respuesta: ' . addslashes($jsonError) . '"}';
+        }
+    }
+    
+    echo $json;
+    exit;
+}
+
+/**
+ * Sanitiza recursivamente un array para que json_encode nunca falle.
+ * Elimina caracteres UTF-8 inválidos y convierte recursos a strings.
+ */
+function sanitizeForJson($data) {
+    if (is_string($data)) {
+        // Eliminar caracteres UTF-8 inválidos
+        $data = mb_convert_encoding($data, 'UTF-8', 'UTF-8');
+        // Eliminar bytes de control excepto \n \r \t
+        $data = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $data);
+        return $data;
+    }
+    if (is_array($data)) {
+        foreach ($data as $key => $value) {
+            $data[$key] = sanitizeForJson($value);
+        }
+        return $data;
+    }
+    if (is_resource($data)) {
+        return '[resource]';
+    }
+    if (is_float($data) && (is_nan($data) || is_infinite($data))) {
+        return 0;
+    }
+    return $data;
+}
 
 function next_id(mysqli $db, $table, $col){
   $table = preg_replace('/[^A-Za-z0-9_]+/','',$table);
