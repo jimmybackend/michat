@@ -1048,6 +1048,7 @@ role="progressbar" style="width: 0%">0%</div>
 <script src="js/chat.js"></script>
 <script src="js/context-viewer.js"></script> 
 <script src="js/ai-data-control.js"></script>
+<script src="js/user_preferences.js"></script>
 <!-- Módulos que dependen de chat.js -->
 <script src="js/run-tests.js"></script>
 <script src="js/rollback-edit.js"></script>
