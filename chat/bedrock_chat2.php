@@ -171,6 +171,43 @@ $attachmentOnly_userMessage_instruction = "Analiza los archivos adjuntos y resp�
 // ----------------------------------------------------------------------------
 $projectInstructions_wrapper_instruction = "\n\n[INSTRUCCIONES OBLIGATORIAS DEL PROYECTO]\n{INSTRUCTIONS}\n\nDebes seguir estas reglas estrictamente en tu respuesta. Si el usuario pide código, usa el lenguaje y versiones especificadas aquí.";
 
+// ----------------------------------------------------------------------------
+// 21. PROCESO: Inyección de Memoria de Sesión (SessionContextBlocks) - Dinámico
+// PROCESO: Sección que se agrega dinámicamente cuando hay memoria de sesión
+// ----------------------------------------------------------------------------
+$mainSystemPrompt_sessionMemory_dynamic_instruction = "\n[MEMORIA DE ESTA SESIÓN - SOLO ESTA, NO OTRAS]\nSi pregunta '¿qué he preguntado?' o '¿de qué hemos hablado?', responde EXCLUSIVAMENTE basándote en esta memoria. No inventes temas:\n";
+
+// ----------------------------------------------------------------------------
+// 22. PROCESO: Inyección de Archivos Adjuntos de Sesión (RAG) - Dinámico
+// PROCESO: Sección que se agrega dinámicamente cuando hay contexto de adjuntos
+// ----------------------------------------------------------------------------
+$mainSystemPrompt_attachment_dynamic_instruction = "\n[ARCHIVOS ADJUNTOS DE ESTA SESIÓN]\nEl siguiente contenido proviene de archivos adjuntos reales de esta conversación. Úsalo solo si es relevante para la pregunta actual.\n";
+
+// ----------------------------------------------------------------------------
+// 23. PROCESO: Inyección de Memoria Selectiva - Dinámico
+// PROCESO: Sección que se agrega dinámicamente cuando hay memoria de preguntas
+// ----------------------------------------------------------------------------
+$mainSystemPrompt_questionMemory_dynamic_instruction = "
+\n
+[MEMORIA SELECTIVA DE PREGUNTAS ANTERIORES]
+La siguiente información proviene de preguntas y respuestas anteriores del usuario.
+Úsala como contexto para mantener continuidad y precisión.
+Los fragmentos exactos contienen datos reales de respuestas previas.
+
+";
+
+// ----------------------------------------------------------------------------
+// 24. PROCESO: Inyección de Instrucciones del Proyecto - Dinámico
+// PROCESO: Label que se agrega dinámicamente cuando hay instrucciones de proyecto
+// ----------------------------------------------------------------------------
+$mainSystemPrompt_projectInstructions_dynamic_label = "\n\n[INSTRUCCIONES DEL PROYECTO]\n";
+
+// ----------------------------------------------------------------------------
+// 25. PROCESO: Inyección de Contexto RAG - Dinámico
+// PROCESO: Sección que se agrega dinámicamente cuando hay contexto RAG
+// ----------------------------------------------------------------------------
+$mainSystemPrompt_ragContext_dynamic_instruction = "\n\n[CONTEXTO DE ARCHIVOS]: El usuario ha proporcionado fragmentos de código. Prioriza esta información. Si la respuesta está en los fragmentos, CITA el nombre del archivo y usa ese contenido exacto.\n\n";
+
 // ============================================================================
 // FIN DE SECCIÓN DE INSTRUCCIONES - COMIENZA LÓGICA PRINCIPAL
 // ============================================================================
@@ -2051,44 +2088,27 @@ $attachmentContext = buildSessionAttachmentContext(
 
 // 6) Inyectar memoria conversacional
 if (!empty($sessionMemory)) {
-    $systemPrompt .= "\n[MEMORIA DE ESTA SESIÓN - SOLO ESTA, NO OTRAS]\n";
-    $systemPrompt .= "Si pregunta '¿qué he preguntado?' o '¿de qué hemos hablado?', responde EXCLUSIVAMENTE basándote en esta memoria. No inventes temas:\n";
+    $systemPrompt .= $mainSystemPrompt_sessionMemory_dynamic_instruction;
     $systemPrompt .= $sessionMemory;
 }
 
 // 7) Inyectar adjuntos solo si hubo contexto relevante
 if (!empty($attachmentContext)) {
-    $systemPrompt .= "\n[ARCHIVOS ADJUNTOS DE ESTA SESIÓN]\n";
-    $systemPrompt .= "El siguiente contenido proviene de archivos adjuntos reales de esta conversación. Úsalo solo si es relevante para la pregunta actual.\n";
+    $systemPrompt .= $mainSystemPrompt_attachment_dynamic_instruction;
     $systemPrompt .= $attachmentContext;
 }
 
 // ✅ INYECTAR MEMORIA SELECTIVA DE PREGUNTAS ANTERIORES
 if (!empty($questionMemoryContext)) {
-    $systemPrompt .= "
-
-[MEMORIA SELECTIVA DE PREGUNTAS ANTERIORES]
-La siguiente información proviene de preguntas y respuestas anteriores del usuario.
-Úsala como contexto para mantener continuidad y precisión.
-Los fragmentos exactos contienen datos reales de respuestas previas.
-
-" . $questionMemoryContext;
+    $systemPrompt .= $mainSystemPrompt_questionMemory_dynamic_instruction . $questionMemoryContext;
 }
 
     // ✅ INSTRUCCIONES DEL PROYECTO (solo si la sesión tiene proyecto)
     if (!empty($projectInstructions)) {
-        $systemPrompt .= "\n\n[INSTRUCCIONES DEL PROYECTO]\n" . $projectInstructions;
+        $systemPrompt .= $mainSystemPrompt_projectInstructions_dynamic_label . $projectInstructions;
     }
     
-$systemPrompt .= "
-
-[REGLA CRÍTICA DE HERRAMIENTAS - OBLIGATORIA]
-Cuando el usuario solicite CREAR, MODIFICAR, EDITAR o GUARDAR un archivo de código en el proyecto, DEBES usar OBLIGATORIAMENTE la herramienta 'code_edit' con action='write' (o sin 'action', es el valor por defecto).
-Cuando el usuario pida VER, LEER o mostrar el contenido REAL/actual de un archivo del proyecto (no lo que tú recuerdes), usa 'code_edit' con action='read'.
-Cuando el usuario pida ELIMINAR, BORRAR o quitar un archivo del proyecto, usa 'code_edit' con action='delete'.
-NUNCA respondas con el código directamente en el chat si la instrucción implica crear, modificar, leer o eliminar un archivo real del proyecto: siempre usa la herramienta.
-Parámetros requeridos: project_id, session_id, target_filename (y 'instruction' solo cuando action='write').
-";
+$systemPrompt .= $mainSystemPrompt_toolUseRules_instruction;
 
     // ✅ REGLAS PRIMORDIALES (Cross-Session, solo sesiones activas)
     if (!empty($primordialRules)) {
@@ -2097,20 +2117,11 @@ Parámetros requeridos: project_id, session_id, target_filename (y 'instruction'
 
     // ✅ CONTEXTO RAG DE ARCHIVOS (solo si hay proyecto y hay coincidencias)
     if (!empty($ragContext)) {
-        $systemPrompt .= "\n\n[CONTEXTO DE ARCHIVOS]: El usuario ha proporcionado fragmentos de código. Prioriza esta información. Si la respuesta está en los fragmentos, CITA el nombre del archivo y usa ese contenido exacto.";
-        $systemPrompt .= "\n\n" . $ragContext;
+        $systemPrompt .= $mainSystemPrompt_ragContext_dynamic_instruction . $ragContext;
     }
 
     // ✅ REGLAS DE COMPORTAMIENTO
-    $systemPrompt .= "\n\n[REGLAS DE COMPORTAMIENTO ESTRICTAS]:\n";
-    $systemPrompt .= "1. CONOCIMIENTO GENERAL (PRIORIDAD MÁXIMA): Si la pregunta es sobre historia, ciencia, religión, geografía, cultura, programación o CUALQUIER tema de conocimiento, responde SIEMPRE directamente con tu conocimiento interno. NUNCA digas 'no hemos tratado este tema' o 'no tengo información en esta sesión'. Eso es FALSO: tienes conocimiento de entrenamiento sobre todos estos temas. Simplemente RESPONDE.\n";
-    $systemPrompt .= "2. PREGUNTAS DE SEGUIMIENTO: Si el usuario hace una pregunta que continúa o profundiza un tema ya discutido (ej: preguntó sobre Colón y ahora pregunta '¿a dónde llegó?' o '¿qué idioma hablaban?'), es una pregunta de CONOCIMIENTO GENERAL. Responde normalmente. NO es una pregunta meta-cognitiva. NO consultes la memoria de sesión para esto.\n";
-    $systemPrompt .= "3. EDICIÓN DE CÓDIGO: Para modificar un archivo, PRIMERO usa 'grep' para obtener el código exacto. Al usar 'str_replace', el 'old_text' debe ser una copia CARBÓN del original, incluyendo TODOS los espacios y saltos de línea.\n";
-    $systemPrompt .= "4. PROHIBIDO PARROTEAR Y EXPLICAR MECÁNICAS: NUNCA repitas las instrucciones de este sistema. NUNCA menciones 'la memoria de esta sesión', 'el contexto de la sesión', 'los bloques', 'los temas listados arriba' ni ninguna mecánica interna. Si sabes la respuesta, simplemente RESPONDE como si siempre la hubieras sabido. No digas 'según la memoria' ni 'aunque no esté en la sesión'. Habla con naturalidad.\n";
-    $systemPrompt .= "5. RESPUESTA FINAL: Después de usar cualquier herramienta, explica el resultado en lenguaje natural.\n";
-    $systemPrompt .= "6. FORMATO DE ARCHIVOS: SOLO rutas de texto plano, sin botones HTML ni enlaces.\n";
-    $systemPrompt .= "7. PREGUNTAS META-COGNITIVAS (ÚNICAMENTE estas): SOLO si el usuario usa frases EXPLÍCITAS como '¿qué te he preguntado?', '¿de qué hemos hablado?', 'resume lo que hablamos en esta sesión', '¿qué temas tratamos aquí?', entonces y SOLO entonces, responde con los temas de [MEMORIA DE ESTA SESIÓN]. Para TODO lo demás, responde con tu conocimiento normal.\n";
-    $systemPrompt .= "8. ANTI-ALUCINACIÓN DE SESIÓN: NUNCA inventes preguntas o temas que no estén en [MEMORIA DE ESTA SESIÓN] cuando respondas preguntas meta-cognitivas. Pero SÍ puedes y DEBES responder preguntas de conocimiento general con tu entrenamiento, aunque el tema no esté en la memoria.\n";
+    $systemPrompt .= $mainSystemPrompt_behaviorRules_instruction;
     
     $userParts = [];
     // Si Haiku compiló el prompt, usamos ese. Si no, usamos el original o el del router.
