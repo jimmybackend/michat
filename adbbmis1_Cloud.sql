@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: localhost:3306
--- Tiempo de generación: 14-08-2026 a las 10:17:13
+-- Tiempo de generación: 14-08-2026 a las 12:12:33
 -- Versión del servidor: 8.0.46-37
 -- Versión de PHP: 8.4.24
 
@@ -486,6 +486,37 @@ INSERT INTO `UserAIAgentConfigs` (`id_`, `user_id_`, `agent_key`, `agent_group`,
 -- --------------------------------------------------------
 
 --
+-- Estructura de tabla para la tabla `UserPreferences`
+--
+
+CREATE TABLE `UserPreferences` (
+  `id_` bigint UNSIGNED NOT NULL,
+  `user_id_` int NOT NULL,
+  `model_id` varchar(255) NOT NULL DEFAULT 'amazon.nova-micro-v1:0',
+  `seed` int UNSIGNED NOT NULL DEFAULT '42',
+  `compile_temperature` decimal(4,2) NOT NULL DEFAULT '0.00',
+  `compile_max_tokens` smallint UNSIGNED NOT NULL DEFAULT '200',
+  `response_max_tokens` smallint UNSIGNED NOT NULL DEFAULT '1000',
+  `compile_top_p` decimal(4,3) NOT NULL DEFAULT '0.100',
+  `question_memory_enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `question_memory_scope` enum('session','project') NOT NULL DEFAULT 'project',
+  `question_memory_max_candidates` tinyint UNSIGNED NOT NULL DEFAULT '20',
+  `question_memory_window_lines` tinyint UNSIGNED NOT NULL DEFAULT '5',
+  `theme_mode` varchar(20) NOT NULL DEFAULT 'theme-light',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+--
+-- Volcado de datos para la tabla `UserPreferences`
+--
+
+INSERT INTO `UserPreferences` (`id_`, `user_id_`, `model_id`, `seed`, `compile_temperature`, `compile_max_tokens`, `response_max_tokens`, `compile_top_p`, `question_memory_enabled`, `question_memory_scope`, `question_memory_max_candidates`, `question_memory_window_lines`, `theme_mode`, `created_at`, `updated_at`) VALUES
+(1, 1, 'amazon.nova-micro-v1:0', 42, 0.00, 200, 300, 0.100, 1, 'session', 20, 5, 'theme-light', '2026-08-14 18:06:49', '2026-08-14 18:09:49');
+
+-- --------------------------------------------------------
+
+--
 -- Estructura de tabla para la tabla `UserProceduralMemory`
 --
 
@@ -730,6 +761,13 @@ ALTER TABLE `UserAIAgentConfigs`
   ADD KEY `idx_uac_agent_key` (`agent_key`);
 
 --
+-- Indices de la tabla `UserPreferences`
+--
+ALTER TABLE `UserPreferences`
+  ADD PRIMARY KEY (`id_`),
+  ADD UNIQUE KEY `uq_userpreferences_user` (`user_id_`);
+
+--
 -- Indices de la tabla `UserProceduralMemory`
 --
 ALTER TABLE `UserProceduralMemory`
@@ -869,6 +907,12 @@ ALTER TABLE `UserAIAgentConfigs`
   MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=24;
 
 --
+-- AUTO_INCREMENT de la tabla `UserPreferences`
+--
+ALTER TABLE `UserPreferences`
+  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
+
+--
 -- AUTO_INCREMENT de la tabla `UserProceduralMemory`
 --
 ALTER TABLE `UserProceduralMemory`
@@ -997,6 +1041,12 @@ ALTER TABLE `ToolCalls`
 --
 ALTER TABLE `UserAIAgentConfigs`
   ADD CONSTRAINT `fk_uac_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE CASCADE;
+
+--
+-- Filtros para la tabla `UserPreferences`
+--
+ALTER TABLE `UserPreferences`
+  ADD CONSTRAINT `fk_userpreferences_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE CASCADE;
 
 --
 -- Filtros para la tabla `UserProceduralMemory`
