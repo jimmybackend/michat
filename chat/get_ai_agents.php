@@ -34,7 +34,7 @@ try {
                          user_prompt_template, model_id, temperature, 
                          max_tokens_output, top_p, seed, extra_config, is_active, sort_order
                   FROM UserAIAgentConfigs 
-                  WHERE user_id_ = 1 AND is_active = 1 
+                  WHERE user_id_ = 1 
                   ORDER BY agent_group ASC, sort_order ASC";
     } else {
         // Usuarios normales ven sus propias configs o las globales
@@ -42,7 +42,7 @@ try {
                          user_prompt_template, model_id, temperature, 
                          max_tokens_output, top_p, seed, extra_config, is_active, sort_order
                   FROM UserAIAgentConfigs 
-                  WHERE (user_id_ = ? OR user_id_ = 1) AND is_active = 1 
+                  WHERE (user_id_ = ? OR user_id_ = 1) 
                   ORDER BY agent_group ASC, sort_order ASC";
     }
     
