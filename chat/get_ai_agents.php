@@ -60,22 +60,23 @@ try {
     $agents = [];
     
     while ($row = $result->fetch_assoc()) {
+        // Manejar campos opcionales que pueden ser NULL para ciertos tipos de agente
         $agents[] = [
             'id_' => (int)$row['id_'],
-            'agent_key' => $row['agent_key'],
-            'agent_group' => $row['agent_group'],
-            'display_name' => $row['display_name'],
-            'system_instruction' => $row['system_instruction'],
-            'user_prompt_template' => $row['user_prompt_template'],
-            'model_id' => $row['model_id'],
-            'embedding_model' => $row['embedding_model'],
-            'temperature' => (float)$row['temperature'],
-            'max_tokens_output' => (int)$row['max_tokens_output'],
-            'top_p' => (float)$row['top_p'],
-            'seed' => (int)$row['seed'],
-            'extra_config' => $row['extra_config'],
-            'is_active' => (int)$row['is_active'],
-            'sort_order' => (int)$row['sort_order']
+            'agent_key' => $row['agent_key'] ?? '',
+            'agent_group' => $row['agent_group'] ?? 'other',
+            'display_name' => $row['display_name'] ?? $row['agent_key'],
+            'system_instruction' => $row['system_instruction'] ?? '',
+            'user_prompt_template' => $row['user_prompt_template'] ?? '',
+            'model_id' => $row['model_id'] ?? null,
+            'embedding_model' => $row['embedding_model'] ?? null,
+            'temperature' => isset($row['temperature']) ? (float)$row['temperature'] : 0.7,
+            'max_tokens_output' => isset($row['max_tokens_output']) ? (int)$row['max_tokens_output'] : 2048,
+            'top_p' => isset($row['top_p']) ? (float)$row['top_p'] : 1.0,
+            'seed' => isset($row['seed']) ? (int)$row['seed'] : 0,
+            'extra_config' => $row['extra_config'] ?? '{}',
+            'is_active' => isset($row['is_active']) ? (int)$row['is_active'] : 1,
+            'sort_order' => isset($row['sort_order']) ? (int)$row['sort_order'] : 0
         ];
     }
     
