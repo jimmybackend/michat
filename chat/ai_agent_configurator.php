@@ -365,56 +365,11 @@ input:checked + .slider-toggle:before {
 <input type="hidden" id="configUserId" value="<?= (int)$_SESSION['user_id'] ?>">
 
 <div class="app-container">
-<!-- Panel lateral -->
-<aside id="chat-sidebar" class="sidebar-panel">
-
-<div class="sidebar-brand">
-    <a href="index.php">
-        <img src="asistente-de-inteligencia-artificial.gif" alt="IA" style="height: 2.2em; vertical-align: middle; display: inline-block;"> Config IA
-    </a>
-</div>
-
-<div class="sidebar-section">
-<div class="section-label">NAVEGACIÓN</div>
-<div id="sbNavList" class="projects-list">
-    <a href="index.php" class="sb-item" style="display:flex;align-items:center;gap:8px;text-decoration:none;color:var(--text);padding:0.5rem 0.75rem;border-radius:8px;transition:all 0.2s;" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='transparent'">
-        <i class="fas fa-comments"></i>
-        <span>Chat Principal</span>
-    </a>
-    <a href="ai_agent_configurator.php" class="sb-item" style="display:flex;align-items:center;gap:8px;text-decoration:none;color:var(--accent);font-weight:600;padding:0.5rem 0.75rem;border-radius:8px;background:var(--bg3);">
-        <i class="fas fa-robot"></i>
-        <span>Configuración Agentes</span>
-    </a>
-    <a href="user_preferences.php" class="sb-item" style="display:flex;align-items:center;gap:8px;text-decoration:none;color:var(--text);padding:0.5rem 0.75rem;border-radius:8px;transition:all 0.2s;" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='transparent'">
-        <i class="fas fa-sliders-h"></i>
-        <span>Preferencias Usuario</span>
-    </a>
-</div>
-</div>
-
-<div class="sidebar-footer">
-<div class="user-profile">
-<div class="user-avatar"><?= htmlspecialchars(mb_strtoupper(mb_substr($_SESSION['usuario'], 0, 1))) ?></div>
-<div class="user-info">
-<div class="user-name"><?= htmlspecialchars($_SESSION['usuario']) ?></div>
-<div class="user-role">Administrador IA</div>
-</div>
-</div>
-</div>
-
-</aside>
-
-<button id="sidebar-toggle" class="sidebar-toggle" aria-label="Ocultar o mostrar barra lateral" title="Ocultar o mostrar barra lateral">
-<i class="fas fa-chevron-left"></i>
-</button>
 
 <!-- cuerpo -->
-<main id="chat-main" class="chat-main">
+<main id="chat-main" class="chat-main" style="width:100%;max-width:100%;">
 <header class="chat-header">
   <div class="header-left">
-    <button id="sidebar-toggle-mobile" class="sidebar-toggle-mobile" aria-label="Abrir barra lateral" title="Abrir barra lateral" type="button">
-      <i class="fas fa-bars"></i>
-    </button>
     <h1 class="chat-title">
         <i class="fas fa-robot mr-2"></i>Configuración de Agentes IA
     </h1>
@@ -440,10 +395,9 @@ input:checked + .slider-toggle:before {
                             <label for="filterGroup" class="mb-1">Filtrar por grupo:</label>
                             <select id="filterGroup" class="form-control form-control-sm" style="width:180px;">
                                 <option value="">Todos los grupos</option>
-                                <option value="prompt_compiler">Prompt Compiler</option>
-                                <option value="chat_main">Chat Principal</option>
-                                <option value="embeddings">Embeddings</option>
-                                <option value="text_blocks">Text Blocks</option>
+                                <option value="chat">Chat</option>
+                                <option value="text_block">Text Block</option>
+                                <option value="other">Otro</option>
                             </select>
                         </div>
                         <div class="form-group mb-0">
@@ -511,10 +465,8 @@ input:checked + .slider-toggle:before {
                                 <div class="form-group">
                                     <label for="agentGroup">Grupo</label>
                                     <select class="form-control" id="agentGroup">
-                                        <option value="prompt_compiler">Prompt Compiler</option>
-                                        <option value="chat_main">Chat Principal</option>
-                                        <option value="embeddings">Embeddings</option>
-                                        <option value="text_blocks">Text Blocks</option>
+                                        <option value="chat">Chat</option>
+                                        <option value="text_block">Text Block</option>
                                         <option value="other">Otro</option>
                                     </select>
                                 </div>
@@ -688,7 +640,7 @@ $(document).ready(function() {
             $('#agentsList').html(`
                 <div class="text-center py-5">
                     <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
-                    <p class="text-muted">No hay agentes configurados</p>
+                    <p class="text-muted">No hay agentes configurados para este grupo</p>
                 </div>
             `);
             return;
@@ -716,7 +668,8 @@ $(document).ready(function() {
                     <tbody>
         `;
 
-        filtered.forEach((agent, index) => {
+        filtered.forEach((agent, filteredIndex) => {
+            const originalIndex = agents.findIndex(a => a.id_ === agent.id_);
             const modelDisplay = agent.model_id ? agent.model_id.split('.').pop() : 'N/A';
             const tempValue = agent.temperature !== null && agent.temperature !== undefined ? agent.temperature.toFixed(1) : '-';
             const maxTokens = agent.max_tokens_output || '-';
@@ -725,7 +678,7 @@ $(document).ready(function() {
             const sortOrder = agent.sort_order || '0';
             
             html += `
-                <tr class="agent-row" data-agent-id="${agent.id_}" style="cursor:pointer;" onclick="openAgentModalByIndex(${index})">
+                <tr class="agent-row" data-agent-id="${agent.id_}" style="cursor:pointer;" onclick="openAgentModalByIndex(${originalIndex}, false)">
                     <td class="align-middle"><strong>#${agent.id_}</strong></td>
                     <td class="align-middle"><code style="font-size:0.75rem;">${escapeHtml(agent.agent_key)}</code></td>
                     <td class="align-middle"><span class="badge badge-info">${escapeHtml(agent.agent_group)}</span></td>
@@ -748,12 +701,12 @@ $(document).ready(function() {
                     <td class="align-middle text-center">
                         <div class="btn-group btn-group-sm" role="group">
                             <button type="button" class="btn btn-outline-primary btn-edit-agent" 
-                                    onclick="event.stopPropagation(); openAgentModalByIndex(${index})" 
+                                    onclick="event.stopPropagation(); openAgentModalByIndex(${originalIndex}, false)" 
                                     title="Editar">
                                 <i class="fas fa-edit"></i>
                             </button>
                             <button type="button" class="btn btn-outline-info btn-view-agent" 
-                                    onclick="event.stopPropagation(); viewAgentDetails(${index})" 
+                                    onclick="event.stopPropagation(); viewAgentDetails(${originalIndex}, false)" 
                                     title="Ver detalles completos">
                                 <i class="fas fa-eye"></i>
                             </button>
@@ -783,22 +736,23 @@ $(document).ready(function() {
 
         $('#agentsList').html(html);
         
-        // Guardar referencia global para acceso por índice
+        // Guardar referencia global para acceso por índice - usar filtered cuando hay filtro, todos si no
         window.currentFilteredAgents = filtered;
         window.currentAllAgents = agents;
+        window.isFilterActive = !!filterGroup;
     }
     
-    // Abrir modal por índice del array filtrado
-    window.openAgentModalByIndex = function(index) {
-        const agent = window.currentFilteredAgents[index];
+    // Abrir modal por índice del array (ahora siempre usamos el índice original)
+    window.openAgentModalByIndex = function(index, useFiltered) {
+        const agent = window.currentAllAgents[index];
         if (agent) {
             openAgentModal(agent);
         }
     };
-    
+
     // Ver detalles completos del agente en un modal informativo
-    window.viewAgentDetails = function(index) {
-        const agent = window.currentFilteredAgents[index];
+    window.viewAgentDetails = function(index, useFiltered) {
+        const agent = window.currentAllAgents[index];
         if (!agent) return;
         
         const detailsHtml = `
