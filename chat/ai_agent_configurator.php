@@ -302,6 +302,63 @@ input:checked + .slider-toggle:before {
     font-size: 0.8rem;
     color: var(--text);
 }
+
+/* Estilos para la vista de detalles del agente */
+.agent-details-view {
+    padding: 1rem 0;
+}
+
+.detail-section {
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background: var(--bg3);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-soft);
+}
+
+.detail-section-title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--border-soft);
+    font-size: 0.85rem;
+}
+
+.detail-row:last-child {
+    border-bottom: none;
+}
+
+.detail-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-strong);
+    margin-bottom: 0.35rem;
+}
+
+.detail-content {
+    font-size: 0.8rem;
+    color: var(--text);
+    background: var(--bg2);
+    padding: 0.75rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-soft);
+}
+
+.detail-content pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
 </style>
 </head>
 <body class="ui-theme theme-neon-green theme-light vision-normal ascii-on">
@@ -620,7 +677,7 @@ $(document).ready(function() {
         });
     }
 
-    // Renderizar lista de agentes
+    // Renderizar lista de agentes como tabla completa
     function renderAgents(agents) {
         const filterGroup = $('#filterGroup').val();
         const filtered = filterGroup 
@@ -637,61 +694,179 @@ $(document).ready(function() {
             return;
         }
 
-        let html = '';
-        filtered.forEach(agent => {
-            const modelBadge = agent.model_id ? agent.model_id.split('.').pop() : 'N/A';
-            const tempValue = agent.temperature !== null && agent.temperature !== undefined ? agent.temperature : 'default';
+        let html = `
+            <div class="table-responsive" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;">
+                <table class="table table-hover mb-0" style="width:100%;">
+                    <thead style="background:var(--bg3);border-bottom:2px solid var(--border);">
+                        <tr>
+                            <th style="width:60px;">ID</th>
+                            <th style="width:200px;">Agent Key</th>
+                            <th style="width:150px;">Grupo</th>
+                            <th style="width:200px;">Nombre Visible</th>
+                            <th style="width:250px;">Modelo</th>
+                            <th style="width:80px;" class="text-center">Temp</th>
+                            <th style="width:80px;" class="text-center">Max Tok</th>
+                            <th style="width:70px;" class="text-center">Top P</th>
+                            <th style="width:70px;" class="text-center">Seed</th>
+                            <th style="width:80px;" class="text-center">Orden</th>
+                            <th style="width:90px;" class="text-center">Estado</th>
+                            <th style="width:220px;" class="text-center">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+
+        filtered.forEach((agent, index) => {
+            const modelDisplay = agent.model_id ? agent.model_id.split('.').pop() : 'N/A';
+            const tempValue = agent.temperature !== null && agent.temperature !== undefined ? agent.temperature.toFixed(1) : '-';
+            const maxTokens = agent.max_tokens_output || '-';
+            const topP = agent.top_p !== null && agent.top_p !== undefined ? agent.top_p.toFixed(2) : '-';
+            const seed = agent.seed || '0';
+            const sortOrder = agent.sort_order || '0';
             
             html += `
-                <div class="agent-card" data-agent-id="${agent.id_}">
-                    <div class="agent-card-header">
-                        <div>
-                            <h3 class="agent-card-title">
-                                ${escapeHtml(agent.display_name || agent.agent_key)}
-                                <small class="text-muted ml-2" style="font-size:0.85rem;font-weight:400;">(${escapeHtml(agent.agent_key)})</small>
-                            </h3>
-                            <small class="text-muted">Grupo: ${escapeHtml(agent.agent_group)}</small>
-                        </div>
-                        <div class="d-flex align-items-center gap-2">
-                            <span class="agent-card-badge">${escapeHtml(modelBadge)}</span>
-                            <span class="badge ${agent.is_active ? 'badge-success' : 'badge-secondary'}">
-                                ${agent.is_active ? 'Activo' : 'Inactivo'}
-                            </span>
-                            <button class="btn btn-sm btn-outline-primary btn-edit-agent" data-agent='${JSON.stringify(agent).replace(/'/g, "&apos;")}'>
-                                <i class="fas fa-edit"></i> Editar
+                <tr class="agent-row" data-agent-id="${agent.id_}" style="cursor:pointer;" onclick="openAgentModalByIndex(${index})">
+                    <td class="align-middle"><strong>#${agent.id_}</strong></td>
+                    <td class="align-middle"><code style="font-size:0.75rem;">${escapeHtml(agent.agent_key)}</code></td>
+                    <td class="align-middle"><span class="badge badge-info">${escapeHtml(agent.agent_group)}</span></td>
+                    <td class="align-middle">${escapeHtml(agent.display_name || agent.agent_key)}</td>
+                    <td class="align-middle">
+                        <span class="badge ${agent.model_id ? 'badge-primary' : 'badge-secondary'}" style="font-size:0.7rem;">
+                            ${escapeHtml(modelDisplay)}
+                        </span>
+                    </td>
+                    <td class="align-middle text-center">${tempValue}</td>
+                    <td class="align-middle text-center">${maxTokens}</td>
+                    <td class="align-middle text-center">${topP}</td>
+                    <td class="align-middle text-center">${seed}</td>
+                    <td class="align-middle text-center">${sortOrder}</td>
+                    <td class="align-middle text-center">
+                        <span class="badge ${agent.is_active ? 'badge-success' : 'badge-secondary'}" style="min-width:70px;">
+                            ${agent.is_active ? '<i class="fas fa-check"></i> Activo' : '<i class="fas fa-times"></i> Inactivo'}
+                        </span>
+                    </td>
+                    <td class="align-middle text-center">
+                        <div class="btn-group btn-group-sm" role="group">
+                            <button type="button" class="btn btn-outline-primary btn-edit-agent" 
+                                    onclick="event.stopPropagation(); openAgentModalByIndex(${index})" 
+                                    title="Editar">
+                                <i class="fas fa-edit"></i>
                             </button>
+                            <button type="button" class="btn btn-outline-info btn-view-agent" 
+                                    onclick="event.stopPropagation(); viewAgentDetails(${index})" 
+                                    title="Ver detalles completos">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            <?php if ($is_admin): ?>
+                            <button type="button" class="btn btn-outline-danger btn-delete-agent" 
+                                    onclick="event.stopPropagation(); deleteAgentById(${agent.id_})" 
+                                    title="Eliminar">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                            <?php endif; ?>
                         </div>
-                    </div>
-                    <div class="row">
-                        <div class="col-md-6">
-                            <small class="text-muted d-block">Temperatura</small>
-                            <strong>${tempValue}</strong>
-                        </div>
-                        <div class="col-md-6">
-                            <small class="text-muted d-block">Max Tokens</small>
-                            <strong>${agent.max_tokens_output || 'default'}</strong>
-                        </div>
-                    </div>
-                    ${agent.system_instruction ? `
-                    <div class="mt-3 p-3" style="background:var(--bg);border-radius:var(--radius);">
-                        <small class="text-muted d-block mb-2">System Instruction (primeros 200 chars):</small>
-                        <code style="font-size:0.8rem;display:block;white-space:pre-wrap;overflow:hidden;text-overflow:ellipsis;">
-                            ${escapeHtml(agent.system_instruction.substring(0, 200))}${agent.system_instruction.length > 200 ? '...' : ''}
-                        </code>
-                    </div>
-                    ` : ''}
-                </div>
+                    </td>
+                </tr>
             `;
         });
 
-        $('#agentsList').html(html);
+        html += `
+                    </tbody>
+                </table>
+            </div>
+            <div class="mt-3 text-muted small">
+                <i class="fas fa-info-circle"></i> 
+                Mostrando ${filtered.length} de ${agents.length} agente(s). 
+                Haz clic en una fila para editar o usa los botones de acción.
+            </div>
+        `;
 
-        // Bind edit buttons
-        $('.btn-edit-agent').on('click', function() {
-            const agentData = $(this).data('agent');
-            openAgentModal(agentData);
-        });
+        $('#agentsList').html(html);
+        
+        // Guardar referencia global para acceso por índice
+        window.currentFilteredAgents = filtered;
+        window.currentAllAgents = agents;
     }
+    
+    // Abrir modal por índice del array filtrado
+    window.openAgentModalByIndex = function(index) {
+        const agent = window.currentFilteredAgents[index];
+        if (agent) {
+            openAgentModal(agent);
+        }
+    };
+    
+    // Ver detalles completos del agente en un modal informativo
+    window.viewAgentDetails = function(index) {
+        const agent = window.currentFilteredAgents[index];
+        if (!agent) return;
+        
+        const detailsHtml = `
+            <div class="agent-details-view">
+                <div class="detail-section">
+                    <h6 class="detail-section-title"><i class="fas fa-id-badge"></i> Información Básica</h6>
+                    <div class="detail-row"><strong>ID:</strong> #${agent.id_}</div>
+                    <div class="detail-row"><strong>Agent Key:</strong> <code>${escapeHtml(agent.agent_key)}</code></div>
+                    <div class="detail-row"><strong>Grupo:</strong> ${escapeHtml(agent.agent_group)}</div>
+                    <div class="detail-row"><strong>Nombre Visible:</strong> ${escapeHtml(agent.display_name || agent.agent_key)}</div>
+                    <div class="detail-row"><strong>Orden:</strong> ${agent.sort_order}</div>
+                </div>
+                
+                <div class="detail-section">
+                    <h6 class="detail-section-title"><i class="fas fa-brain"></i> Configuración del Modelo</h6>
+                    <div class="detail-row"><strong>Modelo:</strong> ${escapeHtml(agent.model_id || 'N/A')}</div>
+                    <div class="detail-row"><strong>Temperatura:</strong> ${agent.temperature !== null ? agent.temperature : 'default'}</div>
+                    <div class="detail-row"><strong>Max Tokens:</strong> ${agent.max_tokens_output || 'default'}</div>
+                    <div class="detail-row"><strong>Top P:</strong> ${agent.top_p !== null ? agent.top_p : 'default'}</div>
+                    <div class="detail-row"><strong>Seed:</strong> ${agent.seed || '0'}</div>
+                </div>
+                
+                <div class="detail-section">
+                    <h6 class="detail-section-title"><i class="fas fa-file-code"></i> Instrucciones</h6>
+                    <div class="detail-label">System Instruction:</div>
+                    <div class="detail-content">${agent.system_instruction ? '<pre style="white-space:pre-wrap;font-size:0.8rem;">' + escapeHtml(agent.system_instruction) + '</pre>' : '<em class="text-muted">Sin instrucciones de sistema</em>'}</div>
+                    
+                    <div class="detail-label mt-3">User Prompt Template:</div>
+                    <div class="detail-content">${agent.user_prompt_template ? '<pre style="white-space:pre-wrap;font-size:0.8rem;">' + escapeHtml(agent.user_prompt_template) + '</pre>' : '<em class="text-muted">Sin plantilla de usuario</em>'}</div>
+                </div>
+                
+                <div class="detail-section">
+                    <h6 class="detail-section-title"><i class="fas fa-cog"></i> Configuración Extra (JSON)</h6>
+                    <div class="detail-content"><pre style="white-space:pre-wrap;font-size:0.8rem;">${escapeHtml(agent.extra_config || '{}')}</pre></div>
+                </div>
+                
+                <div class="detail-section">
+                    <h6 class="detail-section-title"><i class="fas fa-toggle-on"></i> Estado</h6>
+                    <div class="detail-row">
+                        <span class="badge ${agent.is_active ? 'badge-success' : 'badge-secondary'}" style="font-size:0.9rem;">
+                            ${agent.is_active ? '<i class="fas fa-check"></i> Activo' : '<i class="fas fa-times"></i> Inactivo'}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        $('#agentModalTitle').html('<i class="fas fa-eye mr-2"></i>Detalles del Agente');
+        $('#agentForm').hide();
+        $('.modal-body').append('<div id="agentDetailsContent"></div>');
+        $('#agentDetailsContent').html(detailsHtml);
+        $('#btnDeleteAgent').hide();
+        $('#btnSaveAgent').hide();
+        
+        // Agregar botón para cerrar/cancelar
+        if ($('.modal-footer .btn-cancel-details').length === 0) {
+            $('.modal-footer').prepend('<button type="button" class="btn btn-outline-secondary btn-cancel-details" data-dismiss="modal"><i class="fas fa-times"></i> Cerrar</button>');
+        }
+        
+        $('#agentModal').modal('show');
+        
+        // Limpiar al cerrar
+        $('#agentModal').on('hidden.bs.modal', function() {
+            $('#agentDetailsContent').remove();
+            $('#agentForm').show();
+            $('.btn-cancel-details').remove();
+        }, { once: true });
+    };
 
     // Abrir modal para editar/crear agente
     function openAgentModal(agent = null) {
@@ -776,11 +951,20 @@ $(document).ready(function() {
         });
     });
 
-    // Eliminar agente
+    // Eliminar agente (desde modal)
     $('#btnDeleteAgent').on('click', function() {
         const agentId = $('#agentId').val();
         if (!agentId) return;
 
+        if (!confirm('¿Estás seguro de eliminar este agente? Esta acción no se puede deshacer.')) {
+            return;
+        }
+
+        deleteAgentById(agentId);
+    });
+    
+    // Función global para eliminar agente por ID (desde tabla)
+    window.deleteAgentById = function(agentId) {
         if (!confirm('¿Estás seguro de eliminar este agente? Esta acción no se puede deshacer.')) {
             return;
         }
@@ -804,7 +988,7 @@ $(document).ready(function() {
                 showError('Error de conexión: ' + error);
             }
         });
-    });
+    };
 
     // Filtrar por grupo
     $('#filterGroup').on('change', function() {
