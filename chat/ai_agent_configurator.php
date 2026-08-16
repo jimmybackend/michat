@@ -653,8 +653,8 @@ $(document).ready(function() {
 
         let html = '';
         filtered.forEach(agent => {
-            const modelBadge = agent.model_id ? agent.model_id.split('.').pop() : 'N/A';
-            const tempValue = agent.temperature !== null ? agent.temperature : 'default';
+            const modelBadge = agent.model_id ? agent.model_id.split('.').pop() : (agent.embedding_model ? 'embedding' : 'N/A');
+            const tempValue = agent.temperature !== null && agent.temperature !== undefined ? agent.temperature : 'default';
             
             html += `
                 <div class="agent-card" data-agent-id="${agent.id_}">
@@ -687,7 +687,7 @@ $(document).ready(function() {
                         </div>
                         <div class="col-md-4">
                             <small class="text-muted d-block">Embedding</small>
-                            <strong>${agent.embedding_model || 'No configurado'}</strong>
+                            <strong>${agent.embedding_model || (agent.model_id ? 'No requerido' : 'No configurado')}</strong>
                         </div>
                     </div>
                     ${agent.system_instruction ? `
@@ -720,14 +720,14 @@ $(document).ready(function() {
             $('#agentModalTitle').html('<i class="fas fa-edit mr-2"></i>Editar Agente');
             $('#agentId').val(agent.id_);
             $('#agentKey').val(agent.agent_key).prop('readonly', true);
-            $('#agentGroup').val(agent.agent_group);
-            $('#displayName').val(agent.display_name);
+            $('#agentGroup').val(agent.agent_group || 'other');
+            $('#displayName').val(agent.display_name || '');
             $('#sortOrder').val(agent.sort_order || 0);
-            $('#modelId').val(agent.model_id);
+            $('#modelId').val(agent.model_id || '');
             $('#embeddingModel').val(agent.embedding_model || '');
-            $('#temperature').val(agent.temperature || 0.7);
+            $('#temperature').val(agent.temperature !== null && agent.temperature !== undefined ? agent.temperature : 0.7);
             $('#maxTokens').val(agent.max_tokens_output || 2048);
-            $('#topP').val(agent.top_p || 0.9);
+            $('#topP').val(agent.top_p !== null && agent.top_p !== undefined ? agent.top_p : 0.9);
             $('#seed').val(agent.seed || 0);
             $('#systemInstruction').val(agent.system_instruction || '');
             $('#userPromptTemplate').val(agent.user_prompt_template || '');
@@ -753,8 +753,8 @@ $(document).ready(function() {
             agent_group: $('#agentGroup').val(),
             display_name: $('#displayName').val(),
             sort_order: parseInt($('#sortOrder').val()) || 0,
-            model_id: $('#modelId').val(),
-            embedding_model: $('#embeddingModel').val(),
+            model_id: $('#modelId').val() || null,
+            embedding_model: $('#embeddingModel').val() || null,
             temperature: parseFloat($('#temperature').val()) || 0.7,
             max_tokens_output: parseInt($('#maxTokens').val()) || 2048,
             top_p: parseFloat($('#topP').val()) || 0.9,

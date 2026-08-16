@@ -63,13 +63,19 @@ if (!empty($csrf_token) && $csrf_token !== ($_SESSION['csrf_token'] ?? '')) {
 }
 
 try {
-    // Validar campos requeridos
+    // Validar campos requeridos (agent_key siempre es requerido, model_id solo para agentes de chat)
     if (empty($data['agent_key'])) {
         throw new Exception("El campo 'agent_key' es requerido");
     }
     
-    if (empty($data['model_id'])) {
-        throw new Exception("El campo 'model_id' es requerido");
+    // model_id es opcional para agentes de embedding o text_blocks
+    $model_id = isset($data['model_id']) && !empty($data['model_id']) ? trim($data['model_id']) : null;
+    $embedding_model = isset($data['embedding_model']) && !empty($data['embedding_model']) ? trim($data['embedding_model']) : null;
+    
+    // Si no hay model_id ni embedding_model, verificar que al menos uno esté presente para agentes de chat
+    $is_chat_agent = in_array($data['agent_group'] ?? '', ['chat_main', 'prompt_compiler']);
+    if ($is_chat_agent && empty($model_id)) {
+        throw new Exception("El campo 'model_id' es requerido para agentes de chat");
     }
     
     // Sanitizar datos
@@ -78,8 +84,6 @@ try {
     $agent_group = trim($data['agent_group'] ?? 'other');
     $display_name = trim($data['display_name'] ?? '');
     $sort_order = (int)($data['sort_order'] ?? 0);
-    $model_id = trim($data['model_id']);
-    $embedding_model = trim($data['embedding_model'] ?? '');
     $temperature = (float)($data['temperature'] ?? 0.7);
     $max_tokens_output = (int)($data['max_tokens_output'] ?? 2048);
     $top_p = (float)($data['top_p'] ?? 0.9);
@@ -109,7 +113,7 @@ try {
     $check_stmt->close();
     
     if ($exists && $id_) {
-        // Actualizar existente
+        // Actualizar existente - usar NULL si los valores están vacíos
         $query = "UPDATE UserAIAgentConfigs 
                   SET agent_group = ?, display_name = ?, sort_order = ?, model_id = ?, 
                       embedding_model = ?, temperature = ?, max_tokens_output = ?, 
@@ -118,13 +122,15 @@ try {
                   WHERE id_ = ? AND user_id_ = 1";
         
         $stmt = $db_connection->prepare($query);
+        // Usar 's' para string, 'i' para integer, 'd' para double
+        // Para valores que pueden ser NULL, usamos el mismo tipo pero pasamos NULL si está vacío
         $stmt->bind_param(
             "ssissddssssi",
             $agent_group,
             $display_name,
             $sort_order,
-            $model_id,
-            $embedding_model,
+            $model_id,      // Puede ser NULL
+            $embedding_model, // Puede ser NULL
             $temperature,
             $max_tokens_output,
             $top_p,
@@ -139,7 +145,7 @@ try {
         $action = 'updated';
         
     } elseif (!$exists) {
-        // Insertar nuevo
+        // Insertar nuevo - permitir NULL para model_id y embedding_model
         $query = "INSERT INTO UserAIAgentConfigs 
                   (user_id_, agent_key, agent_group, display_name, sort_order, model_id, 
                    embedding_model, temperature, max_tokens_output, top_p, seed, 
@@ -154,8 +160,8 @@ try {
             $agent_group,
             $display_name,
             $sort_order,
-            $model_id,
-            $embedding_model,
+            $model_id,       // Puede ser NULL
+            $embedding_model, // Puede ser NULL
             $temperature,
             $max_tokens_output,
             $top_p,
