@@ -31,7 +31,7 @@ try {
     if ($is_admin) {
         // Admin puede ver todas las configuraciones (user_id_ = 1 son las globales)
         $query = "SELECT id_, agent_key, agent_group, display_name, system_instruction, 
-                         user_prompt_template, model_id, embedding_model, temperature, 
+                         user_prompt_template, model_id, temperature, 
                          max_tokens_output, top_p, seed, extra_config, is_active, sort_order
                   FROM UserAIAgentConfigs 
                   WHERE user_id_ = 1 AND is_active = 1 
@@ -39,7 +39,7 @@ try {
     } else {
         // Usuarios normales ven sus propias configs o las globales
         $query = "SELECT id_, agent_key, agent_group, display_name, system_instruction, 
-                         user_prompt_template, model_id, embedding_model, temperature, 
+                         user_prompt_template, model_id, temperature, 
                          max_tokens_output, top_p, seed, extra_config, is_active, sort_order
                   FROM UserAIAgentConfigs 
                   WHERE (user_id_ = ? OR user_id_ = 1) AND is_active = 1 
@@ -60,7 +60,7 @@ try {
     $agents = [];
     
     while ($row = $result->fetch_assoc()) {
-        // Manejar campos opcionales que pueden ser NULL para ciertos tipos de agente
+        // Los campos de la tabla UserAIAgentConfigs son los reales, sin embedding_model
         $agents[] = [
             'id_' => (int)$row['id_'],
             'agent_key' => $row['agent_key'] ?? '',
@@ -69,7 +69,6 @@ try {
             'system_instruction' => $row['system_instruction'] ?? '',
             'user_prompt_template' => $row['user_prompt_template'] ?? '',
             'model_id' => $row['model_id'] ?? null,
-            'embedding_model' => $row['embedding_model'] ?? null,
             'temperature' => isset($row['temperature']) ? (float)$row['temperature'] : 0.7,
             'max_tokens_output' => isset($row['max_tokens_output']) ? (int)$row['max_tokens_output'] : 2048,
             'top_p' => isset($row['top_p']) ? (float)$row['top_p'] : 1.0,

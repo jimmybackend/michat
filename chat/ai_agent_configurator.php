@@ -481,7 +481,7 @@ input:checked + .slider-toggle:before {
                     <div class="config-section">
                         <div class="config-section-title">Configuración del Modelo</div>
                         <div class="row">
-                            <div class="col-md-6">
+                            <div class="col-md-12">
                                 <div class="form-group">
                                     <label for="modelId">Modelo IA *</label>
                                     <select class="form-control" id="modelId" required>
@@ -493,22 +493,8 @@ input:checked + .slider-toggle:before {
                                             <option value="meta.llama3-70b-instruct-v1:0">Llama 3 70B</option>
                                             <option value="mistral.mistral-large-2402-v1:0">Mistral Large</option>
                                         </optgroup>
-                                        <optgroup label="🧮 Embeddings">
-                                            <option value="amazon.titan-embed-text-v2:0">Titan Embed Text V2</option>
-                                            <option value="cohere.embed-v4-v1:0">Cohere Embed V4</option>
-                                        </optgroup>
                                     </select>
                                     <small class="text-muted">Modelo que usará este agente</small>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="embeddingModel">Modelo Embedding (opcional)</label>
-                                    <select class="form-control" id="embeddingModel">
-                                        <option value="">-- Sin embedding --</option>
-                                        <option value="amazon.titan-embed-text-v2:0">Titan Embed Text V2</option>
-                                        <option value="cohere.embed-v4-v1:0">Cohere Embed V4</option>
-                                    </select>
                                 </div>
                             </div>
                         </div>
@@ -653,7 +639,7 @@ $(document).ready(function() {
 
         let html = '';
         filtered.forEach(agent => {
-            const modelBadge = agent.model_id ? agent.model_id.split('.').pop() : (agent.embedding_model ? 'embedding' : 'N/A');
+            const modelBadge = agent.model_id ? agent.model_id.split('.').pop() : 'N/A';
             const tempValue = agent.temperature !== null && agent.temperature !== undefined ? agent.temperature : 'default';
             
             html += `
@@ -677,17 +663,13 @@ $(document).ready(function() {
                         </div>
                     </div>
                     <div class="row">
-                        <div class="col-md-4">
+                        <div class="col-md-6">
                             <small class="text-muted d-block">Temperatura</small>
                             <strong>${tempValue}</strong>
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-md-6">
                             <small class="text-muted d-block">Max Tokens</small>
                             <strong>${agent.max_tokens_output || 'default'}</strong>
-                        </div>
-                        <div class="col-md-4">
-                            <small class="text-muted d-block">Embedding</small>
-                            <strong>${agent.embedding_model || (agent.model_id ? 'No requerido' : 'No configurado')}</strong>
                         </div>
                     </div>
                     ${agent.system_instruction ? `
@@ -724,7 +706,6 @@ $(document).ready(function() {
             $('#displayName').val(agent.display_name || '');
             $('#sortOrder').val(agent.sort_order || 0);
             $('#modelId').val(agent.model_id || '');
-            $('#embeddingModel').val(agent.embedding_model || '');
             $('#temperature').val(agent.temperature !== null && agent.temperature !== undefined ? agent.temperature : 0.7);
             $('#maxTokens').val(agent.max_tokens_output || 2048);
             $('#topP').val(agent.top_p !== null && agent.top_p !== undefined ? agent.top_p : 0.9);
@@ -754,7 +735,6 @@ $(document).ready(function() {
             display_name: $('#displayName').val(),
             sort_order: parseInt($('#sortOrder').val()) || 0,
             model_id: $('#modelId').val() || null,
-            embedding_model: $('#embeddingModel').val() || null,
             temperature: parseFloat($('#temperature').val()) || 0.7,
             max_tokens_output: parseInt($('#maxTokens').val()) || 2048,
             top_p: parseFloat($('#topP').val()) || 0.9,
