@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: localhost:3306
--- Tiempo de generación: 14-08-2026 a las 12:12:33
+-- Tiempo de generación: 18-08-2026 a las 12:13:34
 -- Versión del servidor: 8.0.46-37
 -- Versión de PHP: 8.4.24
 
@@ -35,6 +35,28 @@ CREATE TABLE `AccessControl` (
   `ip_address` varchar(45) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
   `action_details` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `ChatActivityEvents`
+--
+
+CREATE TABLE `ChatActivityEvents` (
+  `id_` bigint UNSIGNED NOT NULL,
+  `trace_id` char(36) NOT NULL,
+  `session_id_` int NOT NULL,
+  `user_id_` int NOT NULL,
+  `phase` varchar(32) NOT NULL,
+  `event_key` varchar(80) NOT NULL,
+  `status` enum('started','completed','info','waiting','error') NOT NULL DEFAULT 'info',
+  `title` varchar(180) NOT NULL,
+  `summary` text,
+  `details_json` json DEFAULT NULL,
+  `model_id` varchar(180) DEFAULT NULL,
+  `duration_ms` int UNSIGNED DEFAULT NULL,
+  `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
 
@@ -188,6 +210,34 @@ CREATE TABLE `LintAttempts` (
   `is_success` tinyint(1) NOT NULL DEFAULT '0',
   `duration_ms` int DEFAULT '0',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `MemoryWriteEvents`
+--
+
+CREATE TABLE `MemoryWriteEvents` (
+  `id_` bigint UNSIGNED NOT NULL,
+  `user_id_` int NOT NULL,
+  `session_id_` int NOT NULL,
+  `project_id_` int DEFAULT NULL,
+  `question_msg_id` int NOT NULL,
+  `answer_msg_id` int NOT NULL,
+  `writer_version` varchar(32) NOT NULL DEFAULT 'phase4-v1',
+  `status` enum('started','completed','skipped','error') NOT NULL DEFAULT 'started',
+  `route_intent` varchar(32) DEFAULT NULL,
+  `reason` varchar(120) DEFAULT NULL,
+  `model_id` varchar(180) DEFAULT NULL,
+  `candidate_count` smallint UNSIGNED NOT NULL DEFAULT '0',
+  `write_count` smallint UNSIGNED NOT NULL DEFAULT '0',
+  `candidates_json` json DEFAULT NULL,
+  `writes_json` json DEFAULT NULL,
+  `usage_json` json DEFAULT NULL,
+  `error_text` text,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -459,7 +509,7 @@ CREATE TABLE `UserAIAgentConfigs` (
 --
 
 INSERT INTO `UserAIAgentConfigs` (`id_`, `user_id_`, `agent_key`, `agent_group`, `display_name`, `description`, `model_id`, `fallback_model_id`, `model_ladder_json`, `system_instruction`, `user_prompt_template`, `temperature`, `max_tokens_prompt`, `max_tokens_output`, `top_p`, `seed`, `max_attempts`, `extra_config`, `token_usage_phase`, `is_active`, `sort_order`, `created_at`, `updated_at`) VALUES
-(1, 1, 'prompt_compiler', 'chat', 'Compilador de prompts', 'IA que compila, corrige y enriquece el prompt del usuario.', 'amazon.nova-micro-v1:0', NULL, NULL, 'Eres un Ingeniero de Prompts experto. Tu ÚNICA tarea es transformar la entrada del usuario en una instrucción perfecta, clara y enriquecida para un modelo de IA avanzado.\r\nREGLAS OBLIGATORIAS:\r\n1. NUNCA repitas la pregunta del usuario tal cual. Debes REESCRIBIRLA como una instrucción directa a la IA.\r\n2. Corrige automáticamente CUALQUIER error ortográfico, gramatical o de tipeo en nombres o conceptos.\r\n3. Añade contexto profesional para garantizar la mejor respuesta posible.\r\n4. Devuelve ÚNICAMENTE el texto de la instrucción optimizada. Sin markdown, sin comillas.\r\n5. PROHIBIDO mencionar \'la sesión\', \'el contexto de la sesión\', \'esta conversación\' o \'lo que hemos hablado\' en el prompt generado. NUNCA agregues frases como \'en el contexto de la sesión actual\'. El prompt debe ser una instrucción limpia y directa.\r\n6. PREGUNTAS META-COGNITIVAS: SOLO si el usuario pregunta EXPLÍCITAMENTE sobre la conversación misma (ej: \'¿qué te he preguntado?\', \'¿de qué hemos hablado?\', \'resume la sesión\'), genera un prompt que pida un resumen de los temas tratados. Para CUALQUIER otra pregunta (historia, ciencia, programación, seguimiento de un tema), genera una instrucción de conocimiento general normal.\r\n7. INTENCIÓN ORIGINAL: Respeta SIEMPRE la intención del usuario. Si pregunta sobre Colón, genera un prompt sobre Colón. Si pregunta sobre código, genera un prompt sobre código. NUNCA cambies el tipo de respuesta que el usuario espera.', '{{compiler_context}}\r\n\r\nEntrada del usuario: \"{{user_text}}\"\r\nTarea: Transforma esta entrada en una instrucción experta, corregida y enriquecida para una IA, siguiendo estrictamente las reglas. Si la entrada es una pregunta sobre la conversación misma (meta-cognitiva), genera una instrucción que pida resumir los temas tratados, NO una pregunta enciclopédica.', 0.00, 200, NULL, 0.100, 42, 1, '{}', 'compile', 1, 10, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
+(1, 1, 'prompt_compiler', 'chat', 'Compilador de prompts', 'IA que compila, corrige y enriquece el prompt del usuario.', 'amazon.nova-micro-v1:0', NULL, NULL, 'Eres un Ingeniero de Prompts experto. Tu ÚNICA tarea es transformar la entrada del usuario en una instrucción perfecta, clara y enriquecida para un modelo de IA avanzado.\nREGLAS OBLIGATORIAS:\n1. NUNCA repitas la pregunta del usuario tal cual. Debes REESCRIBIRLA como una instrucción directa a la IA.\n2. Corrige automáticamente CUALQUIER error ortográfico, gramatical o de tipeo en nombres o conceptos.\n3. Añade contexto profesional para garantizar la mejor respuesta posible.\n4. Devuelve ÚNICAMENTE el texto de la instrucción optimizada. Sin markdown, sin comillas.\n5. PROHIBIDO mencionar \'la sesión\', \'el contexto de la sesión\', \'esta conversación\' o \'lo que hemos hablado\' en el prompt generado. NUNCA agregues frases como \'en el contexto de la sesión actual\'. El prompt debe ser una instrucción limpia y directa.\n6. PREGUNTAS META-COGNITIVAS: SOLO si el usuario pregunta EXPLÍCITAMENTE sobre la conversación misma (ej: \'¿qué te he preguntado?\', \'¿de qué hemos hablado?\', \'resume la sesión\'), genera un prompt que pida un resumen de los temas tratados. Para CUALQUIER otra pregunta (historia, ciencia, programación, seguimiento de un tema), genera una instrucción de conocimiento general normal.\n7. INTENCIÓN ORIGINAL: Respeta SIEMPRE la intención del usuario. Si pregunta sobre Colón, genera un prompt sobre Colón. Si pregunta sobre código, genera un prompt sobre código. NUNCA cambies el tipo de respuesta que el usuario espera.', '{{compiler_context}}\n\nEntrada del usuario: \"{{user_text}}\"\nTarea: Transforma esta entrada en una instrucción experta, corregida y enriquecida para una IA, siguiendo estrictamente las reglas. Si la entrada es una pregunta sobre la conversación misma (meta-cognitiva), genera una instrucción que pida resumir los temas tratados, NO una pregunta enciclopédica.', 0.00, 200, NULL, 0.100, 0, 1, '{}', 'compile', 1, 10, '2026-08-14 16:01:39', '2026-08-17 17:34:23'),
 (2, 1, 'prompt_compiler_context_project_template', 'text_block', 'Contexto del proyecto para compilador', 'Plantilla para el contexto del proyecto enviada al compilador.', 'none', NULL, NULL, 'Contexto del proyecto: {{project_instructions}}', NULL, NULL, NULL, NULL, NULL, 0, 1, NULL, NULL, 1, 20, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
 (3, 1, 'prompt_compiler_context_project_none', 'text_block', 'Texto cuando no hay proyecto', 'Texto usado cuando no hay instrucciones de proyecto.', 'none', NULL, NULL, 'Ninguno', NULL, NULL, NULL, NULL, NULL, 0, 1, NULL, NULL, 1, 30, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
 (4, 1, 'prompt_compiler_context_recent_header', 'text_block', 'Encabezado de últimos mensajes', 'Encabezado para los últimos mensajes enviados al compilador.', 'none', NULL, NULL, 'ÚLTIMOS MENSAJES DE LA CONVERSACIÓN (para entender el contexto):', NULL, NULL, NULL, NULL, NULL, 0, 1, NULL, NULL, 1, 40, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
@@ -468,7 +518,7 @@ INSERT INTO `UserAIAgentConfigs` (`id_`, `user_id_`, `agent_key`, `agent_group`,
 (7, 1, 'prompt_compiler_context_recent_assistant_label', 'text_block', 'Etiqueta asistente', 'Etiqueta para mensajes del asistente.', 'none', NULL, NULL, 'ASISTENTE', NULL, NULL, NULL, NULL, NULL, 0, 1, NULL, NULL, 1, 70, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
 (8, 1, 'prompt_compiler_context_session_template', 'text_block', 'Plantilla memoria de sesión', 'Plantilla para la memoria de sesión enviada al compilador.', 'none', NULL, NULL, 'Memoria de sesión: {{session_memory}}', NULL, NULL, NULL, NULL, NULL, 0, 1, NULL, NULL, 1, 80, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
 (9, 1, 'prompt_compiler_fallback_template', 'text_block', 'Fallback del compilador', 'Plantilla usada si el compilador devuelve algo demasiado parecido o falla.', 'none', NULL, NULL, 'Actúa como un experto en la materia. Proporciona una respuesta muy detallada, estructurada y completa sobre: \"{{user_text}}\". Asegúrate de corregir cualquier error ortográfico o de tipeo en la consulta original y añade todo el contexto necesario.', NULL, NULL, NULL, NULL, NULL, 0, 1, NULL, NULL, 1, 90, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
-(10, 1, 'chat_main', 'chat', 'IA principal de respuesta', 'Plantilla principal del system prompt. Solo usa placeholders.', 'amazon.nova-micro-v1:0', NULL, NULL, '{{base_instruction}}\r\n\r\n{{procedural_memory_block}}\r\n\r\n{{session_memory_block}}\r\n\r\n{{attachment_context_block}}\r\n\r\n{{question_memory_block}}\r\n\r\n{{project_instructions_block}}\r\n\r\n{{tool_rules_block}}\r\n\r\n{{primordial_rules_block}}\r\n\r\n{{rag_context_block}}\r\n\r\n{{behavior_rules_block}}', NULL, 0.70, NULL, 1000, 0.900, 42, 1, '{\"max_rounds\": 5, \"default_max_tokens_fallback\": 1200, \"tools_enabled_only_with_project\": true}', 'respond', 1, 100, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
+(10, 1, 'chat_main', 'chat', 'IA principal de respuesta', 'Modelo principal que genera la respuesta final y ejecuta tool use cuando corresponde.', 'amazon.nova-micro-v1:0', NULL, NULL, '{{base_instruction}}\r\n\r\n{{procedural_memory_block}}\r\n\r\n{{session_memory_block}}\r\n\r\n{{attachment_context_block}}\r\n\r\n{{question_memory_block}}\r\n\r\n{{project_instructions_block}}\r\n\r\n{{tool_rules_block}}\r\n\r\n{{primordial_rules_block}}\r\n\r\n{{rag_context_block}}\r\n\r\n{{behavior_rules_block}}', NULL, 0.70, NULL, 1000, 0.900, 0, 1, '{\"max_rounds\": 5, \"default_max_tokens_fallback\": 1200, \"tools_enabled_only_with_project\": true}', 'respond', 1, 100, '2026-08-14 16:01:39', '2026-08-17 18:16:48'),
 (11, 1, 'chat_main_base', 'text_block', 'Instrucción base del chat principal', 'Instrucción base del asistente principal.', 'none', NULL, NULL, 'Eres un asistente de IA experto en programación y conocimiento general. Responde de manera directa, útil y precisa en español.', NULL, NULL, NULL, NULL, NULL, 0, 1, '{}', NULL, 1, 110, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
 (12, 1, 'chat_main_tool_rules', 'text_block', 'Reglas críticas de herramientas', 'Reglas obligatorias sobre uso de herramientas.', 'none', NULL, NULL, '[REGLA CRÍTICA DE HERRAMIENTAS - OBLIGATORIA]\r\nCuando el usuario solicite CREAR, MODIFICAR, EDITAR o GUARDAR un archivo de código en el proyecto, DEBES usar OBLIGATORIAMENTE la herramienta \'code_edit\' con action=\'write\' (o sin \'action\', es el valor por defecto).\r\nCuando el usuario pida VER, LEER o mostrar el contenido REAL/actual de un archivo del proyecto (no lo que tú recuerdes), usa \'code_edit\' con action=\'read\'.\r\nCuando el usuario pida ELIMINAR, BORRAR o quitar un archivo del proyecto, usa \'code_edit\' con action=\'delete\'.\r\nNUNCA respondas con el código directamente en el chat si la instrucción implica crear, modificar, leer o eliminar un archivo real del proyecto: siempre usa la herramienta.\r\nParámetros requeridos: project_id, session_id, target_filename (y \'instruction\' solo cuando action=\'write\').', NULL, NULL, NULL, NULL, NULL, 0, 1, '{}', NULL, 1, 120, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
 (13, 1, 'chat_main_behavior_rules', 'text_block', 'Reglas estrictas de comportamiento', 'Reglas finales de comportamiento del asistente.', 'none', NULL, NULL, '[REGLAS DE COMPORTAMIENTO ESTRICTAS]:\r\n1. CONOCIMIENTO GENERAL (PRIORIDAD MÁXIMA): Si la pregunta es sobre historia, ciencia, religión, geografía, cultura, programación o CUALQUIER tema de conocimiento, responde SIEMPRE directamente con tu conocimiento interno. NUNCA digas \'no hemos tratado este tema\' o \'no tengo información en esta sesión\'. Eso es FALSO: tienes conocimiento de entrenamiento sobre todos estos temas. Simplemente RESPONDE.\r\n2. PREGUNTAS DE SEGUIMIENTO: Si el usuario hace una pregunta que continúa o profundiza un tema ya discutido (ej: preguntó sobre Colón y ahora pregunta \'¿a dónde llegó?\' o \'¿qué idioma hablaban?\'), es una pregunta de CONOCIMIENTO GENERAL. Responde normalmente. NO es una pregunta meta-cognitiva. NO consultes la memoria de sesión para esto.\r\n3. EDICIÓN DE CÓDIGO: Para modificar un archivo, PRIMERO usa \'grep\' para obtener el código exacto. Al usar \'str_replace\', el \'old_text\' debe ser una copia CARBÓN del original, incluyendo TODOS los espacios y saltos de línea.\r\n4. PROHIBIDO PARROTEAR Y EXPLICAR MECÁNICAS: NUNCA repitas las instrucciones de este sistema. NUNCA menciones \'la memoria de esta sesión\', \'el contexto de la sesión\', \'los bloques\', \'los temas listados arriba\' ni ninguna mecánica interna. Si sabes la respuesta, simplemente RESPONDE como si siempre la hubieras sabido. No digas \'según la memoria\' ni \'aunque no esté en la sesión\'. Habla con naturalidad.\r\n5. RESPUESTA FINAL: Después de usar cualquier herramienta, explica el resultado en lenguaje natural.\r\n6. FORMATO DE ARCHIVOS: SOLO rutas de texto plano, sin botones HTML ni enlaces.\r\n7. PREGUNTAS META-COGNITIVAS (ÚNICAMENTE estas): SOLO si el usuario usa frases EXPLÍCITAS como \'¿qué te he preguntado?\', \'¿de qué hemos hablado?\', \'resume lo que hablamos en esta sesión\', \'¿qué temas tratamos aquí?\', entonces y SOLO entonces, responde con los temas de [MEMORIA DE ESTA SESIÓN]. Para TODO lo demás, responde con tu conocimiento normal.\r\n8. ANTI-ALUCINACIÓN DE SESIÓN: NUNCA inventes preguntas o temas que no estén en [MEMORIA DE ESTA SESIÓN] cuando respondas preguntas meta-cognitivas. Pero SÍ puedes y DEBES responder preguntas de conocimiento general con tu entrenamiento, aunque el tema no esté en la memoria.', NULL, NULL, NULL, NULL, NULL, 0, 1, '{}', NULL, 1, 130, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
@@ -481,7 +531,16 @@ INSERT INTO `UserAIAgentConfigs` (`id_`, `user_id_`, `agent_key`, `agent_group`,
 (20, 1, 'chat_main_project_instructions_template', 'text_block', 'Bloque instrucciones del proyecto', 'Plantilla del bloque de instrucciones del proyecto.', 'none', NULL, NULL, '[INSTRUCCIONES OBLIGATORIAS DEL PROYECTO]\r\n{{project_instructions}}\r\nDebes seguir estas reglas estrictamente en tu respuesta. Si el usuario pide código, usa el lenguaje y versiones especificadas aquí.', NULL, NULL, NULL, NULL, NULL, 0, 1, '{}', NULL, 1, 200, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
 (21, 1, 'chat_main_primordial_rules_template', 'text_block', 'Bloque reglas primordiales', 'Plantilla del bloque de reglas primordiales.', 'none', NULL, NULL, '[REGLAS PRIMORDIALES DEL PROYECTO (VERDAD ABSOLUTA)]\r\nEl usuario ha establecido estas reglas en sesiones anteriores. DEBES obedecerlas estrictamente por encima de cualquier otra lógica o conocimiento general:\r\n{{primordial_rules}}', NULL, NULL, NULL, NULL, NULL, 0, 1, '{}', NULL, 1, 210, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
 (22, 1, 'chat_main_primordial_rule_item_template', 'text_block', 'Item regla primordial', 'Plantilla de cada regla primordial.', 'none', NULL, NULL, '- [{{date}}] {{content}}', NULL, NULL, NULL, NULL, NULL, 0, 1, '{}', NULL, 1, 220, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
-(23, 1, 'chat_main_rag_context_template', 'text_block', 'Bloque contexto RAG', 'Plantilla del bloque de contexto RAG de archivos indexados.', 'none', NULL, NULL, '[CONTEXTO DE ARCHIVOS]: El usuario ha proporcionado fragmentos de código. Prioriza esta información. Si la respuesta está en los fragmentos, CITA el nombre del archivo y usa ese contenido exacto.\r\n{{rag_context}}', NULL, NULL, NULL, NULL, NULL, 0, 1, '{}', NULL, 1, 230, '2026-08-14 16:01:39', '2026-08-14 16:01:39');
+(23, 1, 'chat_main_rag_context_template', 'text_block', 'Bloque contexto RAG', 'Plantilla del bloque de contexto RAG de archivos indexados.', 'none', NULL, NULL, '[CONTEXTO DE ARCHIVOS]: El usuario ha proporcionado fragmentos de código. Prioriza esta información. Si la respuesta está en los fragmentos, CITA el nombre del archivo y usa ese contenido exacto.\r\n{{rag_context}}', NULL, NULL, NULL, NULL, NULL, 0, 1, '{}', NULL, 1, 230, '2026-08-14 16:01:39', '2026-08-14 16:01:39'),
+(24, 1, 'embedding_main', 'embedding', 'Embeddings principal', 'Modelo de vectorización para RAG de adjuntos, RAG de proyecto, búsqueda semántica y memoria vectorial.', 'amazon.titan-embed-text-v2:0', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, 1, '{\"adapter\": \"titan_text_v2\", \"normalize\": true, \"dimensions\": 1024, \"input_max_chars\": 8000, \"compatible_tasks\": [\"attachment_rag\", \"project_rag\", \"semantic_search\", \"session_block_embedding\"], \"attachment_rag_top\": 4, \"project_rag_threshold\": 0.30, \"attachment_rag_max_chars\": 12000, \"attachment_rag_threshold\": 0.25, \"semantic_search_threshold\": 0.35, \"attachment_related_file_threshold\": 0.20}', 'rag', 1, 300, '2026-08-17 15:18:36', '2026-08-17 16:53:29'),
+(25, 1, 'smart_memory_general', 'memory', 'Smart Memory general', 'Resume preguntas y respuestas de contenido general antes de guardarlas en memoria.', 'amazon.nova-micro-v1:0', NULL, NULL, 'Eres un motor de memoria inteligente. Resume la siguiente pregunta y respuesta en un bloque de conocimiento conciso (máximo 250 palabras).\r\n\r\nREGLAS:\r\n1. Detecta el TIPO de contenido y adapta el formato:\r\n   - Si es PROGRAMACIÓN: incluye objetivo, solución técnica, archivos/funciones clave, decisiones y fragmentos de código relevantes.\r\n   - Si es HISTORIA/CULTURA/CIENCIA: incluye tema, datos clave, personajes, fechas, lugares.\r\n   - Si es TRIVIAL o SALUDO: resume en 1 línea.\r\n2. REGLA CRÍTICA: NUNCA omitas valores de variables, rutas de archivos, puertos, IPs, nombres de funciones o credenciales mencionadas. Preserva los datos técnicos exactos (strings, números, rutas) intactos.\r\n3. NO uses campos de programación para temas de cultura general.\r\n4. No uses markdown, solo texto plano.\r\n5. Responde en el mismo idioma que el contenido original.\r\n6. Sé conciso pero técnicamente preciso.', 'PREGUNTA:\r\n{{question}}\r\n\r\nRESPUESTA:\r\n{{answer}}\r\n\r\nGenera el resumen:', 0.20, NULL, 600, 0.900, 0, 1, '{\"content_mode\": \"general\", \"max_summary_words\": 250, \"fallback_answer_chars\": 300}', 'compile', 1, 310, '2026-08-17 15:18:36', '2026-08-17 15:18:36'),
+(26, 1, 'smart_memory_code', 'memory', 'Smart Memory de código', 'Resume Q&A técnicos y de programación preservando rutas, funciones, variables y fragmentos relevantes.', 'anthropic.claude-3-5-haiku-20241022-v1:0', NULL, NULL, 'Eres un motor de memoria inteligente. Resume la siguiente pregunta y respuesta en un bloque de conocimiento conciso (máximo 250 palabras).\r\n\r\nREGLAS:\r\n1. Detecta el TIPO de contenido y adapta el formato:\r\n   - Si es PROGRAMACIÓN: incluye objetivo, solución técnica, archivos/funciones clave, decisiones y fragmentos de código relevantes.\r\n   - Si es HISTORIA/CULTURA/CIENCIA: incluye tema, datos clave, personajes, fechas, lugares.\r\n   - Si es TRIVIAL o SALUDO: resume en 1 línea.\r\n2. REGLA CRÍTICA: NUNCA omitas valores de variables, rutas de archivos, puertos, IPs, nombres de funciones o credenciales mencionadas. Preserva los datos técnicos exactos (strings, números, rutas) intactos.\r\n3. NO uses campos de programación para temas de cultura general.\r\n4. No uses markdown, solo texto plano.\r\n5. Responde en el mismo idioma que el contenido original.\r\n6. Sé conciso pero técnicamente preciso.', 'PREGUNTA:\r\n{{question}}\r\n\r\nRESPUESTA:\r\n{{answer}}\r\n\r\nGenera el resumen:', 0.20, NULL, 600, 0.900, 0, 1, '{\"content_mode\": \"code\", \"selection_rule\": \"detectIsCode(question + answer)\", \"max_summary_words\": 250, \"fallback_answer_chars\": 300}', 'compile', 1, 320, '2026-08-17 15:18:36', '2026-08-17 15:18:36'),
+(27, 1, 'smart_memory_merge_prompt', 'text_block', 'Prompt de fusión Smart Memory', 'Instrucciones para fusionar un resumen existente con nueva información del mismo tema. Reutiliza smart_memory_general o smart_memory_code según el contenido.', 'none', NULL, NULL, 'Eres un motor de memoria inteligente para un asistente de programación. Tu tarea es FUSIONAR un resumen existente con nueva información del mismo tema.\r\nREGLAS:\r\n1. Mantén los datos técnicos exactos (nombres de funciones, variables, rutas, decisiones).\r\n2. REGLA CRÍTICA: NUNCA omitas valores de variables, rutas de archivos, puertos, IPs o credenciales mencionadas. Preserva los datos técnicos exactos intactos.\r\n3. Elimina redundancias y actualiza el contexto si hay cambios.\r\n4. El resultado debe ser un solo bloque de texto cohesivo, máximo 300 palabras.\r\n5. No uses markdown, solo texto plano.\r\n6. Responde en el mismo idioma que el contenido original.', 'RESUMEN EXISTENTE:\r\n{{existing_summary}}\r\n\r\nNUEVA PREGUNTA:\r\n{{question}}\r\n\r\nNUEVA RESPUESTA:\r\n{{answer}}\r\n\r\nGenera el resumen fusionado actualizado:', NULL, NULL, NULL, NULL, 0, 1, '{\"top_p\": 0.9, \"max_tokens\": 800, \"temperature\": 0.2}', 'compile', 1, 330, '2026-08-17 15:49:53', '2026-08-17 15:49:53'),
+(28, 1, 'context_compression_prompt', 'text_block', 'Prompt de compresión jerárquica', 'Prompt para fusionar bloques ya resumidos en niveles superiores de contexto. Reutiliza smart_memory_general o smart_memory_code.', 'none', NULL, NULL, NULL, 'Tu tarea es fusionar los siguientes bloques de conversación (que ya están pre-resumidos) en un solo resumen coherente, fluido y conciso de la sesión. No repitas información.\r\n\r\nREGLAS CRÍTICAS DE PRESERVACIÓN:\r\n1. Preserva términos técnicos, nombres, fechas y decisiones de arquitectura.\r\n2. REGLA CRÍTICA: NUNCA omitas valores de variables, rutas de archivos, puertos, IPs o credenciales mencionadas. Preserva los datos técnicos exactos (strings, números, rutas) intactos.\r\n3. Si hay código o comandos, mantén la sintaxis exacta.\r\n\r\nA continuación, los bloques a fusionar:\r\n{{blocks}}\r\n\r\nGenera el resumen final unificado de la sesión en el mismo idioma que el contenido original, aplicando estrictamente las reglas críticas:', NULL, NULL, NULL, NULL, 0, 1, '{\"top_p\": 0.9, \"max_tokens\": 1500, \"temperature\": 0.2}', 'compile', 1, 340, '2026-08-17 15:49:53', '2026-08-17 15:49:53'),
+(29, 1, 'project_knowledge_extractor_prompt', 'text_block', 'Extractor de conocimiento de proyecto', 'Instrucciones para extraer reglas, decisiones, hechos y tareas reutilizables desde bloques comprimidos.', 'none', NULL, NULL, 'Eres un extractor de conocimiento técnico experto. Analiza los siguientes bloques de conversaciones de un proyecto de software.\r\nREGLAS ESTRICTAS:\r\n1. Extrae SOLO información valiosa y reutilizable: reglas de negocio, decisiones de arquitectura, hechos técnicos importantes.\r\n2. IGNORA mensajes genéricos de confirmación, saludos, errores de conexión o bloques <thinking>.\r\n3. NO extraigas código completo, solo describe qué hace y por qué es importante.\r\n4. Si no hay nada relevante, devuelve exactamente esto: []\r\nDevuelve ÚNICAMENTE un array JSON válido. No incluyas explicaciones, ni markdown, ni texto antes o después del array.\r\nFormato de cada objeto:\r\n- \"type\": \'rule\', \'decision\', \'fact\', \'todo\'\r\n- \"title\": título corto (máx 50 caracteres)\r\n- \"content\": descripción detallada (máx 500 caracteres)', 'Bloques a analizar:\r\n{{blocks}}', NULL, NULL, NULL, NULL, 0, 1, '{\"top_p\": 0.9, \"max_tokens\": 1500, \"temperature\": 0.2}', 'compile', 1, 350, '2026-08-17 15:49:53', '2026-08-17 15:49:53'),
+(30, 1, 'session_meta_summary_prompt', 'text_block', 'Meta-resumen maestro de sesión', 'Plantilla para consolidar el resumen maestro de una sesión a partir del resumen previo y nuevos bloques.', 'none', NULL, NULL, NULL, 'Tu tarea es crear un resumen maestro, coherente y fluido de toda la sesión de conversación.\r\n{{previous_section}}NUEVOS BLOQUES DE CONVERSACIÓN (Integra esta nueva información al resumen maestro de forma fluida):\r\n{{blocks}}\r\n\r\nGenera el resumen maestro final unificado en el mismo idioma que el contenido original. Debe ser un texto fluido y bien redactado, NO una lista de viñetas.', NULL, NULL, NULL, NULL, 0, 1, '{\"top_p\": 0.9, \"max_tokens\": 2000, \"temperature\": 0.3}', 'compile', 1, 360, '2026-08-17 15:49:53', '2026-08-17 15:49:53'),
+(31, 1, 'procedural_memory_extractor_prompt', 'text_block', 'Extractor de memoria procedural', 'Instrucciones para detectar correcciones, preferencias, reglas, patrones y flujos de trabajo explícitos del usuario.', 'none', NULL, NULL, 'Eres un detector de PATRONES PROCEDURALES del usuario. Analiza la conversación y detecta SOLO:\r\n\r\n1. CORRECCIONES: El usuario corrigió a la IA (ej: \'No, te dije que...\', \'Eso está mal, debería ser...\')\r\n2. PREFERENCIAS EXPLÍCITAS: \'Siempre usa...\', \'Nunca hagas...\', \'Prefiero que...\'\r\n3. REGLAS DE FORMATO: \'Responde en español\', \'Usa markdown\', \'Sé conciso\'\r\n4. PATRONES DE TRABAJO: \'Primero haz X, luego Y\', \'Siempre verifica antes de...\'\r\n5. ESTILO: \'No uses emojis\', \'Usa tono formal\', \'Explica paso a paso\'\r\n\r\nREGLAS ESTRICTAS:\r\n- SOLO detecta patrones que el usuario ESTABLECIÓ EXPLÍCITAMENTE.\r\n- NO inventes patrones. NO detectes preferencias implícitas.\r\n- Si no hay ningún patrón claro, devuelve exactamente: []\r\n- Máximo 3 patrones por análisis.\r\n- Devuelve ÚNICAMENTE un array JSON válido, sin markdown ni explicaciones.\r\n\r\nFormato:\r\n[{\"type\": \"rule|preference|correction|workflow|pattern\", \"content\": \"descripción clara de la regla en español\"}]', 'CONVERSACIÓN A ANALIZAR:\r\n{{conversation}}\r\n\r\nDetecta patrones procedurales:', NULL, NULL, NULL, NULL, 0, 1, '{\"top_p\": 0.9, \"max_tokens\": 500, \"block_limit\": 15, \"temperature\": 0.1, \"session_limit\": 50, \"max_conversation_chars\": 6000, \"min_conversation_chars\": 100}', 'compile', 1, 370, '2026-08-17 15:49:53', '2026-08-17 17:43:59'),
+(32, 1, 'attachment_semantic_prompt', 'text_block', 'Semántica de archivo adjunto', 'Instrucción para resumir la esencia de un adjunto. El modelo se toma de smart_memory_general o smart_memory_code según el contenido.', 'none', NULL, NULL, 'Eres un motor de memoria permanente para archivos adjuntos de un asistente personal y de programación. Resume el archivo para que la conversación recuerde su esencia y pueda localizar después la información útil.\nREGLAS:\n1. Describe el propósito del archivo y su contenido o lógica clave.\n2. Preserva exactamente nombres de funciones, clases, variables, tablas, columnas, rutas, puertos, IP, URLs, versiones, IDs y valores técnicos importantes.\n3. Si es código, identifica componentes, dependencias, entradas/salidas y decisiones técnicas relevantes.\n4. Si es documento general, conserva hechos, fechas, nombres, cantidades y conclusiones importantes.\n5. No inventes información que no aparezca en el archivo.\n6. Máximo 400 palabras, texto plano, sin markdown.\n7. Responde en el mismo idioma predominante del archivo.', 'ARCHIVO: {{filename}}\n\nCONTENIDO EXTRAÍDO:\n{{content}}\n\nGenera el resumen semántico del archivo:', NULL, NULL, NULL, NULL, 0, 1, '{\"top_p\": 0.9, \"max_tokens\": 800, \"temperature\": 0.2, \"model_selection\": \"reuse_smart_memory_general_or_code\", \"max_content_chars\": 24000}', 'summarize', 1, 330, '2026-08-17 16:31:34', '2026-08-17 16:31:34');
 
 -- --------------------------------------------------------
 
@@ -512,7 +571,7 @@ CREATE TABLE `UserPreferences` (
 --
 
 INSERT INTO `UserPreferences` (`id_`, `user_id_`, `model_id`, `seed`, `compile_temperature`, `compile_max_tokens`, `response_max_tokens`, `compile_top_p`, `question_memory_enabled`, `question_memory_scope`, `question_memory_max_candidates`, `question_memory_window_lines`, `theme_mode`, `created_at`, `updated_at`) VALUES
-(1, 1, 'amazon.nova-micro-v1:0', 42, 0.00, 200, 300, 0.100, 1, 'session', 20, 5, 'theme-light', '2026-08-14 18:06:49', '2026-08-14 18:09:49');
+(1, 1, 'amazon.nova-micro-v1:0', 42, 0.00, 200, 300, 0.100, 1, 'session', 20, 5, 'theme-light', '2026-08-14 18:06:49', '2026-08-18 00:01:48');
 
 -- --------------------------------------------------------
 
@@ -571,6 +630,15 @@ CREATE TABLE `Users` (
 ALTER TABLE `AccessControl`
   ADD PRIMARY KEY (`id`),
   ADD KEY `user_id` (`user_id`);
+
+--
+-- Indices de la tabla `ChatActivityEvents`
+--
+ALTER TABLE `ChatActivityEvents`
+  ADD PRIMARY KEY (`id_`),
+  ADD KEY `idx_cae_trace` (`trace_id`,`id_`),
+  ADD KEY `idx_cae_session` (`session_id_`,`created_at`),
+  ADD KEY `idx_cae_user` (`user_id_`,`created_at`);
 
 --
 -- Indices de la tabla `ChatMessages`
@@ -641,6 +709,18 @@ ALTER TABLE `LintAttempts`
   ADD PRIMARY KEY (`id_`),
   ADD KEY `idx_la_file` (`file_version_id_`),
   ADD KEY `idx_la_success` (`is_success`);
+
+--
+-- Indices de la tabla `MemoryWriteEvents`
+--
+ALTER TABLE `MemoryWriteEvents`
+  ADD PRIMARY KEY (`id_`),
+  ADD UNIQUE KEY `uq_mwe_qa_version` (`question_msg_id`,`answer_msg_id`,`writer_version`),
+  ADD KEY `idx_mwe_user` (`user_id_`,`created_at`),
+  ADD KEY `idx_mwe_session` (`session_id_`,`created_at`),
+  ADD KEY `idx_mwe_project` (`project_id_`,`created_at`),
+  ADD KEY `idx_mwe_status` (`status`,`updated_at`),
+  ADD KEY `fk_mwe_answer` (`answer_msg_id`);
 
 --
 -- Indices de la tabla `PhaseCache`
@@ -793,6 +873,12 @@ ALTER TABLE `AccessControl`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT de la tabla `ChatActivityEvents`
+--
+ALTER TABLE `ChatActivityEvents`
+  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT de la tabla `ChatMessages`
 --
 ALTER TABLE `ChatMessages`
@@ -832,6 +918,12 @@ ALTER TABLE `FileVersions`
 -- AUTO_INCREMENT de la tabla `LintAttempts`
 --
 ALTER TABLE `LintAttempts`
+  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT de la tabla `MemoryWriteEvents`
+--
+ALTER TABLE `MemoryWriteEvents`
   MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
@@ -904,13 +996,13 @@ ALTER TABLE `ToolCalls`
 -- AUTO_INCREMENT de la tabla `UserAIAgentConfigs`
 --
 ALTER TABLE `UserAIAgentConfigs`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=24;
+  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=38;
 
 --
 -- AUTO_INCREMENT de la tabla `UserPreferences`
 --
 ALTER TABLE `UserPreferences`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
+  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=14;
 
 --
 -- AUTO_INCREMENT de la tabla `UserProceduralMemory`
@@ -933,6 +1025,13 @@ ALTER TABLE `Users`
 --
 ALTER TABLE `AccessControl`
   ADD CONSTRAINT `AccessControl_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `Users` (`id`);
+
+--
+-- Filtros para la tabla `ChatActivityEvents`
+--
+ALTER TABLE `ChatActivityEvents`
+  ADD CONSTRAINT `fk_cae_session` FOREIGN KEY (`session_id_`) REFERENCES `ChatSessions` (`id_`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_cae_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE CASCADE;
 
 --
 -- Filtros para la tabla `ChatMessages`
@@ -967,6 +1066,16 @@ ALTER TABLE `FileVersions`
 --
 ALTER TABLE `LintAttempts`
   ADD CONSTRAINT `fk_la_file_version` FOREIGN KEY (`file_version_id_`) REFERENCES `FileVersions` (`id_`) ON DELETE CASCADE;
+
+--
+-- Filtros para la tabla `MemoryWriteEvents`
+--
+ALTER TABLE `MemoryWriteEvents`
+  ADD CONSTRAINT `fk_mwe_answer` FOREIGN KEY (`answer_msg_id`) REFERENCES `ChatMessages` (`id_`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_mwe_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_mwe_question` FOREIGN KEY (`question_msg_id`) REFERENCES `ChatMessages` (`id_`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_mwe_session` FOREIGN KEY (`session_id_`) REFERENCES `ChatSessions` (`id_`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_mwe_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE CASCADE;
 
 --
 -- Filtros para la tabla `PhaseCache`
