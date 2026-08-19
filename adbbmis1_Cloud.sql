@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: localhost:3306
--- Tiempo de generación: 19-08-2026 a las 08:46:07
+-- Tiempo de generación: 19-08-2026 a las 08:52:25
 -- Versión del servidor: 8.0.46-37
 -- Versión de PHP: 8.4.24
 
@@ -20,6 +20,8 @@ SET time_zone = "+00:00";
 --
 -- Base de datos: `adbbmis1_Cloud`
 --
+CREATE DATABASE IF NOT EXISTS `adbbmis1_Cloud` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+USE `adbbmis1_Cloud`;
 
 -- --------------------------------------------------------
 
@@ -27,13 +29,16 @@ SET time_zone = "+00:00";
 -- Estructura de tabla para la tabla `AccessControl`
 --
 
-CREATE TABLE `AccessControl` (
-  `id` int NOT NULL,
+DROP TABLE IF EXISTS `AccessControl`;
+CREATE TABLE IF NOT EXISTS `AccessControl` (
+  `id` int NOT NULL AUTO_INCREMENT,
   `user_id` int DEFAULT NULL,
   `date_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `action` enum('Inicio de Sesión','Cierre de Sesión','Cambio de Contraseña','Otro') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
   `ip_address` varchar(45) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
-  `action_details` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci
+  `action_details` text CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
+  PRIMARY KEY (`id`),
+  KEY `user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
 
 -- --------------------------------------------------------
@@ -42,8 +47,9 @@ CREATE TABLE `AccessControl` (
 -- Estructura de tabla para la tabla `ChatActivityEvents`
 --
 
-CREATE TABLE `ChatActivityEvents` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `ChatActivityEvents`;
+CREATE TABLE IF NOT EXISTS `ChatActivityEvents` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `trace_id` char(36) NOT NULL,
   `session_id_` int NOT NULL,
   `user_id_` int NOT NULL,
@@ -55,7 +61,11 @@ CREATE TABLE `ChatActivityEvents` (
   `details_json` json DEFAULT NULL,
   `model_id` varchar(180) DEFAULT NULL,
   `duration_ms` int UNSIGNED DEFAULT NULL,
-  `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+  `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id_`),
+  KEY `idx_cae_trace` (`trace_id`,`id_`),
+  KEY `idx_cae_session` (`session_id_`,`created_at`),
+  KEY `idx_cae_user` (`user_id_`,`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -64,8 +74,9 @@ CREATE TABLE `ChatActivityEvents` (
 -- Estructura de tabla para la tabla `ChatMessages`
 --
 
-CREATE TABLE `ChatMessages` (
-  `id_` int NOT NULL,
+DROP TABLE IF EXISTS `ChatMessages`;
+CREATE TABLE IF NOT EXISTS `ChatMessages` (
+  `id_` int NOT NULL AUTO_INCREMENT,
   `session_id_` int NOT NULL,
   `user_id_` int NOT NULL,
   `role` enum('system','user','assistant','tool') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
@@ -85,7 +96,10 @@ CREATE TABLE `ChatMessages` (
   `is_primordial` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = El usuario marcó esta respuesta como verdad absoluta/primordial',
   `phase` enum('compile','respond','lint_fix','embedding','classify','scout','plan','rag','edit','summarize','review') NOT NULL DEFAULT 'respond' COMMENT 'Fase del pipeline en la que se generó este mensaje',
   `parent_msg_id` int DEFAULT NULL COMMENT 'Para rastrear ediciones o reintentos de un mensaje anterior',
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  KEY `idx_msgs_session` (`session_id_`),
+  KEY `idx_msgs_user` (`user_id_`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -94,8 +108,9 @@ CREATE TABLE `ChatMessages` (
 -- Estructura de tabla para la tabla `ChatSessions`
 --
 
-CREATE TABLE `ChatSessions` (
-  `id_` int NOT NULL,
+DROP TABLE IF EXISTS `ChatSessions`;
+CREATE TABLE IF NOT EXISTS `ChatSessions` (
+  `id_` int NOT NULL AUTO_INCREMENT,
   `user_id_` int NOT NULL,
   `project_id_` int DEFAULT NULL,
   `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
@@ -110,7 +125,12 @@ CREATE TABLE `ChatSessions` (
   `context_level` tinyint UNSIGNED NOT NULL DEFAULT '0' COMMENT '0: crudo, 1: resumen x5, 2: macro x20, 3: épico x80',
   `last_compressed_at` timestamp NULL DEFAULT NULL COMMENT 'Última vez que se ejecutó la compresión de contexto',
   `pending_summary` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Bandera anti-ciclo: 1 = hay bloques level_0 nuevos (> RECENT_WINDOW) esperando el resumen del cron; el cron la vuelve a 0 tras procesar',
-  `memory_summary_updated_at` timestamp NULL DEFAULT NULL COMMENT 'Última vez que Nova Micro reescribió el context_summary'
+  `memory_summary_updated_at` timestamp NULL DEFAULT NULL COMMENT 'Última vez que Nova Micro reescribió el context_summary',
+  PRIMARY KEY (`id_`),
+  KEY `idx_chats_user` (`user_id_`),
+  KEY `idx_chats_updated` (`updated_at`),
+  KEY `idx_sessions_project` (`project_id_`),
+  KEY `idx_pending_summary` (`pending_summary`,`last_compressed_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
 
 -- --------------------------------------------------------
@@ -119,14 +139,18 @@ CREATE TABLE `ChatSessions` (
 -- Estructura de tabla para la tabla `ChunkEmbeddings`
 --
 
-CREATE TABLE `ChunkEmbeddings` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `ChunkEmbeddings`;
+CREATE TABLE IF NOT EXISTS `ChunkEmbeddings` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `chunk_id_` bigint UNSIGNED NOT NULL,
   `model_id` varchar(120) NOT NULL COMMENT 'ej. amazon.titan-embed-text-v2:0',
   `dimensions` smallint UNSIGNED NOT NULL DEFAULT '1024' COMMENT 'dimensión del vector',
   `embedding` blob NOT NULL COMMENT 'vector binario (float32 little-endian)',
   `embedding_json` json DEFAULT NULL COMMENT 'fallback legible: [0.012, -0.034, ...]',
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  KEY `idx_ce_chunk` (`chunk_id_`),
+  KEY `idx_ce_model` (`model_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -135,8 +159,9 @@ CREATE TABLE `ChunkEmbeddings` (
 -- Estructura de tabla para la tabla `EmbeddingJobs`
 --
 
-CREATE TABLE `EmbeddingJobs` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `EmbeddingJobs`;
+CREATE TABLE IF NOT EXISTS `EmbeddingJobs` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `target_type` enum('session_block','source_chunk','project_context') NOT NULL,
   `target_id` bigint UNSIGNED NOT NULL COMMENT 'ID de la tabla objetivo (ej. id_ de SessionContextBlocks)',
   `model_id` varchar(120) NOT NULL DEFAULT 'amazon.titan-embed-text-v2:0',
@@ -144,7 +169,10 @@ CREATE TABLE `EmbeddingJobs` (
   `error_message` text,
   `attempts` tinyint UNSIGNED NOT NULL DEFAULT '0',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_embedding_target` (`target_type`,`target_id`,`model_id`),
+  KEY `idx_ej_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -153,8 +181,9 @@ CREATE TABLE `EmbeddingJobs` (
 -- Estructura de tabla para la tabla `FileS3`
 --
 
-CREATE TABLE `FileS3` (
-  `id_` int NOT NULL,
+DROP TABLE IF EXISTS `FileS3`;
+CREATE TABLE IF NOT EXISTS `FileS3` (
+  `id_` int NOT NULL AUTO_INCREMENT,
   `Nombre` varchar(255) NOT NULL,
   `Encriptado` varchar(255) NOT NULL,
   `Tamano` bigint NOT NULL,
@@ -166,8 +195,19 @@ CREATE TABLE `FileS3` (
   `SecureHint` varchar(255) DEFAULT NULL,
   `SecureUpdatedAt` timestamp NULL DEFAULT NULL,
   `Fecha` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `user_id_` int NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  `user_id_` int NOT NULL,
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_files3_user_key` (`user_id_`,`Encriptado`),
+  KEY `user_id_` (`user_id_`),
+  KEY `idx_FileS3_Ruta` (`Ruta`(191)),
+  KEY `idx_FileS3_Found` (`Found`),
+  KEY `idx_FileS3_Access` (`AccessType`),
+  KEY `idx_FileS3_RutaFoundAccess` (`Ruta`(191),`Found`,`AccessType`),
+  KEY `idx_FileS3_UserRuta` (`user_id_`,`Ruta`(191),`Found`),
+  KEY `idx_files_user_found` (`user_id_`,`Found`),
+  KEY `idx_files_user_ruta` (`user_id_`,`Ruta`(191)),
+  KEY `idx_files_user_access_found` (`user_id_`,`AccessType`,`Found`)
+) ENGINE=InnoDB AUTO_INCREMENT=6899 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
 
@@ -175,8 +215,9 @@ CREATE TABLE `FileS3` (
 -- Estructura de tabla para la tabla `FileVersions`
 --
 
-CREATE TABLE `FileVersions` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `FileVersions`;
+CREATE TABLE IF NOT EXISTS `FileVersions` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `project_id_` int NOT NULL,
   `session_id_` int DEFAULT NULL,
   `message_id_` int DEFAULT NULL COMMENT 'El mensaje de ChatMessages que generó esta versión',
@@ -192,7 +233,14 @@ CREATE TABLE `FileVersions` (
   `bytes_after` bigint DEFAULT NULL,
   `model_used` varchar(120) DEFAULT NULL,
   `error_message` text,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_file_version` (`project_id_`,`original_filename`,`version`),
+  KEY `idx_fv_project` (`project_id_`),
+  KEY `idx_fv_session` (`session_id_`),
+  KEY `fk_fv_message` (`message_id_`),
+  KEY `idx_fv_project_file_id` (`project_id_`,`original_filename`,`id_`),
+  KEY `idx_fv_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -201,15 +249,19 @@ CREATE TABLE `FileVersions` (
 -- Estructura de tabla para la tabla `LintAttempts`
 --
 
-CREATE TABLE `LintAttempts` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `LintAttempts`;
+CREATE TABLE IF NOT EXISTS `LintAttempts` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `file_version_id_` bigint UNSIGNED NOT NULL,
   `attempt_number` tinyint UNSIGNED NOT NULL DEFAULT '1' COMMENT 'Número de intento en la escalera',
   `model_used` varchar(120) NOT NULL COMMENT 'ej. anthropic.claude-3-haiku-20240307-v1:0',
   `error_message` text COMMENT 'Salida de php -l, eslint, etc.',
   `is_success` tinyint(1) NOT NULL DEFAULT '0',
   `duration_ms` int DEFAULT '0',
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  KEY `idx_la_file` (`file_version_id_`),
+  KEY `idx_la_success` (`is_success`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -218,8 +270,9 @@ CREATE TABLE `LintAttempts` (
 -- Estructura de tabla para la tabla `MemoryWriteEvents`
 --
 
-CREATE TABLE `MemoryWriteEvents` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `MemoryWriteEvents`;
+CREATE TABLE IF NOT EXISTS `MemoryWriteEvents` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id_` int NOT NULL,
   `session_id_` int NOT NULL,
   `project_id_` int DEFAULT NULL,
@@ -237,7 +290,14 @@ CREATE TABLE `MemoryWriteEvents` (
   `usage_json` json DEFAULT NULL,
   `error_text` text,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_mwe_qa_version` (`question_msg_id`,`answer_msg_id`,`writer_version`),
+  KEY `idx_mwe_user` (`user_id_`,`created_at`),
+  KEY `idx_mwe_session` (`session_id_`,`created_at`),
+  KEY `idx_mwe_project` (`project_id_`,`created_at`),
+  KEY `idx_mwe_status` (`status`,`updated_at`),
+  KEY `fk_mwe_answer` (`answer_msg_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -246,15 +306,20 @@ CREATE TABLE `MemoryWriteEvents` (
 -- Estructura de tabla para la tabla `PhaseCache`
 --
 
-CREATE TABLE `PhaseCache` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `PhaseCache`;
+CREATE TABLE IF NOT EXISTS `PhaseCache` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `cache_key` char(64) NOT NULL,
   `project_id_` int NOT NULL,
   `phase` varchar(32) NOT NULL,
   `payload` json NOT NULL COMMENT 'Resultado cacheado de la fase',
   `hit_count` int UNSIGNED NOT NULL DEFAULT '0',
   `expires_at` timestamp NULL DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_phase_cache` (`cache_key`),
+  KEY `idx_pcache_project` (`project_id_`),
+  KEY `idx_pcache_expires` (`expires_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -263,8 +328,9 @@ CREATE TABLE `PhaseCache` (
 -- Estructura de tabla para la tabla `ProjectContext`
 --
 
-CREATE TABLE `ProjectContext` (
-  `id_` int NOT NULL,
+DROP TABLE IF EXISTS `ProjectContext`;
+CREATE TABLE IF NOT EXISTS `ProjectContext` (
+  `id_` int NOT NULL AUTO_INCREMENT,
   `project_id_` int NOT NULL,
   `type` enum('rule','decision','fact','style','todo','note') NOT NULL,
   `title` varchar(255) DEFAULT NULL,
@@ -272,7 +338,9 @@ CREATE TABLE `ProjectContext` (
   `source_chunk_id` bigint UNSIGNED DEFAULT NULL,
   `embedding` longtext,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  KEY `idx_pc_project` (`project_id_`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -281,8 +349,9 @@ CREATE TABLE `ProjectContext` (
 -- Estructura de tabla para la tabla `Projects`
 --
 
-CREATE TABLE `Projects` (
-  `id_` int NOT NULL,
+DROP TABLE IF EXISTS `Projects`;
+CREATE TABLE IF NOT EXISTS `Projects` (
+  `id_` int NOT NULL AUTO_INCREMENT,
   `user_id_` int NOT NULL,
   `name` varchar(255) NOT NULL,
   `slug` varchar(120) NOT NULL,
@@ -296,8 +365,12 @@ CREATE TABLE `Projects` (
   `index_gen` int UNSIGNED NOT NULL DEFAULT '0' COMMENT 'Generación del índice. +1 en cada escritura a SourceChunks. Invalida el caché RAG. Fuera de meta a propósito: projects.php sobrescribe meta con JSON del cliente.',
   `meta` json DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_projects_user_slug` (`user_id_`,`slug`),
+  UNIQUE KEY `uq_projects_user_rootprefix` (`user_id_`,`root_prefix`(255)),
+  KEY `idx_projects_user` (`user_id_`)
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
 
@@ -305,8 +378,9 @@ CREATE TABLE `Projects` (
 -- Estructura de tabla para la tabla `ProjectSources`
 --
 
-CREATE TABLE `ProjectSources` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `ProjectSources`;
+CREATE TABLE IF NOT EXISTS `ProjectSources` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `project_id_` int NOT NULL,
   `files3_id_` int DEFAULT NULL,
   `s3_key` varchar(1024) NOT NULL,
@@ -318,7 +392,14 @@ CREATE TABLE `ProjectSources` (
   `sha256` char(64) DEFAULT NULL,
   `status` enum('pending','indexed','stale','error') NOT NULL DEFAULT 'pending',
   `indexed_at` timestamp NULL DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_source_project_key` (`project_id_`,`s3_key_hash`),
+  KEY `idx_ps_s3key_prefix` (`s3_key`(255)),
+  KEY `idx_ps_project` (`project_id_`),
+  KEY `idx_ps_status` (`status`),
+  KEY `fk_ps_files3` (`files3_id_`),
+  KEY `idx_ps_project_filename` (`project_id_`,`filename`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -327,8 +408,9 @@ CREATE TABLE `ProjectSources` (
 -- Estructura de tabla para la tabla `ProjectTestCommands`
 --
 
-CREATE TABLE `ProjectTestCommands` (
-  `id_` int NOT NULL,
+DROP TABLE IF EXISTS `ProjectTestCommands`;
+CREATE TABLE IF NOT EXISTS `ProjectTestCommands` (
+  `id_` int NOT NULL AUTO_INCREMENT,
   `project_id_` int NOT NULL,
   `label` varchar(64) NOT NULL COMMENT 'Unico identificador que el cliente puede enviar',
   `bin` varchar(512) NOT NULL COMMENT 'Ruta ABSOLUTA al binario. Nunca del PATH.',
@@ -337,7 +419,11 @@ CREATE TABLE `ProjectTestCommands` (
   `timeout_sec` smallint UNSIGNED NOT NULL DEFAULT '120',
   `enabled` tinyint(1) NOT NULL DEFAULT '1',
   `created_by_user_id_` int DEFAULT NULL COMMENT 'Humano que autorizo este comando. SET NULL al borrar el usuario: se pierde el autor, no la fila.',
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_ptc_project_label` (`project_id_`,`label`),
+  KEY `idx_ptc_project_enabled` (`project_id_`,`enabled`),
+  KEY `fk_ptc_user` (`created_by_user_id_`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -346,8 +432,9 @@ CREATE TABLE `ProjectTestCommands` (
 -- Estructura de tabla para la tabla `PromptCompilations`
 --
 
-CREATE TABLE `PromptCompilations` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `PromptCompilations`;
+CREATE TABLE IF NOT EXISTS `PromptCompilations` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `session_id_` int NOT NULL,
   `user_msg_id` int NOT NULL COMMENT 'El mensaje original del usuario que desencadenó esto',
   `compiled_prompt` mediumtext NOT NULL COMMENT 'El prompt fusionado en inglés generado por Haiku',
@@ -357,7 +444,11 @@ CREATE TABLE `PromptCompilations` (
   `was_edited_by_user` tinyint(1) NOT NULL DEFAULT '0',
   `edited_diff` text COMMENT 'Diferencia entre el prompt compilado y lo que el usuario aprobó',
   `status` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  KEY `idx_pc_session` (`session_id_`),
+  KEY `idx_pc_status` (`status`),
+  KEY `fk_pc_user_msg` (`user_msg_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -366,8 +457,9 @@ CREATE TABLE `PromptCompilations` (
 -- Estructura de tabla para la tabla `S3Folders`
 --
 
-CREATE TABLE `S3Folders` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `S3Folders`;
+CREATE TABLE IF NOT EXISTS `S3Folders` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id_` int NOT NULL DEFAULT '0',
   `Prefix` varchar(1024) NOT NULL,
   `Nombre` varchar(255) NOT NULL,
@@ -379,8 +471,16 @@ CREATE TABLE `S3Folders` (
   `SecureUpdatedAt` timestamp NULL DEFAULT NULL,
   `CreatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `UpdatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `PrefixHash` binary(32) GENERATED ALWAYS AS (unhex(sha2(`Prefix`,256))) STORED
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  `PrefixHash` binary(32) GENERATED ALWAYS AS (unhex(sha2(`Prefix`,256))) STORED,
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uniq_user_prefix` (`user_id_`,`Prefix`(191)),
+  UNIQUE KEY `uq_s3folders_user_prefixhash` (`user_id_`,`PrefixHash`),
+  KEY `idx_user_parent` (`user_id_`,`ParentPrefix`(191)),
+  KEY `idx_user_found` (`user_id_`,`Found`),
+  KEY `idx_user_access` (`user_id_`,`AccessType`),
+  KEY `idx_user_parent_found_access` (`user_id_`,`ParentPrefix`(191),`Found`,`AccessType`),
+  KEY `idx_folders_user_found` (`user_id_`,`Found`)
+) ENGINE=InnoDB AUTO_INCREMENT=333 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
 
@@ -388,8 +488,9 @@ CREATE TABLE `S3Folders` (
 -- Estructura de tabla para la tabla `SessionContextBlocks`
 --
 
-CREATE TABLE `SessionContextBlocks` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `SessionContextBlocks`;
+CREATE TABLE IF NOT EXISTS `SessionContextBlocks` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `session_id_` int NOT NULL,
   `block_type` enum('primordial','level_0','level_1','level_2','level_3','file','file_chunk') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'level_0',
   `question_msg_id` int DEFAULT NULL COMMENT 'ID del mensaje de pregunta en ChatMessages',
@@ -405,7 +506,13 @@ CREATE TABLE `SessionContextBlocks` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `is_memory_summary` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = Resumen generado por memoria selectiva',
   `memory_hits` int NOT NULL DEFAULT '0' COMMENT 'Veces que se consultó este resumen',
-  `last_memory_used_at` timestamp NULL DEFAULT NULL COMMENT 'Última vez que se usó como memoria'
+  `last_memory_used_at` timestamp NULL DEFAULT NULL COMMENT 'Última vez que se usó como memoria',
+  PRIMARY KEY (`id_`),
+  KEY `idx_scb_session` (`session_id_`),
+  KEY `idx_scb_type_locked` (`block_type`,`is_locked`),
+  KEY `fk_scb_a_msg` (`answer_msg_id`),
+  KEY `idx_scb_has_embedding` (`embedding_model`),
+  KEY `idx_scb_memory_qa` (`question_msg_id`,`answer_msg_id`,`is_memory_summary`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -414,8 +521,9 @@ CREATE TABLE `SessionContextBlocks` (
 -- Estructura de tabla para la tabla `SourceChunks`
 --
 
-CREATE TABLE `SourceChunks` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `SourceChunks`;
+CREATE TABLE IF NOT EXISTS `SourceChunks` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `source_id_` bigint UNSIGNED NOT NULL,
   `project_id_` int NOT NULL,
   `chunk_type` enum('file','namespace','class','trait','interface','function','method','block','comment','docstring','import','other') NOT NULL,
@@ -429,7 +537,12 @@ CREATE TABLE `SourceChunks` (
   `checksum` char(64) DEFAULT NULL,
   `meta` json DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  KEY `idx_chunks_source` (`source_id_`),
+  KEY `idx_chunks_project_type` (`project_id_`,`chunk_type`),
+  KEY `idx_chunks_name` (`name`(191)),
+  KEY `idx_chunks_project_name` (`project_id_`,`name`(191))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -438,8 +551,9 @@ CREATE TABLE `SourceChunks` (
 -- Estructura de tabla para la tabla `TokenUsage`
 --
 
-CREATE TABLE `TokenUsage` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `TokenUsage`;
+CREATE TABLE IF NOT EXISTS `TokenUsage` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `session_id_` int NOT NULL,
   `message_id_` int DEFAULT NULL,
   `phase` enum('compile','respond','lint_fix','embedding','classify','scout','plan','rag','edit','summarize','review') NOT NULL,
@@ -448,8 +562,12 @@ CREATE TABLE `TokenUsage` (
   `output_tokens` int NOT NULL DEFAULT '0',
   `estimated_cost_usd` decimal(10,6) NOT NULL DEFAULT '0.000000',
   `duration_ms` int NOT NULL DEFAULT '0',
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  KEY `idx_tu_session` (`session_id_`),
+  KEY `idx_tu_phase` (`phase`),
+  KEY `fk_tu_message` (`message_id_`)
+) ENGINE=InnoDB AUTO_INCREMENT=2285 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
 
@@ -457,8 +575,9 @@ CREATE TABLE `TokenUsage` (
 -- Estructura de tabla para la tabla `ToolCalls`
 --
 
-CREATE TABLE `ToolCalls` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `ToolCalls`;
+CREATE TABLE IF NOT EXISTS `ToolCalls` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `session_id_` int NOT NULL,
   `project_id_` int DEFAULT NULL,
   `message_id_` int DEFAULT NULL,
@@ -469,7 +588,12 @@ CREATE TABLE `ToolCalls` (
   `result` mediumtext,
   `status` enum('ok','error','timeout') NOT NULL DEFAULT 'ok',
   `duration_ms` int DEFAULT '0',
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  KEY `idx_tc_session` (`session_id_`),
+  KEY `idx_tc_tool` (`tool`),
+  KEY `idx_tc_project` (`project_id_`),
+  KEY `idx_tc_loop_detect` (`session_id_`,`tool`,`params_hash`,`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -478,8 +602,9 @@ CREATE TABLE `ToolCalls` (
 -- Estructura de tabla para la tabla `UserAIAgentConfigs`
 --
 
-CREATE TABLE `UserAIAgentConfigs` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `UserAIAgentConfigs`;
+CREATE TABLE IF NOT EXISTS `UserAIAgentConfigs` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id_` int NOT NULL,
   `agent_key` varchar(100) NOT NULL,
   `agent_group` varchar(50) NOT NULL DEFAULT 'general',
@@ -501,8 +626,13 @@ CREATE TABLE `UserAIAgentConfigs` (
   `is_active` tinyint(1) NOT NULL DEFAULT '1',
   `sort_order` int NOT NULL DEFAULT '0',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_user_ai_agent` (`user_id_`,`agent_key`),
+  KEY `idx_uac_user_active` (`user_id_`,`is_active`),
+  KEY `idx_uac_group` (`agent_group`),
+  KEY `idx_uac_agent_key` (`agent_key`)
+) ENGINE=InnoDB AUTO_INCREMENT=46 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 --
 -- Volcado de datos para la tabla `UserAIAgentConfigs`
@@ -548,15 +678,37 @@ INSERT INTO `UserAIAgentConfigs` (`id_`, `user_id_`, `agent_key`, `agent_group`,
 -- Estructura de tabla para la tabla `UserPipelineFeatures`
 --
 
-CREATE TABLE `UserPipelineFeatures` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `UserPipelineFeatures`;
+CREATE TABLE IF NOT EXISTS `UserPipelineFeatures` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id_` int NOT NULL,
   `feature_key` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
   `is_enabled` tinyint(1) NOT NULL DEFAULT '1',
   `config_json` json DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_user_pipeline_feature` (`user_id_`,`feature_key`),
+  KEY `idx_upf_user_enabled` (`user_id_`,`is_enabled`)
+) ENGINE=InnoDB AUTO_INCREMENT=229 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+--
+-- Volcado de datos para la tabla `UserPipelineFeatures`
+--
+
+INSERT INTO `UserPipelineFeatures` (`id_`, `user_id_`, `feature_key`, `is_enabled`, `config_json`, `created_at`, `updated_at`) VALUES
+(1, 1, 'prompt_compiler', 1, NULL, '2026-08-18 19:34:04', '2026-08-18 20:12:41'),
+(2, 1, 'memory_router', 1, NULL, '2026-08-18 19:34:04', '2026-08-18 20:12:41'),
+(3, 1, 'procedural_memory_read', 1, NULL, '2026-08-18 19:34:04', '2026-08-18 20:12:41'),
+(4, 1, 'project_memory_read', 1, NULL, '2026-08-18 19:34:04', '2026-08-18 20:12:41'),
+(5, 1, 'session_memory_read', 1, NULL, '2026-08-18 19:34:04', '2026-08-18 20:12:41'),
+(6, 1, 'question_memory_read', 1, NULL, '2026-08-18 19:34:04', '2026-08-18 20:12:41'),
+(7, 1, 'project_rag', 1, NULL, '2026-08-18 19:34:04', '2026-08-18 20:12:41'),
+(8, 1, 'attachment_rag', 1, NULL, '2026-08-18 19:34:04', '2026-08-18 20:12:41'),
+(9, 1, 'context_ranking', 1, NULL, '2026-08-18 19:34:04', '2026-08-18 20:12:41'),
+(10, 1, 'memory_backfill', 1, NULL, '2026-08-18 19:34:04', '2026-08-18 20:12:41'),
+(11, 1, 'project_tools', 1, NULL, '2026-08-18 19:34:04', '2026-08-18 20:12:41'),
+(12, 1, 'memory_writer', 1, NULL, '2026-08-18 19:34:04', '2026-08-18 20:12:41');
 
 -- --------------------------------------------------------
 
@@ -564,8 +716,9 @@ CREATE TABLE `UserPipelineFeatures` (
 -- Estructura de tabla para la tabla `UserPreferences`
 --
 
-CREATE TABLE `UserPreferences` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `UserPreferences`;
+CREATE TABLE IF NOT EXISTS `UserPreferences` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id_` int NOT NULL,
   `model_id` varchar(255) NOT NULL DEFAULT 'amazon.nova-micro-v1:0',
   `seed` int UNSIGNED NOT NULL DEFAULT '42',
@@ -579,8 +732,10 @@ CREATE TABLE `UserPreferences` (
   `question_memory_window_lines` tinyint UNSIGNED NOT NULL DEFAULT '5',
   `theme_mode` varchar(20) NOT NULL DEFAULT 'theme-light',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_userpreferences_user` (`user_id_`)
+) ENGINE=InnoDB AUTO_INCREMENT=34 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 --
 -- Volcado de datos para la tabla `UserPreferences`
@@ -595,8 +750,9 @@ INSERT INTO `UserPreferences` (`id_`, `user_id_`, `model_id`, `seed`, `compile_t
 -- Estructura de tabla para la tabla `UserProceduralMemory`
 --
 
-CREATE TABLE `UserProceduralMemory` (
-  `id_` bigint UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `UserProceduralMemory`;
+CREATE TABLE IF NOT EXISTS `UserProceduralMemory` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id_` int NOT NULL,
   `memory_type` enum('preference','rule','pattern','correction','workflow') NOT NULL DEFAULT 'rule',
   `content` text NOT NULL COMMENT 'La regla o patrón detectado',
@@ -604,7 +760,11 @@ CREATE TABLE `UserProceduralMemory` (
   `confidence` tinyint UNSIGNED NOT NULL DEFAULT '1' COMMENT 'Veces que se ha observado este patrón',
   `is_active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id_`),
+  KEY `idx_upm_user` (`user_id_`),
+  KEY `idx_upm_type_active` (`memory_type`,`is_active`),
+  KEY `fk_upm_session` (`source_session_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
@@ -613,8 +773,9 @@ CREATE TABLE `UserProceduralMemory` (
 -- Estructura de tabla para la tabla `Users`
 --
 
-CREATE TABLE `Users` (
-  `id` int NOT NULL,
+DROP TABLE IF EXISTS `Users`;
+CREATE TABLE IF NOT EXISTS `Users` (
+  `id` int NOT NULL AUTO_INCREMENT,
   `firstname` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
   `lastname` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
   `curp` varchar(18) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
@@ -633,418 +794,9 @@ CREATE TABLE `Users` (
   `registrationdate` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `profilepicture` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci DEFAULT NULL,
   `chat` tinyint NOT NULL,
-  `userstatus` enum('Activo','Inactivo') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
-
---
--- Índices para tablas volcadas
---
-
---
--- Indices de la tabla `AccessControl`
---
-ALTER TABLE `AccessControl`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `user_id` (`user_id`);
-
---
--- Indices de la tabla `ChatActivityEvents`
---
-ALTER TABLE `ChatActivityEvents`
-  ADD PRIMARY KEY (`id_`),
-  ADD KEY `idx_cae_trace` (`trace_id`,`id_`),
-  ADD KEY `idx_cae_session` (`session_id_`,`created_at`),
-  ADD KEY `idx_cae_user` (`user_id_`,`created_at`);
-
---
--- Indices de la tabla `ChatMessages`
---
-ALTER TABLE `ChatMessages`
-  ADD PRIMARY KEY (`id_`),
-  ADD KEY `idx_msgs_session` (`session_id_`),
-  ADD KEY `idx_msgs_user` (`user_id_`);
-
---
--- Indices de la tabla `ChatSessions`
---
-ALTER TABLE `ChatSessions`
-  ADD PRIMARY KEY (`id_`),
-  ADD KEY `idx_chats_user` (`user_id_`),
-  ADD KEY `idx_chats_updated` (`updated_at`),
-  ADD KEY `idx_sessions_project` (`project_id_`),
-  ADD KEY `idx_pending_summary` (`pending_summary`,`last_compressed_at`);
-
---
--- Indices de la tabla `ChunkEmbeddings`
---
-ALTER TABLE `ChunkEmbeddings`
-  ADD PRIMARY KEY (`id_`),
-  ADD KEY `idx_ce_chunk` (`chunk_id_`),
-  ADD KEY `idx_ce_model` (`model_id`);
-
---
--- Indices de la tabla `EmbeddingJobs`
---
-ALTER TABLE `EmbeddingJobs`
-  ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `uq_embedding_target` (`target_type`,`target_id`,`model_id`),
-  ADD KEY `idx_ej_status` (`status`);
-
---
--- Indices de la tabla `FileS3`
---
-ALTER TABLE `FileS3`
-  ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `uq_files3_user_key` (`user_id_`,`Encriptado`),
-  ADD KEY `user_id_` (`user_id_`),
-  ADD KEY `idx_FileS3_Ruta` (`Ruta`(191)),
-  ADD KEY `idx_FileS3_Found` (`Found`),
-  ADD KEY `idx_FileS3_Access` (`AccessType`),
-  ADD KEY `idx_FileS3_RutaFoundAccess` (`Ruta`(191),`Found`,`AccessType`),
-  ADD KEY `idx_FileS3_UserRuta` (`user_id_`,`Ruta`(191),`Found`),
-  ADD KEY `idx_files_user_found` (`user_id_`,`Found`),
-  ADD KEY `idx_files_user_ruta` (`user_id_`,`Ruta`(191)),
-  ADD KEY `idx_files_user_access_found` (`user_id_`,`AccessType`,`Found`);
-
---
--- Indices de la tabla `FileVersions`
---
-ALTER TABLE `FileVersions`
-  ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `uq_file_version` (`project_id_`,`original_filename`,`version`),
-  ADD KEY `idx_fv_project` (`project_id_`),
-  ADD KEY `idx_fv_session` (`session_id_`),
-  ADD KEY `fk_fv_message` (`message_id_`),
-  ADD KEY `idx_fv_project_file_id` (`project_id_`,`original_filename`,`id_`),
-  ADD KEY `idx_fv_status` (`status`);
-
---
--- Indices de la tabla `LintAttempts`
---
-ALTER TABLE `LintAttempts`
-  ADD PRIMARY KEY (`id_`),
-  ADD KEY `idx_la_file` (`file_version_id_`),
-  ADD KEY `idx_la_success` (`is_success`);
-
---
--- Indices de la tabla `MemoryWriteEvents`
---
-ALTER TABLE `MemoryWriteEvents`
-  ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `uq_mwe_qa_version` (`question_msg_id`,`answer_msg_id`,`writer_version`),
-  ADD KEY `idx_mwe_user` (`user_id_`,`created_at`),
-  ADD KEY `idx_mwe_session` (`session_id_`,`created_at`),
-  ADD KEY `idx_mwe_project` (`project_id_`,`created_at`),
-  ADD KEY `idx_mwe_status` (`status`,`updated_at`),
-  ADD KEY `fk_mwe_answer` (`answer_msg_id`);
-
---
--- Indices de la tabla `PhaseCache`
---
-ALTER TABLE `PhaseCache`
-  ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `uq_phase_cache` (`cache_key`),
-  ADD KEY `idx_pcache_project` (`project_id_`),
-  ADD KEY `idx_pcache_expires` (`expires_at`);
-
---
--- Indices de la tabla `ProjectContext`
---
-ALTER TABLE `ProjectContext`
-  ADD PRIMARY KEY (`id_`),
-  ADD KEY `idx_pc_project` (`project_id_`);
-
---
--- Indices de la tabla `Projects`
---
-ALTER TABLE `Projects`
-  ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `uq_projects_user_slug` (`user_id_`,`slug`),
-  ADD UNIQUE KEY `uq_projects_user_rootprefix` (`user_id_`,`root_prefix`(255)),
-  ADD KEY `idx_projects_user` (`user_id_`);
-
---
--- Indices de la tabla `ProjectSources`
---
-ALTER TABLE `ProjectSources`
-  ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `uq_source_project_key` (`project_id_`,`s3_key_hash`),
-  ADD KEY `idx_ps_s3key_prefix` (`s3_key`(255)),
-  ADD KEY `idx_ps_project` (`project_id_`),
-  ADD KEY `idx_ps_status` (`status`),
-  ADD KEY `fk_ps_files3` (`files3_id_`),
-  ADD KEY `idx_ps_project_filename` (`project_id_`,`filename`);
-
---
--- Indices de la tabla `ProjectTestCommands`
---
-ALTER TABLE `ProjectTestCommands`
-  ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `uq_ptc_project_label` (`project_id_`,`label`),
-  ADD KEY `idx_ptc_project_enabled` (`project_id_`,`enabled`),
-  ADD KEY `fk_ptc_user` (`created_by_user_id_`);
-
---
--- Indices de la tabla `PromptCompilations`
---
-ALTER TABLE `PromptCompilations`
-  ADD PRIMARY KEY (`id_`),
-  ADD KEY `idx_pc_session` (`session_id_`),
-  ADD KEY `idx_pc_status` (`status`),
-  ADD KEY `fk_pc_user_msg` (`user_msg_id`);
-
---
--- Indices de la tabla `S3Folders`
---
-ALTER TABLE `S3Folders`
-  ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `uniq_user_prefix` (`user_id_`,`Prefix`(191)),
-  ADD UNIQUE KEY `uq_s3folders_user_prefixhash` (`user_id_`,`PrefixHash`),
-  ADD KEY `idx_user_parent` (`user_id_`,`ParentPrefix`(191)),
-  ADD KEY `idx_user_found` (`user_id_`,`Found`),
-  ADD KEY `idx_user_access` (`user_id_`,`AccessType`),
-  ADD KEY `idx_user_parent_found_access` (`user_id_`,`ParentPrefix`(191),`Found`,`AccessType`),
-  ADD KEY `idx_folders_user_found` (`user_id_`,`Found`);
-
---
--- Indices de la tabla `SessionContextBlocks`
---
-ALTER TABLE `SessionContextBlocks`
-  ADD PRIMARY KEY (`id_`),
-  ADD KEY `idx_scb_session` (`session_id_`),
-  ADD KEY `idx_scb_type_locked` (`block_type`,`is_locked`),
-  ADD KEY `fk_scb_a_msg` (`answer_msg_id`),
-  ADD KEY `idx_scb_has_embedding` (`embedding_model`),
-  ADD KEY `idx_scb_memory_qa` (`question_msg_id`,`answer_msg_id`,`is_memory_summary`);
-
---
--- Indices de la tabla `SourceChunks`
---
-ALTER TABLE `SourceChunks`
-  ADD PRIMARY KEY (`id_`),
-  ADD KEY `idx_chunks_source` (`source_id_`),
-  ADD KEY `idx_chunks_project_type` (`project_id_`,`chunk_type`),
-  ADD KEY `idx_chunks_name` (`name`(191)),
-  ADD KEY `idx_chunks_project_name` (`project_id_`,`name`(191));
-
---
--- Indices de la tabla `TokenUsage`
---
-ALTER TABLE `TokenUsage`
-  ADD PRIMARY KEY (`id_`),
-  ADD KEY `idx_tu_session` (`session_id_`),
-  ADD KEY `idx_tu_phase` (`phase`),
-  ADD KEY `fk_tu_message` (`message_id_`);
-
---
--- Indices de la tabla `ToolCalls`
---
-ALTER TABLE `ToolCalls`
-  ADD PRIMARY KEY (`id_`),
-  ADD KEY `idx_tc_session` (`session_id_`),
-  ADD KEY `idx_tc_tool` (`tool`),
-  ADD KEY `idx_tc_project` (`project_id_`),
-  ADD KEY `idx_tc_loop_detect` (`session_id_`,`tool`,`params_hash`,`created_at`);
-
---
--- Indices de la tabla `UserAIAgentConfigs`
---
-ALTER TABLE `UserAIAgentConfigs`
-  ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `uq_user_ai_agent` (`user_id_`,`agent_key`),
-  ADD KEY `idx_uac_user_active` (`user_id_`,`is_active`),
-  ADD KEY `idx_uac_group` (`agent_group`),
-  ADD KEY `idx_uac_agent_key` (`agent_key`);
-
---
--- Indices de la tabla `UserPipelineFeatures`
---
-ALTER TABLE `UserPipelineFeatures`
-  ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `uq_user_pipeline_feature` (`user_id_`,`feature_key`),
-  ADD KEY `idx_upf_user_enabled` (`user_id_`,`is_enabled`);
-
---
--- Indices de la tabla `UserPreferences`
---
-ALTER TABLE `UserPreferences`
-  ADD PRIMARY KEY (`id_`),
-  ADD UNIQUE KEY `uq_userpreferences_user` (`user_id_`);
-
---
--- Indices de la tabla `UserProceduralMemory`
---
-ALTER TABLE `UserProceduralMemory`
-  ADD PRIMARY KEY (`id_`),
-  ADD KEY `idx_upm_user` (`user_id_`),
-  ADD KEY `idx_upm_type_active` (`memory_type`,`is_active`),
-  ADD KEY `fk_upm_session` (`source_session_id`);
-
---
--- Indices de la tabla `Users`
---
-ALTER TABLE `Users`
-  ADD PRIMARY KEY (`id`);
-
---
--- AUTO_INCREMENT de las tablas volcadas
---
-
---
--- AUTO_INCREMENT de la tabla `AccessControl`
---
-ALTER TABLE `AccessControl`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `ChatActivityEvents`
---
-ALTER TABLE `ChatActivityEvents`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `ChatMessages`
---
-ALTER TABLE `ChatMessages`
-  MODIFY `id_` int NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `ChatSessions`
---
-ALTER TABLE `ChatSessions`
-  MODIFY `id_` int NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `ChunkEmbeddings`
---
-ALTER TABLE `ChunkEmbeddings`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `EmbeddingJobs`
---
-ALTER TABLE `EmbeddingJobs`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `FileS3`
---
-ALTER TABLE `FileS3`
-  MODIFY `id_` int NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `FileVersions`
---
-ALTER TABLE `FileVersions`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `LintAttempts`
---
-ALTER TABLE `LintAttempts`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `MemoryWriteEvents`
---
-ALTER TABLE `MemoryWriteEvents`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `PhaseCache`
---
-ALTER TABLE `PhaseCache`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `ProjectContext`
---
-ALTER TABLE `ProjectContext`
-  MODIFY `id_` int NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `Projects`
---
-ALTER TABLE `Projects`
-  MODIFY `id_` int NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `ProjectSources`
---
-ALTER TABLE `ProjectSources`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `ProjectTestCommands`
---
-ALTER TABLE `ProjectTestCommands`
-  MODIFY `id_` int NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `PromptCompilations`
---
-ALTER TABLE `PromptCompilations`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `S3Folders`
---
-ALTER TABLE `S3Folders`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `SessionContextBlocks`
---
-ALTER TABLE `SessionContextBlocks`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `SourceChunks`
---
-ALTER TABLE `SourceChunks`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `TokenUsage`
---
-ALTER TABLE `TokenUsage`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `ToolCalls`
---
-ALTER TABLE `ToolCalls`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `UserAIAgentConfigs`
---
-ALTER TABLE `UserAIAgentConfigs`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=46;
-
---
--- AUTO_INCREMENT de la tabla `UserPipelineFeatures`
---
-ALTER TABLE `UserPipelineFeatures`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `UserPreferences`
---
-ALTER TABLE `UserPreferences`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=34;
-
---
--- AUTO_INCREMENT de la tabla `UserProceduralMemory`
---
-ALTER TABLE `UserProceduralMemory`
-  MODIFY `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT de la tabla `Users`
---
-ALTER TABLE `Users`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+  `userstatus` enum('Activo','Inactivo') CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_unicode_ci;
 
 --
 -- Restricciones para tablas volcadas
