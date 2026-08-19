@@ -1,0 +1,7 @@
+{
+    "require": {
+        "spomky-labs/otphp": "^11.3",
+        "bacon/bacon-qr-code": "^3.0",
+        "aws/aws-sdk-php": "^3.344"
+    }
+}
