@@ -113,3 +113,69 @@ El resultado IA se trata como entrada no confiable: solo se aceptan entre 1 y 8 
 `TaskDependencies` representa exclusivamente **Task → Task**. `completed` y `terminal_success` requieren que la Task requerida esté `completed` (no existe un estado `success`); `terminal_any` admite `completed`, `failed` o `cancelled`. Solo se admiten dependencias entre Tasks del mismo usuario y del mismo ámbito de proyecto (incluidas dos Tasks sin proyecto), sin autorreferencias, duplicados ni ciclos. Una Task autorizada con requisitos pendientes queda en `waiting_dependency`; la aprobación ya concedida no se repite al liberarse.
 
 El orden entre Steps se representa inicialmente mediante `position`. No existe todavía DAG Step → Step. El Planner es actividad previa de orquestación: no crea `TaskExecution`, no marca Steps como ejecutados y no introduce trazabilidad ni contabilidad de costes paralelas.
+
+## Fase 8.5 — Worker
+
+La ejecución persistente separa aprobación de ubicación de ejecución. `task_auto_execute`
+decide si se requiere aprobación humana; `task_async_execute` (OFF por defecto) decide
+si el pipeline se ejecuta en HTTP o queda `ready` para el Worker. Al crear el Step
+`respond`, el modo queda congelado en `input_json.execution_mode`; la ausencia del
+campo significa `sync` y protege Tasks legacy.
+
+Los cuatro modos son: **Supervised + Sync** (aprobar y continuar por HTTP),
+**Supervised + Async** (aprobar y dejar `ready`), **Automatic + Sync** (pipeline
+inmediato) y **Automatic + Async** (planificar y dejar `ready`). El Worker nunca
+convierte `waiting_user` en aprobación ni reclama `waiting_dependency`.
+
+```text
+Task ready
+    ↓
+claim (FOR UPDATE SKIP LOCKED)
+    ↓
+lease (worker_id + lease_token + lease_expires_at)
+    ↓
+Execution running
+    ↓
+heartbeat
+    ↓
+completed / failed
+```
+
+MySQL es la cola y la fuente de verdad. El orden de claim es `urgent`, `high`,
+`normal`, `low`, seguido por `scheduled_at/created_at`; una fecha futura no es
+elegible. Cada claim crea un trace nuevo. Heartbeat renueva Execution y Task sin
+crear eventos. Todas las mutaciones terminales vuelven a comprobar el token, por lo
+que un Worker que perdió el lease no puede completar.
+
+```text
+Worker dies
+   ↓
+lease expires
+   ↓
+Execution abandoned
+   ↓
+Task failed
+   ↓
+manual retry (nuevo Execution y nuevo trace)
+```
+
+La recuperación es intencionadamente conservadora: no reintenta automáticamente
+Tools ni otros efectos potencialmente no idempotentes, conserva Execution y trace,
+y deja el retry al usuario. Se procesa en lotes acotados. Al completarse una
+prerrequisito, `TaskDependencyService` puede volver a evaluar la dependiente y
+moverla de `waiting_dependency` a `ready`; no se recorre el grafo en una transacción
+gigante.
+
+Fase 8.5 solo reclama el placeholder real `respond`. Conserva el Plan y no simula
+Steps `tool`, `validation` u otros: el executor genérico multi-Step pertenece a 8.6.
+El adaptador CLI no contiene SQL ni llama a `bedrock_chat2.php` por HTTP; usa la
+frontera POO server-side `TaskExecutionRunner`. Claim y heartbeat no son endpoints.
+
+```bash
+php michat/bin/task_worker.php --once
+php michat/bin/task_worker.php --loop
+```
+
+También se admiten `--max-jobs=N` y `--sleep=N`. La infraestructura externa debe
+administrar el proceso; el script no daemoniza. Una vez que una Task async está
+`ready`, cerrar o recargar el navegador no afecta su estado, Plan ni ejecución.

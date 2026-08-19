@@ -2733,6 +2733,7 @@ if (!empty($pipelineEffective['task_orchestrator']) && $saved_user_text_id) {
             new TaskEventRepository($db_connection)
         ));
         $taskAutoExecute = !empty($pipelineEffective['task_auto_execute']);
+        $taskAsyncExecute = !empty($pipelineEffective['task_async_execute']);
         if ($executeApprovedTask) {
             $chatTaskContext = $chatTaskBridge->resumeApproved($approvedTaskPublicId,$user_id,$activityTraceId,$model_id);
         } else {
@@ -2741,13 +2742,17 @@ if (!empty($pipelineEffective['task_orchestrator']) && $saved_user_text_id) {
             (int)$saved_user_text_id, $taskRequestId, $text, $taskAutoExecute,
             ['request_id'=>$taskRequestId,'compilation_id'=>$compilation_id ?: null,
              'compiled_prompt'=>$compiled_prompt_input !== '' ? $compiled_prompt_input : null,
-             'temperature'=>$temperature,'max_tokens'=>$max_tokens,'top_p'=>$top_p]
+             'temperature'=>$temperature,'max_tokens'=>$max_tokens,'top_p'=>$top_p,
+             'model_id'=>$model_id,'execution_mode'=>$taskAsyncExecute?'async':'sync']
         );
         if (!$taskAutoExecute && !$executeApprovedTask) {
             jexit(['ok'=>true,'approval_required'=>true,'task'=>[
                 'public_id'=>$chatTaskContext->publicId,'status'=>'waiting_user',
                 'lock_version'=>$chatTaskContext->taskLockVersion,'title'=>ChatTaskBridge::title($text)
             ]]);
+        }
+        if ($taskAsyncExecute && !$executeApprovedTask && $taskAutoExecute) {
+            jexit(['ok'=>true,'async_queued'=>true,'task'=>['public_id'=>$chatTaskContext->publicId,'status'=>'ready']]);
         }
         if (!$executeApprovedTask) $chatTaskContext = $chatTaskBridge->beginExecution($chatTaskContext,$user_id,$activityTraceId,$model_id);
         }

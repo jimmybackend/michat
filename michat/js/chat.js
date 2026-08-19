@@ -2084,6 +2084,11 @@ async function sendMessage() {
           const response = await fetch('task_api.php', {method:'POST',credentials:'same-origin',headers:{'X-CSRF-Token':csrf},body});
           const result = await response.json(); if (!response.ok || result.ok === false) throw new Error(result.error || `HTTP ${response.status}`);
           if (action === 'reject') { controls.textContent = 'Cancelada'; return; }
+          if (result.execution_mode === 'async') {
+            controls.textContent = 'Tarea aprobada. Esperando ejecución.';
+            pollAsyncTask(task.public_id);
+            return;
+          }
           const run = new FormData(); run.append('action','execute_approved_task'); run.append('task_public_id',task.public_id); run.append('session_id',String(currentSessionId));
           const runResponse = await fetch(API.send,{method:'POST',credentials:'same-origin',body:run});
           const executed = await runResponse.json(); if (!runResponse.ok || executed.ok === false) throw new Error(executed.error || `HTTP ${runResponse.status}`);
@@ -2091,6 +2096,20 @@ async function sendMessage() {
         } catch (error) { approve.disabled = reject.disabled = false; setStatus(`⚠️ ${error.message}`); }
       };
       approve.addEventListener('click',()=>decide('approve')); reject.addEventListener('click',()=>decide('reject'));
+    }
+
+    async function pollAsyncTask(publicId) {
+      const terminal = new Set(['completed','failed','cancelled']);
+      const poll = async () => {
+        try {
+          const response = await fetch(`task_api.php?action=detail&task=${encodeURIComponent(publicId)}`, {credentials:'same-origin'});
+          const result = await response.json();
+          const status = result?.task?.status;
+          if (terminal.has(status)) { await selectSession(currentSessionId); return; }
+          if (['ready','running','waiting_dependency'].includes(status)) setTimeout(poll, 4000);
+        } catch (_) { setTimeout(poll, 8000); }
+      };
+      setTimeout(poll, 2000);
     }
 
     isSending = true;

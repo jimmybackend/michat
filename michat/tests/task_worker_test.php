@@ -1,0 +1,26 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__.'/../includes/Tasks/TaskWorkerConfig.php';
+$passed=0;$failed=0;$ok=function(bool$v,string$n)use(&$passed,&$failed){echo($v?'PASS ':'FAIL ').$n."\n";$v?$passed++:$failed++;};
+$configA=TaskWorkerConfig::fromEnvironment();$configB=TaskWorkerConfig::fromEnvironment();
+$ok($configA->workerId!==$configB->workerId,'Worker ID único por proceso/configuración');
+$tokenA=TaskWorkerConfig::leaseToken();$tokenB=TaskWorkerConfig::leaseToken();
+$ok($tokenA!==$tokenB&&preg_match('/^[0-9a-f-]{36}$/',$tokenA)===1,'lease_token criptográfico UUID');
+$cli=file_get_contents(__DIR__.'/../bin/task_worker.php');$repo=file_get_contents(__DIR__.'/../includes/Tasks/TaskQueueRepository.php');$runner=file_get_contents(__DIR__.'/../includes/Tasks/TaskExecutionRunner.php');$flags=file_get_contents(__DIR__.'/../includes/Pipeline/PipelineFeatureFlags.php');$api=file_get_contents(__DIR__.'/../includes/Tasks/TaskApplicationService.php');$chat=file_get_contents(__DIR__.'/../bedrock_chat2.php');
+$ok(str_contains($cli,"PHP_SAPI!=='cli'"),'CLI rechaza web');$ok(str_contains($cli,"isset(\$options['once'])"),'--once funciona');
+$ok(!preg_match('/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i',$cli),'CLI no contiene SQL');
+$ok(str_contains($flags,"'task_async_execute' => false"),'async default false');
+$ok(str_contains($repo,"JSON_EXTRACT(s.input_json,'$.execution_mode')")&&str_contains($repo,"='async'"),'legacy y sync no se reclaman');
+foreach(['t.status=\'ready\'','s.status=\'ready\'','scheduled_at','FOR UPDATE SKIP LOCKED']as$needle)$ok(str_contains($repo,$needle),'claim seguro: '.$needle);
+$ok(str_contains($repo,"WHEN 'urgent' THEN 1")&&str_contains($repo,"WHEN 'high' THEN 2")&&str_contains($repo,"WHEN 'normal' THEN 3"),'prioridad explícita');
+$ok(str_contains($repo,'MAX(attempt_number)'),'attempt real');$ok(str_contains($repo,"status='running'")&&str_contains($repo,'lease_token'),'ownership por lease');
+$ok(str_contains($repo,'heartbeat_at=NOW(6)')&&str_contains($repo,'last_heartbeat_at=NOW(6)'),'heartbeat Task y Execution');
+$ok(str_contains($repo,"status='abandoned'")&&str_contains($repo,'execution_abandoned'),'recovery abandoned');
+$ok(str_contains($repo,"UPDATE Tasks SET status='failed'")&&!str_contains($repo,'DELETE FROM TaskExecutions'),'recovery conservadora e histórica');
+$ok(str_contains($runner,'assertActive')&&str_contains($runner,'cancel_requested'),'cancelación cooperativa');
+$ok(!str_contains($runner,'http://')&&!str_contains($runner,'bedrock_chat2.php'),'runner no usa HTTP');
+$ok(!str_contains($api,'lease_token')&&!str_contains($api,'worker_id'),'API no expone lease/worker');
+$ok(str_contains($chat,'TaskExecutionRunner')||str_contains($runner,'Shared lifecycle boundary'),'HTTP/Worker comparten frontera POO');
+$ok(str_contains($repo,"s.step_key='respond'"),'política conservadora solo respond');
+$ok(!str_contains($repo,"status='waiting_user'")&&!str_contains($repo,"status='waiting_dependency'"),'supervisión/dependencias no equivalen a ready');
+echo"Resultado: $passed passed, $failed failed\n";echo"SKIP integración MySQL/concurrencia real: no hay TASK_TEST_DB_* configurado.\n";exit($failed?1:0);
