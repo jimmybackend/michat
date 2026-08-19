@@ -11,6 +11,6 @@ $queue=new TaskQueueRepository($db_connection);
 $chat=(new ChatExecutionServiceFactory($db_connection))->create();
 $tools=(new ToolRegistryFactory($db_connection))->create();$registry=new TaskStepExecutorRegistry();
 $registry->register('model',new ModelTaskStepExecutor($chat));$registry->register('tool',new ToolTaskStepExecutor($tools));$registry->register('validation',new ValidationTaskStepExecutor());$registry->register('finalize',new FinalizeTaskStepExecutor());$registry->register('approval',new ApprovalTaskStepExecutor());$registry->register('wait',new WaitTaskStepExecutor());$registry->register('plan',new PlanTaskStepExecutor());
-$worker=new TaskWorker(new TaskClaimService($queue,$config),new TaskExecutionRunner(new TaskStepProgressionService($queue),new TaskLeaseService($queue,$config->leaseSeconds),new TaskStepExecutionService($registry)),new TaskRecoveryService($queue),$config);
+$worker=new TaskWorker(new TaskClaimService($queue,$config),new TaskExecutionRunner(new TaskStepProgressionService($queue),new TaskLeaseService($queue,$config->leaseSeconds),new TaskStepExecutionService($registry)),new TaskRecoveryService($queue),$config,new TaskWaitService($queue));
 if(isset($options['once'])){$worker->once();exit(0);}
 $max=isset($options['max-jobs'])?max(1,(int)$options['max-jobs']):null;$worker->loop($max);
