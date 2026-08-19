@@ -2067,6 +2067,32 @@ async function sendMessage() {
     // ============================================================
     // FLUJO PRINCIPAL: FASE 1 (compile) → FASE 2 (respond)
     // ============================================================
+    async function showTaskApproval(task) {
+      pushLocal('assistant', `Esperando aprobación: ${task.title || 'Generar respuesta'}`);
+      const host = el.messages.querySelector('.chat-msg.assistant:last-child');
+      if (!host) return;
+      const controls = document.createElement('div');
+      const approve = document.createElement('button');
+      const reject = document.createElement('button');
+      approve.type = reject.type = 'button'; approve.textContent = 'Aprobar'; reject.textContent = 'Rechazar';
+      controls.append(approve, reject); host.appendChild(controls);
+      const decide = async (action) => {
+        approve.disabled = reject.disabled = true;
+        try {
+          const body = new FormData(); body.append('action', action); body.append('public_id', task.public_id); body.append('lock_version', String(task.lock_version));
+          const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+          const response = await fetch('task_api.php', {method:'POST',credentials:'same-origin',headers:{'X-CSRF-Token':csrf},body});
+          const result = await response.json(); if (!response.ok || result.ok === false) throw new Error(result.error || `HTTP ${response.status}`);
+          if (action === 'reject') { controls.textContent = 'Cancelada'; return; }
+          const run = new FormData(); run.append('action','execute_approved_task'); run.append('task_public_id',task.public_id); run.append('session_id',String(currentSessionId));
+          const runResponse = await fetch(API.send,{method:'POST',credentials:'same-origin',body:run});
+          const executed = await runResponse.json(); if (!runResponse.ok || executed.ok === false) throw new Error(executed.error || `HTTP ${runResponse.status}`);
+          controls.textContent = 'Aprobada'; await selectSession(currentSessionId);
+        } catch (error) { approve.disabled = reject.disabled = false; setStatus(`⚠️ ${error.message}`); }
+      };
+      approve.addEventListener('click',()=>decide('approve')); reject.addEventListener('click',()=>decide('reject'));
+    }
+
     isSending = true;
     setStatus('Compilando prompt…');
     pushLocal('user', text, { created_at: new Date().toISOString() });
@@ -2216,6 +2242,11 @@ async function sendMessage() {
         // respuesta generada con el texto original.
         updateMemoryPipelineStatus(jCompile);
 
+        if (jCompile.approval_required && jCompile.task) {
+            await showTaskApproval(jCompile.task);
+            setStatus('Esperando aprobación'); isSending = false; clearQueue(); return;
+        }
+
         // ──────────────────────────────────────────────────────
         // FASE 1.5: VENTANA DE 5 S PARA CANCELAR LA MEJORA
         // ──────────────────────────────────────────────────────
@@ -2333,6 +2364,11 @@ async function sendMessage() {
             }
 
             if (!rRespond.ok || jRespond.ok === false) throw new Error(jRespond.error || `HTTP ${rRespond.status}`);
+
+            if (jRespond.approval_required && jRespond.task) {
+                await showTaskApproval(jRespond.task);
+                setStatus('Esperando aprobación'); isSending = false; clearQueue(); return;
+            }
 
             // ✅ Mostrar respuesta
             if (jRespond.reply) {

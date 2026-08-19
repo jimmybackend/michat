@@ -1701,6 +1701,27 @@ $pipelineEffective['question_memory_read'] = !empty($pipelineConfigured['questio
 // attachment_rag puede seguir funcionando en modo 'always' aun sin embeddings.
 $pipelineEffective['attachment_rag'] = !empty($pipelineConfigured['attachment_rag']);
 
+// Una aprobación se reanuda exclusivamente desde referencias persistidas y ownership.
+$executeApprovedTask = isset($_POST['action']) && $_POST['action'] === 'execute_approved_task';
+$approvedTaskPublicId = trim((string)($_POST['task_public_id'] ?? ''));
+if ($executeApprovedTask) {
+    require_once __DIR__ . '/includes/Tasks/bootstrap.php';
+    if (empty($pipelineEffective['task_orchestrator']) || !TaskPublicId::isValid($approvedTaskPublicId)) {
+        jexit(['ok'=>false,'error'=>'task_not_found'],404);
+    }
+    $approvedData = (new TaskRepository($db_connection))->approvedChatTurn($approvedTaskPublicId,$user_id);
+    if (!$approvedData || (int)$approvedData['session_id_'] !== $session_id) jexit(['ok'=>false,'error'=>'task_not_found'],404);
+    if ($approvedData['task_status'] !== 'ready' || $approvedData['step_status'] !== 'ready') jexit(['ok'=>false,'error'=>'task_not_ready'],409);
+    $savedInput = json_decode((string)($approvedData['input_json'] ?? ''),true);
+    if (!is_array($savedInput)) $savedInput=[];
+    $_POST['text']=(string)$approvedData['original_text'];
+    $_POST['request_id']=(string)($savedInput['request_id'] ?? '');
+    $_POST['compilation_id']=(string)($savedInput['compilation_id'] ?? 0);
+    if (!empty($savedInput['compiled_prompt'])) $_POST['compiled_prompt']=(string)$savedInput['compiled_prompt'];
+    foreach (['temperature','max_tokens','top_p'] as $safeKey) if (isset($savedInput[$safeKey])) $_POST[$safeKey]=(string)$savedInput[$safeKey];
+    $_POST['trace_id']=TaskPublicId::generate();
+}
+
 $text = isset($_POST['text']) ? trim((string)$_POST['text']) : '';
 // ✅ INICIALIZAR $compilation_id ANTES del debounce para evitar "Undefined variable"  
 $compilation_id = isset($_POST['compilation_id']) ? (int)$_POST['compilation_id'] : 0;
@@ -2711,18 +2732,30 @@ if (!empty($pipelineEffective['task_orchestrator']) && $saved_user_text_id) {
             $taskRepository,
             new TaskEventRepository($db_connection)
         ));
-        $chatTaskContext = $chatTaskBridge->beginTurn(
-            $user_id,
-            $session_id,
-            $projectId > 0 ? $projectId : null,
-            (int)$saved_user_text_id,
-            $taskRequestId,
-            $text,
-            $activityTraceId,
-            $model_id
+        $taskAutoExecute = !empty($pipelineEffective['task_auto_execute']);
+        if ($executeApprovedTask) {
+            $chatTaskContext = $chatTaskBridge->resumeApproved($approvedTaskPublicId,$user_id,$activityTraceId,$model_id);
+        } else {
+        $chatTaskContext = $chatTaskBridge->prepareTurn(
+            $user_id, $session_id, $projectId > 0 ? $projectId : null,
+            (int)$saved_user_text_id, $taskRequestId, $text, $taskAutoExecute,
+            ['request_id'=>$taskRequestId,'compilation_id'=>$compilation_id ?: null,
+             'compiled_prompt'=>$compiled_prompt_input !== '' ? $compiled_prompt_input : null,
+             'temperature'=>$temperature,'max_tokens'=>$max_tokens,'top_p'=>$top_p]
         );
+        if (!$taskAutoExecute && !$executeApprovedTask) {
+            jexit(['ok'=>true,'approval_required'=>true,'task'=>[
+                'public_id'=>$chatTaskContext->publicId,'status'=>'waiting_user',
+                'lock_version'=>$chatTaskContext->taskLockVersion,'title'=>ChatTaskBridge::title($text)
+            ]]);
+        }
+        if (!$executeApprovedTask) $chatTaskContext = $chatTaskBridge->beginExecution($chatTaskContext,$user_id,$activityTraceId,$model_id);
+        }
     } catch (Throwable $taskError) {
         error_log('CHAT_TASK_BRIDGE_BEGIN: ' . ChatTaskBridge::sanitizeError($taskError));
+        if (empty($pipelineEffective['task_auto_execute'])) {
+            jexit(['ok'=>false,'error'=>'task_supervision_unavailable'],503);
+        }
         $chatTaskBridge = null;
         $chatTaskContext = null;
     }

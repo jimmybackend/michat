@@ -25,6 +25,7 @@ final class PipelineFeatureFlags
         'project_tools' => true,
         'memory_writer' => true,
         'task_orchestrator' => false,
+        'task_auto_execute' => false,
     ];
 
     private mysqli $db;
