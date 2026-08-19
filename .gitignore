@@ -1,1 +1,24 @@
-Nothing needs to be added to .gitignore since only a README.md file was modified and no build artifacts, dependencies, or temporary files were detected in the changes.
+.env
+.env.*
+!.env.example
+config.local.php
+*.local.php
+credentials*.json
+secrets*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
+logs/
+tmp/
+temp/
+cache/
+*.tmp
+*.swp
+*~
+michat/upload/storage/state/*.json
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

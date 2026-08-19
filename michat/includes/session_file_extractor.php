@@ -89,31 +89,8 @@ function idx_command_exists(string $cmd): bool {
     return is_string($out) && trim($out) !== '';
 }
 
-function idx_aws_credentials_or_throw(): array {
-    $ak = getenv('AWS_ACCESS_KEY_ID') ?: (defined('Config::ACCESS_KEY') ? Config::ACCESS_KEY : '');
-    $sk = getenv('AWS_SECRET_ACCESS_KEY') ?: (defined('Config::SECRET_KEY') ? Config::SECRET_KEY : '');
-
-    $ak = is_string($ak) ? trim($ak) : '';
-    $sk = is_string($sk) ? trim($sk) : '';
-
-    if ($ak === '' || $sk === '') {
-        throw new RuntimeException('Faltan credenciales AWS para usar Textract. Define AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY o Config::ACCESS_KEY/Config::SECRET_KEY.');
-    }
-
-    return ['key' => $ak, 'secret' => $sk];
-}
-
 function idx_textract_detect_text(string $bucket, string $s3Key): string {
-    $creds = idx_aws_credentials_or_throw();
-
-    $region = (class_exists('Config') && defined('Config::REGION') && Config::REGION)
-        ? Config::REGION
-        : 'us-east-1';
-
-    $textract = new Aws\Textract\TextractClient([
-        'region'      => $region,
-        'version'     => 'latest',
-        'credentials' => $creds,
+    $textract = Config::getTextract([
         'http'        => ['connect_timeout' => 15, 'timeout' => 120],
     ]);
 

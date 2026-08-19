@@ -1106,7 +1106,7 @@ role="progressbar" style="width: 0%">0%</div>
 (function () {
     'use strict';
     
-    const SECRET = 'Z1!xC6@vB3#nM8$kL4*jH9^gF2&dS7';
+    const maintenanceCsrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const statusEl = document.getElementById('maintenanceStatus');
     const progressEl = document.getElementById('maintenanceProgress');
     const progressBar = progressEl?.querySelector('.progress-bar');
@@ -1146,8 +1146,8 @@ role="progressbar" style="width: 0%">0%</div>
         setStatus('⏳ Procesando embeddings pendientes...', 'info');
         showProgress(true, 30);
         try {
-            const url = 'process_embedding_queue.php?batch=10&key=' + encodeURIComponent(SECRET);
-            const r = await fetch(url, { credentials: 'same-origin' });
+            const url = 'process_embedding_queue.php?batch=10';
+            const r = await fetch(url, { method:'POST', credentials:'same-origin', headers:{'X-CSRF-Token':maintenanceCsrf} });
             const j = await r.json();
             
             if (j.ok) {
@@ -1169,8 +1169,8 @@ role="progressbar" style="width: 0%">0%</div>
         setStatus('⏳ Comprimiendo sesiones...', 'info');
         showProgress(true, 60);
         try {
-            const url = 'compress_session_context.php?key=' + encodeURIComponent(SECRET);
-            const r = await fetch(url, { credentials: 'same-origin' });
+            const url = 'compress_session_context.php';
+            const r = await fetch(url, { method:'POST', credentials:'same-origin', headers:{'X-CSRF-Token':maintenanceCsrf} });
             const j = await r.json();
             
             if (j.ok) {

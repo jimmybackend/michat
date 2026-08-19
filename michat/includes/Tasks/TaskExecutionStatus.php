@@ -1,0 +1,1 @@
+<?php declare(strict_types=1);final class TaskExecutionStatus{public const QUEUED='queued',RUNNING='running',WAITING='waiting',COMPLETED='completed',FAILED='failed',CANCELLED='cancelled',ABANDONED='abandoned';}

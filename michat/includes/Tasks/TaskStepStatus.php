@@ -1,0 +1,1 @@
+<?php declare(strict_types=1);final class TaskStepStatus{public const PENDING='pending',READY='ready',RUNNING='running',WAITING_USER='waiting_user',WAITING_DEPENDENCY='waiting_dependency',COMPLETED='completed',FAILED='failed',CANCELLED='cancelled',SKIPPED='skipped';}

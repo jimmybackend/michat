@@ -680,14 +680,16 @@ APP_URL=https://your-domain.example
 
 DB_HOST=localhost
 DB_PORT=3306
-DB_DATABASE=
-DB_USERNAME=
+DB_NAME=
+DB_USER=
 DB_PASSWORD=
 
 AWS_REGION=
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
+AWS_SESSION_TOKEN=
 AWS_S3_BUCKET=
+MICHAT_MAINTENANCE_SECRET=
 ```
 
 For AWS environments, IAM roles should be preferred over long-lived credentials whenever possible.

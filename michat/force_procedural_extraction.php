@@ -35,15 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') jexit(['ok' => false, 'error' => 'Mé
 
 // Inicializar Bedrock
 try {
-    $region = (class_exists('Config') && defined('Config::REGION') && Config::REGION) ? Config::REGION : 'us-east-1';
-    $ak = getenv('AWS_ACCESS_KEY_ID') ?: (defined('Config::ACCESS_KEY') ? Config::ACCESS_KEY : '');
-    $sk = getenv('AWS_SECRET_ACCESS_KEY') ?: (defined('Config::SECRET_KEY') ? Config::SECRET_KEY : '');
-    if (empty($ak) || empty($sk)) throw new RuntimeException('Faltan credenciales AWS');
-    $bedrock = new Aws\BedrockRuntime\BedrockRuntimeClient([
-        'region' => $region, 'version' => 'latest',
-        'credentials' => ['key' => $ak, 'secret' => $sk],
-        'http' => ['connect_timeout' => 20, 'timeout' => 120],
-    ]);
+    $bedrock = Config::getBedrockRuntime(['http' => ['connect_timeout' => 20, 'timeout' => 120]]);
 } catch (Throwable $e) {
     jexit(['ok' => false, 'error' => 'Bedrock init: ' . $e->getMessage()], 500);
 }

@@ -1,0 +1,1 @@
+<?php declare(strict_types=1);final class TaskApiResponse{public function __construct(public int$status,public array$body){}public static function ok(array$data=[],int$status=200):self{return new self($status,['ok'=>true]+$data);}public static function error(string$error,int$status):self{return new self($status,['ok'=>false,'error'=>$error]);}}
