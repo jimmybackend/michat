@@ -239,5 +239,14 @@ Si queda otro Step, lo deja `ready`, mantiene la Task `running` y actualiza
 Task → Step → Execution → Executor → Progression → Next Step
 ```
 
-Los Steps `approval` y `wait` no duermen: liberan el lease y persisten el estado
-de espera. La ampliación de condiciones/checkpoints de espera pertenece a 8.8.
+Los Steps `approval` y `wait` no duermen y liberan el lease. `wait` acepta únicamente
+un `wait_until` ISO-8601, lo normaliza a UTC en `checkpoint_json` y usa el estado
+existente `waiting_dependency`. En cada ciclo, `TaskWaitService` hace una consulta
+acotada y reactiva atómicamente como `ready` las esperas vencidas; no existe un
+scheduler paralelo ni se añadió un estado SQL.
+
+El cierre 8.6C sigue siendo parcial: el chat Task HTTP aún conserva ejecución
+procedural, los adapters de escritura `str_replace`/`code_edit` y la finalización
+compartida completa (Memory/RAG/TokenUsage/Activity) aún no están extraídos. Por esa
+razón la arquitectura convergente documentada arriba describe la frontera creada,
+no una migración HTTP ya terminada, y 8.7 no debe comenzar todavía.

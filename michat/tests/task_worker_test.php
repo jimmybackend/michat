@@ -24,5 +24,6 @@ $ok(str_contains($chat,'TaskExecutionRunner')||str_contains($runner,'Shared life
 $ok(!str_contains($repo,"s.step_key='respond'")&&str_contains($repo,'s.position'),'claim avanza por posición sin limitarse a respond');
 $ok(!str_contains($cli,'task_chat_execution'.'_service')&&str_contains($cli,'ChatExecutionServiceFactory'),'Worker compone runtime real sin global');
 $ok(str_contains($cli,'ToolRegistryFactory'),'Worker usa registry de producción compartido');
-$ok(!str_contains($repo,"status='waiting_user'")&&!str_contains($repo,"status='waiting_dependency'"),'supervisión/dependencias no equivalen a ready');
+$claimSql=substr($repo,0,(int)strpos($repo,' public function dependenciesSatisfied'));
+$ok(!str_contains($claimSql,"s.status='waiting_user'")&&!str_contains($claimSql,"s.status='waiting_dependency'"),'supervisión/dependencias no equivalen a ready');
 echo"Resultado: $passed passed, $failed failed\n";echo"SKIP integración MySQL/concurrencia real: no hay TASK_TEST_DB_* configurado.\n";exit($failed?1:0);
