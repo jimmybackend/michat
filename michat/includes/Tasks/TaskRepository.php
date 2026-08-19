@@ -7,6 +7,7 @@ final class TaskRepository{
  public function findOwnedById(int$id,int$u):?array{return$this->one('SELECT * FROM Tasks WHERE id_=? AND user_id_=?','ii',[$id,$u]);}
  public function findOwnedByPublicId(string$p,int$u):?array{return$this->one('SELECT * FROM Tasks WHERE public_id=? AND user_id_=?','si',[$p,$u]);}
  public function findOwnedByIdempotencyKey(int$u,string$k):?array{return$this->one('SELECT * FROM Tasks WHERE user_id_=? AND idempotency_key=?','is',[$u,$k]);}
+ public function setCurrentStep(int$id,int$u,int$step):void{$s=$this->p('UPDATE Tasks SET current_step_id_=? WHERE id_=? AND user_id_=?');$s->bind_param('iii',$step,$id,$u);$this->x($s);$s->close();}
  public function assignResult(int$id,int$u,int$messageId,string$summary):void{$s=$this->p('UPDATE Tasks SET result_message_id_=?,result_summary=? WHERE id_=? AND user_id_=?');$s->bind_param('isii',$messageId,$summary,$id,$u);$this->x($s);$s->close();}
  public function sessionScope(int$session,int$u):?array{return$this->one('SELECT id_,project_id_ FROM ChatSessions WHERE id_=? AND user_id_=?','ii',[$session,$u]);}
  public function projectOwned(int$project,int$u):bool{return$this->one("SELECT id_ FROM Projects WHERE id_=? AND user_id_=? AND status<>'deleted'",'ii',[$project,$u])!==null;}
