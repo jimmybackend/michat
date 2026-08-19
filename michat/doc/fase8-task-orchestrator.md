@@ -179,3 +179,40 @@ php michat/bin/task_worker.php --loop
 También se admiten `--max-jobs=N` y `--sleep=N`. La infraestructura externa debe
 administrar el proceso; el script no daemoniza. Una vez que una Task async está
 `ready`, cerrar o recargar el navegador no afecta su estado, Plan ni ejecución.
+
+## Fase 8.6 — Step Execution Engine
+
+La frontera compartida acepta DTOs validados y no superglobales:
+
+```text
+bedrock_chat2.php (adaptador HTTP)
+       ↓
+ChatExecutionService
+       ↑
+TaskExecutionRunner / Worker
+```
+
+`TaskStepExecutionService` selecciona mediante una whitelist explícita los executors
+`model`, `tool`, `validation`, `finalize`, `approval`, `wait` y `plan`; nunca instancia
+una clase indicada por el Planner. `model` delega en el runtime server-side inyectado,
+y `tool` converge en `ToolRegistry`, que clasifica efectos como `read_only`,
+`idempotent_write` o, por defecto, `non_idempotent`. Las aprobaciones y esperas se
+persisten como `waiting_user` y retornan el control, sin mantener dormido al Worker.
+La validación inicial segura comprueba existencia de rutas relativas, sin shell.
+
+```text
+Task → Step 1 → Execution 1 → Step 2 → Execution 2 → … → Task completed
+```
+
+El progreso es determinista (`completed / total executable`, entero): `skipped`, una
+aprobación esperando y una espera pendiente no representan trabajo completado. Cada
+intento conserva su Execution histórica y obtiene attempt/trace/lease nuevos. Los
+heartbeats no producen eventos; telemetry Bedrock/RAG/Memory/Tools permanece en
+`ChatActivityEvents`, mientras transiciones de dominio permanecen en `TaskEvents`.
+
+Fase 8.6 captura en los DTO referencias de artefactos producidos por Tools (por
+ejemplo un `file_version` real) sin copiar contenido ni insertar otra versión. La
+persistencia formal `TaskArtifacts` se implementará en Fase 8.7; no se modifica el
+esquema en esta fase. La extracción de todas las tools legacy y el lint ampliado se
+harán incrementalmente: únicamente handlers registrados explícitamente pueden ser
+usados por Steps, y `plan` nunca planifica recursivamente.

@@ -6,7 +6,7 @@ final class TaskStepStateMachine
     private const TRANSITIONS = [
         'pending' => ['ready', 'waiting_user', 'cancelled'],
         'ready' => ['running', 'cancelled'],
-        'running' => ['completed', 'failed', 'cancelled'],
+        'running' => ['completed', 'failed', 'waiting_user', 'cancelled'],
         'waiting_user' => ['ready', 'cancelled'],
         'waiting_dependency' => ['ready', 'failed', 'cancelled'],
         'completed' => [], 'failed' => [], 'cancelled' => [], 'skipped' => [],
