@@ -1,0 +1,21 @@
+<?php
+declare(strict_types=1);
+$fail=0;$ok=function(bool$c,string$m)use(&$fail){echo($c?'PASS':'FAIL')." - $m\n";if(!$c)$fail++;};
+$controller=file_get_contents(__DIR__.'/../includes/Tasks/TaskApiController.php');
+$app=file_get_contents(__DIR__.'/../includes/Tasks/TaskApplicationService.php');
+$service=file_get_contents(__DIR__.'/../includes/Tasks/TaskStepApprovalService.php');
+$executor=file_get_contents(__DIR__.'/../includes/Tasks/ControlTaskStepExecutors.php');
+$queue=file_get_contents(__DIR__.'/../includes/Tasks/TaskQueueRepository.php');
+$ok(str_contains($executor,'TaskStepExecutionResult::waiting('),'approval pausa la ejecución');
+$ok(str_contains($queue,"waiting_user" )&&str_contains($queue,"status='waiting'"),'pausa persiste Task, Step y Execution y libera lease');
+$ok(str_contains($controller,"action==='approve_step'")&&str_contains($controller,"action==='reject_step'"),'API publica ambas decisiones');
+$ok(strpos($controller,'CsrfGuard::assertSessionToken')<strpos($controller,"action==='approve_step'"),'CSRF precede la decisión');
+$ok(str_contains($service,'public_id=? AND user_id_=?'),'ownership y public_id son autoridad');
+$ok(str_contains($service,'step_key=?')&&!str_contains($app,"['step_id']"),'step_key, no id interno, identifica el step');
+$ok(str_contains($service,'step_concurrency_conflict')&&str_contains($service,"lock_version']!=="),'locking obsoleto se rechaza');
+$ok(str_contains($service,"actor_user_id_")&&str_contains($service,"'user'"),'actor humano queda registrado');
+$ok(str_contains($service,"\$stepTo=\$approved?'completed':'cancelled'"),'approve completa y reject cancela el approval');
+$ok(str_contains($service,"status='ready'")&&str_contains($service,'current_step_id_'),'siguiente step y current_step progresan');
+$ok(str_contains($service,"\$taskTo='ready'")&&str_contains($service,'execution_mode'),'async queda listo y sync informa continuación');
+$ok(str_contains($service,"status='waiting_user' AND lock_version=?"),'doble approve queda protegido');
+exit($fail?1:0);

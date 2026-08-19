@@ -250,3 +250,29 @@ procedural, los adapters de escritura `str_replace`/`code_edit` y la finalizaci�
 compartida completa (Memory/RAG/TokenUsage/Activity) aún no están extraídos. Por esa
 razón la arquitectura convergente documentada arriba describe la frontera creada,
 no una migración HTTP ya terminada, y 8.7 no debe comenzar todavía.
+# Estado de cierre 8.6D
+
+La pausa temporal de `wait` de 8.6C se conserva sin rediseño. La API incorpora
+decisiones genéricas `approve_step` y `reject_step`: usa `public_id`, `step_key`,
+CSRF, ownership y `lock_version`; la aprobación completa el step y prepara el
+siguiente, mientras el rechazo cancela el step y la Task.
+
+La convergencia completa del runtime de chat y los adapters productivos de
+escritura siguen pendientes; por tanto este documento no declara cerrada 8.6D.
+En particular, `ToolCalls` no tiene `trace_id` ni FK directa a
+`TaskExecution`; hasta una fase posterior, el detalle de traza se apoya en
+`ChatActivityEvents` sin modificar el esquema.
+
+Arquitectura objetivo todavía en integración:
+
+```text
+HTTP Task ─────┐
+               ↓
+TaskStepExecutionService
+               ↓
+ChatExecutionService
+               ↓
+Shared Runtime
+               ↑
+Worker ────────┘
+```
