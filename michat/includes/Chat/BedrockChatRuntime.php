@@ -22,6 +22,8 @@ final class BedrockChatRuntime implements ChatRuntimeInterface
             'inferenceConfig'=>['temperature'=>$request->temperature,'maxTokens'=>$request->maxTokens,'topP'=>$request->topP],
         ];
         $instruction = trim((string)($config['system_instruction'] ?? ''));
+        $preparedContext=trim((string)($request->taskContext['prepared_context']['system_context']??''));
+        if($preparedContext!=='')$instruction=trim($instruction."\n\n".$preparedContext);
         if ($instruction !== '') $params['system'] = [['text'=>$instruction]];
         $bedrock = Config::getBedrockRuntime();
         $usage = ['prompt_tokens'=>0,'completion_tokens'=>0,'total_tokens'=>0];
@@ -35,7 +37,7 @@ final class BedrockChatRuntime implements ChatRuntimeInterface
             $text=''; $uses=[];
             foreach ($blocks as $block) { if(isset($block['text']))$text.=$block['text']; elseif(isset($block['toolUse']))$uses[]=$block['toolUse']; }
             if (($response['stopReason'] ?? '') !== 'tool_use' || !$uses) {
-                return new ChatExecutionResult(trim($text), null, $model, $request->traceId, $usage);
+                return new ChatExecutionResult(trim($text),null,$model,$request->traceId,$usage,[],[],[],(string)($response['stopReason']??''),null);
             }
             $params['messages'][] = $response['output']['message']; $results=[];
             foreach ($uses as $use) {

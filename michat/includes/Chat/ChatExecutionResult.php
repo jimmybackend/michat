@@ -11,6 +11,8 @@ final class ChatExecutionResult
         public readonly array $tokenUsage = [],
         public readonly array $tools = [],
         public readonly array $artifacts = [],
-        public readonly array $warnings = []
+        public readonly array $warnings = [],
+        public readonly ?string $stopReason = null,
+        public readonly ?int $latencyMs = null
     ) {}
 }
