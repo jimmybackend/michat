@@ -1,0 +1,32 @@
+<?php
+header('Content-Type: application/json; charset=utf-8');
+if(session_status()===PHP_SESSION_NONE)session_start();
+require_once __DIR__.'/app_bootstrap.php';
+$aiHelper=__DIR__.'/includes/ai_agent_runtime.php';
+if(is_file($aiHelper)) require_once $aiHelper;
+function jexit($a,$c=200):void{http_response_code($c);echo json_encode($a,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);exit;}
+function uid_list():int{foreach(['user_id_','user_id','id_usuario','id_user','id']as$k)if(isset($_SESSION[$k])&&ctype_digit((string)$_SESSION[$k]))return(int)$_SESSION[$k];return 0;}
+function admin_list(string$r):bool{return in_array(strtolower(trim($r)),['administración','soporte','admin','administrator','support'],true);}
+function key_list(array$f):string{$ruta=rtrim(str_replace('\\','/',trim((string)$f['Ruta'])),'/').'/';$enc=ltrim(str_replace('\\','/',trim((string)$f['Encriptado'])),'/');if($enc==='')return'';return strpos($enc,$ruta)===0?$enc:$ruta.$enc;}
+$sessionId=(int)($_GET['session_id']??$_POST['session_id']??0);if($sessionId<=0)jexit(['ok'=>false,'error'=>'session_id inválido'],400);
+$userId=uid_list();if($userId<=0)jexit(['ok'=>false,'error'=>'Sesión inválida'],401);
+$s=$db_connection->prepare("SELECT id_,user_id_,title FROM ChatSessions WHERE id_=? LIMIT 1");$s->bind_param('i',$sessionId);$s->execute();$session=$s->get_result()->fetch_assoc();$s->close();if(!$session)jexit(['ok'=>false,'error'=>'Sesión no encontrada'],404);
+$owner=(int)$session['user_id_'];if($owner!==$userId&&!admin_list((string)($_SESSION['role']??$_SESSION['rol']??'')))jexit(['ok'=>false,'error'=>'No tienes permisos para ver archivos de esta sesión'],403);
+$currentEmbeddingModel='';$embeddingActive=false;
+if(function_exists('aiRuntimeLoad')){try{aiRuntimeLoad($db_connection,$owner);$embeddingActive=aiAgentActive('embedding_main',false);$currentEmbeddingModel=$embeddingActive?aiAgentModel('embedding_main',''):'';}catch(Throwable$e){error_log('chat2_session_files aiRuntime: '.$e->getMessage());}}
+
+// Ruta independiente de la fecha de creación de la sesión: % cubre YYYY/MM/DD.
+$pattern='Data/Chat/Uploads/'.$owner.'/%/'.$sessionId.'/';
+$s=$db_connection->prepare("SELECT id_,Nombre,Encriptado,Tamano,Metadatos,Ruta,Found,AccessType,Fecha,user_id_ FROM FileS3 WHERE user_id_=? AND Ruta LIKE ? AND Found=1 ORDER BY Fecha DESC,id_ DESC");
+$s->bind_param('is',$owner,$pattern);$s->execute();$r=$s->get_result();$files=[];$byId=[];$byKey=[];
+while($f=$r->fetch_assoc()){$key=key_list($f);$id=(int)$f['id_'];$item=['id'=>$id,'files3_id'=>$id,'filename'=>(string)$f['Nombre'],'s3_key'=>$key,'size_bytes'=>(int)$f['Tamano'],'metadata'=>json_decode((string)$f['Metadatos'],true)?:$f['Metadatos'],'ruta'=>(string)$f['Ruta'],'found'=>(int)$f['Found'],'access_type'=>(string)$f['AccessType'],'created_at'=>(string)$f['Fecha'],'user_id'=>(int)$f['user_id_'],'chunks_total'=>0,'chunks_with_embedding'=>0,'chunks_pending'=>0,'semantic_exists'=>false,'semantic_embedding_ready'=>false,'semantic_model'=>null,'embedding_models'=>[],'index_status'=>'uploaded'];$files[$id]=$item;$byId[$id]=$id;if($key!=='')$byKey[$key]=$id;}$s->close();
+
+if($files){
+ $q=$db_connection->prepare("SELECT id_,block_type,s3_path,source_ids,embedding_json,embedding_model FROM SessionContextBlocks WHERE session_id_=? AND block_type IN ('file','file_chunk') ORDER BY id_ ASC");$q->bind_param('i',$sessionId);$q->execute();$rr=$q->get_result();
+ while($b=$rr->fetch_assoc()){$meta=json_decode((string)($b['source_ids']??''),true);$fid=(int)($meta['files3_id']??0);if(!$fid&&isset($byKey[(string)$b['s3_path']]))$fid=$byKey[(string)$b['s3_path']];if(!$fid||!isset($files[$fid]))continue;$has=!empty($b['embedding_json']);$model=trim((string)($b['embedding_model']??''));if($model!=='')$files[$fid]['embedding_models'][$model]=true;$currentReady=$has&&$embeddingActive&&$currentEmbeddingModel!==''&&$model===$currentEmbeddingModel;if($b['block_type']==='file_chunk'){$files[$fid]['chunks_total']++;if($currentReady)$files[$fid]['chunks_with_embedding']++;}else{$files[$fid]['semantic_exists']=true;$files[$fid]['semantic_embedding_ready']=$currentReady;$files[$fid]['semantic_model']=$meta['semantic_model']??null;}}
+ $q->close();
+ $jq=$db_connection->prepare("SELECT ej.target_id,ej.status FROM EmbeddingJobs ej JOIN SessionContextBlocks scb ON scb.id_=ej.target_id WHERE ej.target_type='session_block' AND scb.session_id_=? AND scb.block_type IN ('file','file_chunk') AND ej.status IN ('pending','processing')");if($jq){$jq->bind_param('i',$sessionId);$jq->execute();$jr=$jq->get_result();$pendingIds=[];while($x=$jr->fetch_assoc())$pendingIds[(int)$x['target_id']]=true;$jq->close();if($pendingIds){$qq=$db_connection->prepare("SELECT id_,s3_path,source_ids FROM SessionContextBlocks WHERE session_id_=? AND block_type IN ('file','file_chunk')");$qq->bind_param('i',$sessionId);$qq->execute();$qr=$qq->get_result();while($b=$qr->fetch_assoc()){if(!isset($pendingIds[(int)$b['id_']]))continue;$meta=json_decode((string)$b['source_ids'],true);$fid=(int)($meta['files3_id']??0);if(!$fid&&isset($byKey[(string)$b['s3_path']]))$fid=$byKey[(string)$b['s3_path']];if($fid&&isset($files[$fid]))$files[$fid]['chunks_pending']++;}$qq->close();}}
+}
+foreach($files as &$f){$f['embedding_models']=array_keys($f['embedding_models']);$hasOtherModel=$currentEmbeddingModel!==''&&count($f['embedding_models'])>0&&!in_array($currentEmbeddingModel,$f['embedding_models'],true);if($f['chunks_total']>0&&!$embeddingActive)$f['index_status']='embedding_disabled';elseif($f['chunks_pending']>0)$f['index_status']='processing';elseif($f['chunks_total']>0&&$f['chunks_with_embedding']===$f['chunks_total'])$f['index_status']='indexed';elseif($f['chunks_total']>0&&$hasOtherModel)$f['index_status']='stale_embedding';elseif($f['chunks_total']>0)$f['index_status']='chunks_without_embedding';if($f['semantic_exists']&&!$embeddingActive)$f['semantic_status']='embedding_disabled';elseif($f['semantic_exists']&&$f['semantic_embedding_ready'])$f['semantic_status']='ready';elseif($f['semantic_exists']&&$hasOtherModel)$f['semantic_status']='stale_embedding';elseif($f['semantic_exists'])$f['semantic_status']='pending_embedding';else$f['semantic_status']='none';}unset($f);
+$_SESSION['chat_session_id']=$sessionId;
+jexit(['ok'=>true,'session_id'=>$sessionId,'prefix_pattern'=>$pattern,'embedding_active'=>$embeddingActive,'current_embedding_model'=>$currentEmbeddingModel?:null,'count'=>count($files),'files'=>array_values($files)]);
