@@ -60,11 +60,7 @@ try{
     if($system===''||$tpl==='') throw new RuntimeException('attachment_semantic_prompt no tiene system_instruction/user_prompt_template');
     $prompt=aiRenderTemplate($tpl,['filename'=>(string)$file['Nombre'],'content'=>mb_substr($content,0,$maxChars)]);
 
-    $region=(class_exists('Config')&&defined('Config::REGION')&&Config::REGION)?Config::REGION:'us-east-1';
-    $ak=getenv('AWS_ACCESS_KEY_ID')?: (defined('Config::ACCESS_KEY')?Config::ACCESS_KEY:'');
-    $sk=getenv('AWS_SECRET_ACCESS_KEY')?: (defined('Config::SECRET_KEY')?Config::SECRET_KEY:'');
-    if(!$ak||!$sk)throw new RuntimeException('Faltan credenciales AWS');
-    $bedrock=new Aws\BedrockRuntime\BedrockRuntimeClient(['region'=>$region,'version'=>'latest','credentials'=>['key'=>$ak,'secret'=>$sk],'http'=>['connect_timeout'=>10,'timeout'=>120]]);
+    $bedrock=Config::getBedrockRuntime(['http'=>['connect_timeout'=>10,'timeout'=>120]]);
     $infer=[
         'maxTokens'=>max(100,(int)aiAgentExtra('attachment_semantic_prompt','max_tokens',800)),
         'temperature'=>(float)aiAgentExtra('attachment_semantic_prompt','temperature',aiAgentValue($agentKey,'temperature',0.2)),

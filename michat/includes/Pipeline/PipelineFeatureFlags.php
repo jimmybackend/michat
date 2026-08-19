@@ -24,6 +24,7 @@ final class PipelineFeatureFlags
         'memory_backfill' => true,
         'project_tools' => true,
         'memory_writer' => true,
+        'task_orchestrator' => false,
     ];
 
     private mysqli $db;

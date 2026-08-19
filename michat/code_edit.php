@@ -1192,18 +1192,7 @@ codeActivityEmit($db_connection, 'edit', 'version_draft_created', 'completed', '
 
 // ===== 10. Crear cliente Bedrock =====
 try {
-    // ✅ CORRECCIÓN: defined('Config::REGION') nunca detecta constantes de clase,
-    // solo constantes globales. Se usa class_exists() + comprobación directa.
-    $region = getenv('AWS_REGION') ?: ((class_exists('Config') && Config::REGION) ? Config::REGION : 'us-east-1');
-    $ak = getenv('AWS_ACCESS_KEY_ID') ?: ((class_exists('Config') && Config::ACCESS_KEY) ? Config::ACCESS_KEY : '');
-    $sk = getenv('AWS_SECRET_ACCESS_KEY') ?: ((class_exists('Config') && Config::SECRET_KEY) ? Config::SECRET_KEY : '');
-
-    $bedrock = new Aws\BedrockRuntime\BedrockRuntimeClient([
-        'region'      => $region,
-        'version'     => 'latest',
-        'credentials' => ['key' => $ak, 'secret' => $sk],
-        'http'        => ['connect_timeout' => 20, 'timeout' => 120],
-    ]);
+    $bedrock = Config::getBedrockRuntime(['http' => ['connect_timeout' => 20, 'timeout' => 120]]);
 } catch (Throwable $e) {
     jexit(['ok' => false, 'error' => 'No se pudo inicializar el cliente Bedrock: ' . $e->getMessage()], 500);
 }

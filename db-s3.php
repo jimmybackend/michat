@@ -1,12 +1,5 @@
 <?php
-$servidor  = "localhost";
-$usuario   = "user_admin";
-$clave     = "password";
-$basedatos = "db-del-chat";
-
-$db_connection = mysqli_connect($servidor, $usuario, $clave, $basedatos) or die(mysqli_error($db_connection));
-
-if (!$db_connection) {
-    die('No se ha podido conectar a la base de datos: ' . mysqli_connect_error());
-}
-?>
+declare(strict_types=1);
+$required=['DB_HOST','DB_USER','DB_PASSWORD','DB_NAME'];$missing=[];foreach($required as$n)if(getenv($n)===false||trim((string)getenv($n))==='')$missing[]=$n;if($missing)throw new RuntimeException('Falta configuración esencial de base de datos: '.implode(', ',$missing));
+$port=filter_var((string)(getenv('DB_PORT')?:'3306'),FILTER_VALIDATE_INT,['options'=>['min_range'=>1,'max_range'=>65535]]);if($port===false)throw new RuntimeException('DB_PORT no es válido.');
+$db_connection=mysqli_init();if(!$db_connection)throw new RuntimeException('No se pudo inicializar mysqli.');mysqli_options($db_connection,MYSQLI_OPT_CONNECT_TIMEOUT,10);if(!@mysqli_real_connect($db_connection,(string)getenv('DB_HOST'),(string)getenv('DB_USER'),(string)getenv('DB_PASSWORD'),(string)getenv('DB_NAME'),$port))throw new RuntimeException('No se pudo conectar a la base de datos.');if(!mysqli_set_charset($db_connection,'utf8mb4'))throw new RuntimeException('No se pudo configurar utf8mb4.');

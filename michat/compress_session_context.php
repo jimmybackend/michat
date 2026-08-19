@@ -28,9 +28,8 @@
  *
  * Uso:
  *  - Cron: * * * * * php compress_session_context.php --secret=TU_SECRET
- *  - Web: compress_session_context.php?key=TU_SECRET&session_id=123
+ *  - Web autenticada: POST compress_session_context.php con X-CSRF-Token
  */
-define('COMPRESSION_SECRET', 'Z1!xC6@vB3#nM8$kL4*jH9^gF2&dS7');
 define('MAX_SESSIONS_PER_RUN', 10);
 define('RECENT_WINDOW', 5); // Últimos N level_0 quedan desbloqueados
 define('LEVEL0_BATCH_SIZE', 5); // Consolidar solo grupos completos de 5 Q&A
@@ -48,23 +47,12 @@ $isCli = (php_sapi_name() === 'cli');
 
 if (!$isCli) {
     header('Content-Type: application/json; charset=utf-8');
-    $secret = isset($_GET['key']) ? trim($_GET['key']) : '';
     $specificSessionId = isset($_GET['session_id']) ? (int)$_GET['session_id'] : 0;
+    try { require_once __DIR__.'/includes/Security/MaintenanceAccess.php'; MaintenanceAccess::authorizeWeb(); } catch (Throwable $e) { http_response_code(403); echo json_encode(['ok'=>false,'error'=>$e->getMessage()]); exit; }
 } else {
     $opts = getopt('', ['secret:', 'session_id:']);
-    $secret = isset($opts['secret']) ? trim($opts['secret']) : '';
     $specificSessionId = isset($opts['session_id']) ? (int)$opts['session_id'] : 0;
-}
-
-if ($secret !== COMPRESSION_SECRET) {
-    if ($isCli) {
-        fwrite(STDERR, "Error: clave inválida\n");
-        exit(1);
-    } else {
-        http_response_code(403);
-        echo json_encode(['ok' => false, 'error' => 'Clave inválida']);
-        exit;
-    }
+    try { require_once __DIR__.'/includes/Security/MaintenanceAccess.php'; MaintenanceAccess::authorizeCli($opts); } catch (Throwable $e) { fwrite(STDERR,"Error: clave inválida\n"); exit(1); }
 }
 
 $results = [
@@ -144,15 +132,7 @@ if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
 
 // ===== Inicializar Bedrock =====
 try {
-    $region = (class_exists('Config') && defined('Config::REGION') && Config::REGION) ? Config::REGION : 'us-east-1';
-    $ak = getenv('AWS_ACCESS_KEY_ID') ?: (defined('Config::ACCESS_KEY') ? Config::ACCESS_KEY : '');
-    $sk = getenv('AWS_SECRET_ACCESS_KEY') ?: (defined('Config::SECRET_KEY') ? Config::SECRET_KEY : '');
-    if (empty($ak) || empty($sk)) throw new RuntimeException('Faltan credenciales AWS');
-    
-    $bedrock = new Aws\BedrockRuntime\BedrockRuntimeClient([
-        'region'      => $region,
-        'version'     => 'latest',
-        'credentials' => ['key' => $ak, 'secret' => $sk],
+    $bedrock = Config::getBedrockRuntime([
         'http'        => ['connect_timeout' => 20, 'timeout' => 120],
     ]);
 } catch (Throwable $e) {

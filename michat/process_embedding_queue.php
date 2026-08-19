@@ -16,14 +16,13 @@
  *  - La compresión jerárquica posterior vive en compress_session_context.php.
  * 
  * Uso:
- *  - Desde navegador: process_embedding_queue.php?batch=10&key=TU_SECRET
+ *  - Desde navegador autenticado: POST process_embedding_queue.php?batch=10 con X-CSRF-Token
  *  - Desde cron: php process_embedding_queue.php --batch=10 --secret=TU_SECRET
  * 
  * Compatible con PHP 7.x+
  */
 
 // ===== Configuración =====
-define('EMBEDDING_SECRET', 'Z1!xC6@vB3#nM8$kL4*jH9^gF2&dS7');
 define('DEFAULT_BATCH_SIZE', 10);
 define('MAX_EXECUTION_TIME', 300); // 5 minutos máximo
 define('SESSION_RECENT_WINDOW', 5); // Debe coincidir con compress_session_context.php
@@ -50,19 +49,17 @@ $isCli = (php_sapi_name() === 'cli');
 if (!$isCli) {
     header('Content-Type: application/json; charset=utf-8');
     
-    $secret = isset($_GET['key']) ? trim($_GET['key']) : '';
-    if ($secret !== EMBEDDING_SECRET) {
+    try { require_once __DIR__.'/includes/Security/MaintenanceAccess.php'; MaintenanceAccess::authorizeWeb(); } catch (Throwable $e) {
         http_response_code(403);
-        echo json_encode(['ok' => false, 'error' => 'Clave inválida']);
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
         exit;
     }
     
     $batchSize = isset($_GET['batch']) ? max(1, min(50, (int)$_GET['batch'])) : DEFAULT_BATCH_SIZE;
 } else {
     $opts = getopt('', ['batch:', 'secret:']);
-    $secret = isset($opts['secret']) ? trim($opts['secret']) : '';
-    if ($secret !== EMBEDDING_SECRET) {
-        fwrite(STDERR, "Error: clave inválida. Usa --secret=TU_SECRET\n");
+    try { require_once __DIR__.'/includes/Security/MaintenanceAccess.php'; MaintenanceAccess::authorizeCli($opts); } catch (Throwable $e) {
+        fwrite(STDERR, "Error: clave inválida\n");
         exit(1);
     }
     $batchSize = isset($opts['batch']) ? max(1, min(50, (int)$opts['batch'])) : DEFAULT_BATCH_SIZE;
@@ -158,19 +155,7 @@ if (!flock($lockFp, LOCK_EX | LOCK_NB)) {
 
 // ===== Inicializar cliente Bedrock =====
 try {
-    $region = (class_exists('Config') && defined('Config::REGION') && Config::REGION) ? Config::REGION : 'us-east-1';
-    
-    $ak = getenv('AWS_ACCESS_KEY_ID') ?: (defined('Config::ACCESS_KEY') ? Config::ACCESS_KEY : '');
-    $sk = getenv('AWS_SECRET_ACCESS_KEY') ?: (defined('Config::SECRET_KEY') ? Config::SECRET_KEY : '');
-    
-    if (empty($ak) || empty($sk)) {
-        throw new RuntimeException('Faltan credenciales AWS');
-    }
-    
-    $bedrock = new Aws\BedrockRuntime\BedrockRuntimeClient([
-        'region'      => $region,
-        'version'     => 'latest',
-        'credentials' => ['key' => $ak, 'secret' => $sk],
+    $bedrock = Config::getBedrockRuntime([
         'http'        => ['connect_timeout' => 10, 'timeout' => 60],
     ]);
 } catch (Throwable $e) {

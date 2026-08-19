@@ -198,9 +198,7 @@ try {
         if ($query === '') throw new Exception('Falta query');
 
         // 1. Obtener embedding de la query
-        $region = defined('Config::REGION') ? Config::REGION : 'us-east-1';
-        $creds = ['key' => getenv('AWS_ACCESS_KEY_ID') ?: Config::ACCESS_KEY, 'secret' => getenv('AWS_SECRET_ACCESS_KEY') ?: Config::SECRET_KEY];
-        $bedrock = new Aws\BedrockRuntime\BedrockRuntimeClient(['region' => $region, 'version' => 'latest', 'credentials' => $creds]);
+        $bedrock = Config::getBedrockRuntime();
         
         $embedRes = $bedrock->invokeModel([
             'modelId' => 'amazon.titan-embed-text-v2:0',

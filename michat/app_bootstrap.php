@@ -1,9 +1,6 @@
 <?php
 declare(strict_types=1);
 
-// Desactiva IMDS (evita que el SDK intente 169.254.169.254)
-putenv('AWS_EC2_METADATA_DISABLED=true');
-
 /**
  * app_bootstrap.php (dentro de public_html/s3v2)
  * Carga:

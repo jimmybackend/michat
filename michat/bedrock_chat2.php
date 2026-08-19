@@ -1,5 +1,4 @@
 <?php
-putenv('AWS_EC2_METADATA_DISABLED=true'); // <- evita IMDS (169.254.169.254)
 
 // bedrock_chat2.php — Chat directo a Amazon Bedrock (Converse)
 // con soporte de adjuntos, OCR (Textract), RAG, Tool Use (Function Calling) y Metacognición (Fase 1)
@@ -140,18 +139,6 @@ function find_file_in_candidates(string $filename, array $bases, array $subfolde
   }
   return null;
 }
-
-function aws_credentials_or_throw(): array {
-  $ak = getenv('AWS_ACCESS_KEY_ID') ?: (defined('Config::ACCESS_KEY') ? Config::ACCESS_KEY : '');
-  $sk = getenv('AWS_SECRET_ACCESS_KEY') ?: (defined('Config::SECRET_KEY') ? Config::SECRET_KEY : '');
-  $ak = is_string($ak) ? trim($ak) : '';
-  $sk = is_string($sk) ? trim($sk) : '';
-  if ($ak === '' || $sk === '') {
-    throw new RuntimeException('Faltan credenciales AWS. Define AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY o Config::ACCESS_KEY/Config::SECRET_KEY.');
-  }
-  return ['key'=>$ak,'secret'=>$sk];
-}
-
 
 // ===== Función para calcular similitud coseno entre dos vectores (MySQL fallback) =====
 function cosineSimilarity(array $vecA, array $vecB): float {
@@ -2162,13 +2149,7 @@ if (!empty($ocrItems) && $have_s3) {
       throw new RuntimeException('AWS Textract no disponible (vendor/autoload.php).');
     }
 
-    $region = (class_exists('Config') && defined('Config::REGION') && Config::REGION) ? Config::REGION : 'us-east-1';
-    $creds  = aws_credentials_or_throw();
-
-    $textract = new Aws\Textract\TextractClient([
-      'region'      => $region,
-      'version'     => 'latest',
-      'credentials' => $creds,
+    $textract = Config::getTextract([
       'http'        => ['connect_timeout' => 15, 'timeout' => 120],
     ]);
 
@@ -2262,13 +2243,7 @@ if ( ($text !== '' || !empty($contextTexts)) && $action === null) {
       throw new RuntimeException('AWS SDK no cargado (vendor/autoload.php).');
     }
 
-    $region = (class_exists('Config') && defined('Config::REGION') && Config::REGION) ? Config::REGION : 'us-east-1';
-    $creds  = aws_credentials_or_throw();
-
-    $bedrock = new Aws\BedrockRuntime\BedrockRuntimeClient([
-      'region'      => $region,
-      'version'     => 'latest',
-      'credentials' => $creds,
+    $bedrock = Config::getBedrockRuntime([
       'http'        => ['connect_timeout' => 20, 'timeout' => 240],
     ]);
 
@@ -2488,10 +2463,7 @@ if ($compilation_id > 0 && isset($_POST['compiled_prompt']) && trim($_POST['comp
         }
         // Fase 6: el compilador tiene su propio cliente, sin reintentos y con
         // timeout corto. El cliente principal conserva sus timeouts largos.
-        $compilerBedrock = new Aws\BedrockRuntime\BedrockRuntimeClient([
-            'region' => $region,
-            'version' => 'latest',
-            'credentials' => $creds,
+        $compilerBedrock = Config::getBedrockRuntime([
             'retries' => 0,
             'http' => [
                 'connect_timeout' => $compilerConnectTimeoutSeconds,

@@ -16,8 +16,6 @@
  * Repite el comando hasta que created=0.
  */
 
-define('QUESTION_MEMORY_BACKFILL_SECRET', 'Z1!xC6@vB3#nM8$kL4*jH9^gF2&dS7');
-
 if (php_sapi_name() !== 'cli') {
     http_response_code(403);
     exit("Solo CLI\n");
@@ -27,7 +25,8 @@ $opts = getopt('', ['secret:', 'batch:']);
 $secret = trim((string)($opts['secret'] ?? ''));
 $batch = max(1, min(1000, (int)($opts['batch'] ?? 200)));
 
-if (!hash_equals(QUESTION_MEMORY_BACKFILL_SECRET, $secret)) {
+require_once __DIR__.'/includes/Security/MaintenanceAccess.php';
+try { MaintenanceAccess::authorizeCli($opts); } catch (Throwable $e) {
     fwrite(STDERR, "Clave inválida\n");
     exit(1);
 }
