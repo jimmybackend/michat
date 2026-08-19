@@ -58,7 +58,7 @@ if (!$db instanceof mysqli) {
 $excluir = ['Users', 'TokenUsage', 'FileS3', 'S3Folders', 'Projects', 'UserAIAgentConfigs', 'UserPreferences', 'UserProceduralMemory', 'UserPipelineFeatures'];
 
 $tablas = ['AccessControl', 'ChatMessages', 'ChatSessions', 'ChunkEmbeddings', 'EmbeddingJobs', 'FileVersions', 'LintAttempts', 'PhaseCache', 'ProjectContext', 'ProjectSources', 'ProjectTestCommands',
-    'PromptCompilations', 'SessionContextBlocks', 'SourceChunks', 'ToolCalls', 'ChatActivityEvents','MemoryWriteEvents'];
+    'PromptCompilations', 'SessionContextBlocks', 'SourceChunks', 'ToolCalls', 'ChatActivityEvents','MemoryWriteEvents','Tasks', 'TaskSteps', 'TaskExecutions', 'TaskDependencies', 'TaskEvents'];
 
 $tablas = array_values(array_filter($tablas, fn($t) => !in_array($t, $excluir, true)));
 
