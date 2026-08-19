@@ -1,0 +1,28 @@
+<?php
+declare(strict_types=1);
+if(PHP_SAPI!=='cli')exit(1);
+require_once __DIR__.'/../includes/Tasks/bootstrap.php';
+$p=0;$f=0;$ok=function(bool$v,string$n)use(&$p,&$f):void{echo($v?'PASS ':'FAIL ').$n."\n";$v?$p++:$f++;};
+$bridge=file_get_contents(__DIR__.'/../includes/Tasks/ChatTaskBridge.php');$chat=file_get_contents(__DIR__.'/../bedrock_chat2.php');
+$key=ChatTaskBridge::idempotencyKey(7,11,str_repeat('client-value-',100));
+$ok(strlen($key)===69&&str_starts_with($key,'chat:'),'request_id se hashea sin truncado inseguro');
+$ok($key===ChatTaskBridge::idempotencyKey(7,11,str_repeat('client-value-',100)),'clave de Task determinista');
+$ok($key!==ChatTaskBridge::idempotencyKey(8,11,str_repeat('client-value-',100)),'usuario autenticado participa en idempotencia');
+$ok(ChatTaskBridge::title("  Pregunta\n con   espacios ")==='Pregunta con espacios','title normaliza espacios');
+$ok(mb_strlen(ChatTaskBridge::title(str_repeat('á',150)))===120&&str_ends_with(ChatTaskBridge::title(str_repeat('á',150)),'…'),'title determinista y acotado');
+$ok(ChatTaskBridge::sanitizeError(new RuntimeException('token=secreto fallo'))==='token=[redacted] fallo','error sensible sanitizado');
+$execution=new TaskExecutionStateMachine();foreach([['queued','running'],['running','completed'],['running','failed'],['running','cancelled'],['queued','cancelled']]as[$a,$b])$ok($execution->canTransition($a,$b),"Execution {$a} → {$b}");
+$ok($execution->transitionsFrom('completed')===[],'Execution completed es terminal');
+$compilePos=strpos($chat,'if ($compile_only) {');$bridgePos=strpos($chat,'$chatTaskBridge = null;');
+$ok($compilePos!==false&&$bridgePos!==false&&$bridgePos>$compilePos,'compile_only sale antes de crear Task');
+$ok(str_contains($chat,"pipelineEffective['task_orchestrator']"),'feature flag protege integración');
+$ok(str_contains($chat,'(int)$saved_user_text_id'),'origin_message usa ChatMessage persistido');
+$ok(str_contains($chat,'$projectId > 0 ? $projectId : null'),'scope real aporta proyecto o NULL');
+$ok(!str_contains($bridge,"POST['user_id']"),'bridge no confía en user_id del cliente');
+$ok(!preg_match('/(?:INSERT INTO|UPDATE)\s+(?:Tasks|TaskEvents|TaskExecutions)/i',$chat),'bedrock_chat2 no contiene SQL de Tasks');
+$ok(str_contains($chat,"'public_id' =>")&&!str_contains(substr($chat,(int)strrpos($chat,"\$out['task']")),'lease_token'),'respuesta pública no expone lease_token');
+$ok(str_contains($chat,'$activityTraceId')&&str_contains($chat,'beginTurn('),'Execution reutiliza el trace real');
+$ok(str_contains($chat,'CHAT_TASK_BRIDGE_BEGIN')&&str_contains($chat,'CHAT_TASK_BRIDGE_FINISH'),'bridge aplica fail-open');
+echo"Resultado: $p passed, $f failed\n";
+echo"SKIP integración MySQL (Task/Step/Execution, duplicados, resultados, eventos y fallos): no hay TASK_TEST_DB_* configurado.\n";
+exit($f?1:0);

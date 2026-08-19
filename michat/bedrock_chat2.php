@@ -2692,6 +2692,42 @@ if ($compile_only) {
     ]);
 }
 
+// Fase 8.3: adaptación pasiva del turno síncrono al dominio Tasks. El bridge
+// encapsula toda la persistencia; si el subsistema nuevo falla, el chat continúa.
+$chatTaskBridge = null;
+$chatTaskContext = null;
+$chatPipelineFailure = null;
+if (!empty($pipelineEffective['task_orchestrator']) && $saved_user_text_id) {
+    try {
+        require_once __DIR__ . '/includes/Tasks/bootstrap.php';
+        if ($activityTraceId === '') {
+            // Este pasa a ser el trace real del pipeline, no un trace paralelo.
+            $activityTraceId = TaskPublicId::generate();
+        }
+        $taskRequestId = $requestFlowId !== '' ? $requestFlowId : ('message-' . (int)$saved_user_text_id);
+        $taskRepository = new TaskRepository($db_connection);
+        $chatTaskBridge = new ChatTaskBridge(new TaskOrchestrator(
+            $db_connection,
+            $taskRepository,
+            new TaskEventRepository($db_connection)
+        ));
+        $chatTaskContext = $chatTaskBridge->beginTurn(
+            $user_id,
+            $session_id,
+            $projectId > 0 ? $projectId : null,
+            (int)$saved_user_text_id,
+            $taskRequestId,
+            $text,
+            $activityTraceId,
+            $model_id
+        );
+    } catch (Throwable $taskError) {
+        error_log('CHAT_TASK_BRIDGE_BEGIN: ' . ChatTaskBridge::sanitizeError($taskError));
+        $chatTaskBridge = null;
+        $chatTaskContext = null;
+    }
+}
+
 // ---------------------------------------------------------
 // 1.7. MODO RESPUESTA FINAL: Usar prompt compilado aprobado
 // ---------------------------------------------------------
@@ -3313,6 +3349,7 @@ if ($activityTraceId !== '') {
     }
 
   } catch (Throwable $e) {
+    $chatPipelineFailure = $e;
     $reply_text = '✔️ Recibido. (No pude contactar Bedrock: '.$e->getMessage().')';
     if ($activityTraceId !== '') {
         activityEmit(
@@ -3480,6 +3517,7 @@ try {
 } catch (Throwable $e) {
     $errors[] = 'Memoria selectiva (guardado Q&A): ' . $e->getMessage();
 }
+
 if ($activityTraceId !== '') {
     activityEmit(
         $db_connection, $activityTraceId, $session_id, $user_id, 'respond',
@@ -3626,6 +3664,20 @@ if (empty($pipelineEffective['memory_writer']) && $activityTraceId !== '') {
     );
 }
 
+// La tarea termina únicamente después de persistir la respuesta y completar las
+// operaciones esenciales existentes. Los fallos del bridge son siempre fail-open.
+if ($chatTaskBridge instanceof ChatTaskBridge && $chatTaskContext instanceof ChatTaskContext) {
+    try {
+        if ($chatPipelineFailure instanceof Throwable) {
+            $chatTaskBridge->failTurn($chatTaskContext, $user_id, $chatPipelineFailure);
+        } else {
+            $chatTaskBridge->completeTurn($chatTaskContext, $user_id, (int)$assistant_id, (string)$reply_text, $model_id);
+        }
+    } catch (Throwable $taskError) {
+        error_log('CHAT_TASK_BRIDGE_FINISH: ' . ChatTaskBridge::sanitizeError($taskError));
+    }
+}
+
 if ($activityTraceId !== '') {
     activityEmit(
         $db_connection, $activityTraceId, $session_id, $user_id, 'respond',
@@ -3677,4 +3729,10 @@ $out = [
   'ai_runtime'       => aiRuntimeSnapshot()
 ];
 if (!empty($errors)) $out['notes'] = $errors;
+if ($chatTaskContext instanceof ChatTaskContext) {
+    $out['task'] = [
+        'public_id' => $chatTaskContext->publicId,
+        'status' => $chatPipelineFailure instanceof Throwable ? 'failed' : 'completed',
+    ];
+}
 jexit($out);
