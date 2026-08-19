@@ -193,6 +193,7 @@ if (!function_exists('aiRuntimeSnapshot')) {
     {
         $keys = $keys ?? [
             'chat_main',
+            'task_planner',
             'prompt_compiler',
             'embedding_main',
             'smart_memory_general',

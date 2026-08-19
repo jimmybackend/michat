@@ -1,0 +1,15 @@
+<?php
+declare(strict_types=1);
+final class TaskPlanningService {
+ public function __construct(private mysqli$db,private TaskPlanner$planner,private TaskPlanValidator$validator,private TaskStepRepository$steps,private TaskEventRepository$events){}
+ /** Planning is permitted only after authorization and before an execution exists. */
+ public function ensurePlan(array$task,bool$plannerEnabled,bool$authorized):TaskPlan{
+  if(!$authorized)throw new TaskTransitionException('planning_not_authorized');$taskId=(int)$task['id_'];if($this->steps->hasExecutions($taskId))throw new TaskTransitionException('planning_already_executed');
+  $existing=$this->steps->listOwned($taskId,(int)$task['user_id_']);if($existing!==[]&&!($this->isReplaceableRespond($existing)))return$this->fromRows($existing);
+  $fallback=false;try{$plan=$plannerEnabled?$this->planner->plan((string)$task['objective'],['task_public_id'=>$task['public_id']]):TaskPlan::fallback();}catch(Throwable){$plan=TaskPlan::fallback();$fallback=true;}
+  $plan=$this->validator->validate(['steps'=>array_map(fn(TaskPlanStep$s)=>['step_key'=>$s->stepKey,'title'=>$s->title,'description'=>$s->description,'step_type'=>$s->stepType,'agent_key'=>$s->agentKey],$plan->steps())]);
+  $this->db->begin_transaction();try{$this->events->append(['task_id'=>$taskId,'actor_type'=>'system','event_key'=>'planning_started','summary'=>'Planificación iniciada.']);$this->steps->deleteUnexecutedPlaceholder($taskId);$first=null;foreach($plan->steps()as$i=>$step){$row=$this->steps->createPlanned($taskId,$step,$i+1,'ready');$first??=(int)$row['id_'];$this->events->append(['task_id'=>$taskId,'step_id'=>(int)$row['id_'],'actor_type'=>'system','event_key'=>'step_created','to_status'=>'ready','summary'=>'Step del plan creado.']);}$this->events->append(['task_id'=>$taskId,'actor_type'=>'system','event_key'=>$fallback||$plan->isFallback()?'planning_fallback':'planning_completed','summary'=>$fallback||$plan->isFallback()?'Plan fallback persistido.':'Plan persistido.','details'=>['steps_count'=>$plan->count()]]);$this->db->commit();return$plan;}catch(Throwable$e){$this->db->rollback();throw$e;}
+ }
+ private function isReplaceableRespond(array$rows):bool{return count($rows)===1&&$rows[0]['step_key']==='respond'&&!in_array($rows[0]['status'],['running','completed','failed'],true);}
+ private function fromRows(array$rows):TaskPlan{return new TaskPlan(array_map(fn($r)=>new TaskPlanStep($r['step_key'],$r['title'],(string)($r['description']??''),$r['step_type'],(string)($r['agent_key']??'chat_main')),$rows));}
+}

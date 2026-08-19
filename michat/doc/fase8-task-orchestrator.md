@@ -89,3 +89,27 @@ El chat legacy permanece intacto con el orchestrator apagado. En auto ON se
 conserva el fail-open pasivo. En auto OFF se responde con error controlado si
 falla Tasks: un fallo técnico nunca se convierte en permiso implícito ni inicia
 Bedrock, Tools o el pipeline principal.
+
+## Fase 8.4 — Task Planner
+
+El flujo autorizado es:
+
+```text
+Task aprobada
+      ↓
+Dependency Check
+      ↓
+Task Planner
+      ↓
+TaskPlan
+      ↓
+TaskSteps
+```
+
+Los flags se interpretan conjuntamente: `task_orchestrator` habilita el dominio, `task_auto_execute` decide si se requiere aprobación inicial y `task_planner` (desactivado por defecto) habilita el plan estructurado. Con `task_auto_execute` OFF, el Planner IA tampoco se ejecuta antes de aprobación humana. Si el Planner está desactivado o falla, se conserva el plan determinista de un Step `respond`.
+
+El resultado IA se trata como entrada no confiable: solo se aceptan entre 1 y 8 Steps, claves únicas con formato seguro, longitudes limitadas y los tipos `plan`, `model`, `tool`, `approval`, `wait`, `validation` y `finalize`. El servidor valida agentes, asigna `position` y persiste el plan completo de forma transaccional. El placeholder `respond` solo se sustituye antes de cualquier ejecución; los planes existentes y los Steps con historial no se replantean.
+
+`TaskDependencies` representa exclusivamente **Task → Task**. `completed` y `terminal_success` requieren que la Task requerida esté `completed` (no existe un estado `success`); `terminal_any` admite `completed`, `failed` o `cancelled`. Solo se admiten dependencias entre Tasks del mismo usuario y del mismo ámbito de proyecto (incluidas dos Tasks sin proyecto), sin autorreferencias, duplicados ni ciclos. Una Task autorizada con requisitos pendientes queda en `waiting_dependency`; la aprobación ya concedida no se repite al liberarse.
+
+El orden entre Steps se representa inicialmente mediante `position`. No existe todavía DAG Step → Step. El Planner es actividad previa de orquestación: no crea `TaskExecution`, no marca Steps como ejecutados y no introduce trazabilidad ni contabilidad de costes paralelas.

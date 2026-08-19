@@ -603,9 +603,9 @@ sin modificar el código fuente.
 
 ---
 
-## Future Task Orchestrator
+## Task Orchestrator
 
-A planned evolution of the platform is a persistent task orchestration layer.
+The platform includes supervised and automatic persistent Tasks, validated multi-step plans, and same-owner Task-to-Task dependencies. Execution remains compatible with the existing chat pipeline while worker-based processing is developed progressively.
 
 The objective is to evolve from:
 
@@ -637,7 +637,7 @@ Memory
 Trace
 ```
 
-This would allow long-running workflows to maintain structured state independently from individual chat messages.
+This allows workflows to preserve structured state independently from individual chat messages; human approval remains authoritative when automatic execution is disabled.
 
 ---
 

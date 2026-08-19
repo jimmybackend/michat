@@ -9,6 +9,14 @@ final class TaskStepRepository
         $s=$this->prepare("INSERT INTO TaskSteps(task_id_,position,step_key,title,step_type,status,agent_key,max_attempts,input_json) VALUES(?,1,'respond','Generar respuesta','model','pending','chat_main',1,?)");
         $s->bind_param('is',$taskId,$json);$this->execute($s);$id=(int)$this->db->insert_id;$s->close();return $this->findById($id)??throw new RuntimeException('step_create_failed');
     }
+    public function createPlanned(int $taskId, TaskPlanStep $step, int $position, string $status='ready'): array
+    {
+        $s=$this->prepare('INSERT INTO TaskSteps(task_id_,position,step_key,title,description,step_type,status,agent_key,max_attempts) VALUES(?,?,?,?,?,?,?,?,1)');
+        $data=$step->persistenceData($position);$s->bind_param('iissssss',$taskId,$data['position'],$data['step_key'],$data['title'],$data['description'],$data['step_type'],$status,$data['agent_key']);$this->execute($s);$id=(int)$this->db->insert_id;$s->close();return $this->findById($id)??throw new RuntimeException('step_create_failed');
+    }
+    public function countByTask(int $taskId):int{$s=$this->prepare('SELECT COUNT(*) c FROM TaskSteps WHERE task_id_=?');$s->bind_param('i',$taskId);$this->execute($s);$n=(int)$s->get_result()->fetch_assoc()['c'];$s->close();return$n;}
+    public function hasExecutions(int $taskId):bool{$s=$this->prepare('SELECT 1 FROM TaskExecutions WHERE task_id_=? LIMIT 1');$s->bind_param('i',$taskId);$this->execute($s);$found=(bool)$s->get_result()->fetch_assoc();$s->close();return$found;}
+    public function deleteUnexecutedPlaceholder(int $taskId):void{$s=$this->prepare("DELETE s FROM TaskSteps s LEFT JOIN TaskExecutions e ON e.step_id_=s.id_ WHERE s.task_id_=? AND s.step_key='respond' AND e.id_ IS NULL");$s->bind_param('i',$taskId);$this->execute($s);$s->close();}
     public function findById(int$id):?array{return $this->one('SELECT * FROM TaskSteps WHERE id_=?','i',[$id]);}
     public function findByKey(int$taskId,string$key):?array{return $this->one('SELECT * FROM TaskSteps WHERE task_id_=? AND step_key=?','is',[$taskId,$key]);}
     public function updateStatus(int$id,string$status,int$lock,array$fields=[]):array
