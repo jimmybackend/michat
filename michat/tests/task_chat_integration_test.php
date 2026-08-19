@@ -21,8 +21,21 @@ $ok(str_contains($chat,'$projectId > 0 ? $projectId : null'),'scope real aporta 
 $ok(!str_contains($bridge,"POST['user_id']"),'bridge no confía en user_id del cliente');
 $ok(!preg_match('/(?:INSERT INTO|UPDATE)\s+(?:Tasks|TaskEvents|TaskExecutions)/i',$chat),'bedrock_chat2 no contiene SQL de Tasks');
 $ok(str_contains($chat,"'public_id' =>")&&!str_contains(substr($chat,(int)strrpos($chat,"\$out['task']")),'lease_token'),'respuesta pública no expone lease_token');
-$ok(str_contains($chat,'$activityTraceId')&&str_contains($chat,'beginTurn('),'Execution reutiliza el trace real');
+$ok(str_contains($chat,'$activityTraceId')&&str_contains($chat,'beginExecution('),'Execution reutiliza el trace real');
 $ok(str_contains($chat,'CHAT_TASK_BRIDGE_BEGIN')&&str_contains($chat,'CHAT_TASK_BRIDGE_FINISH'),'bridge aplica fail-open');
+
+$flags=file_get_contents(__DIR__.'/../includes/Pipeline/PipelineFeatureFlags.php');
+$orchestrator=file_get_contents(__DIR__.'/../includes/Tasks/TaskOrchestrator.php');
+$api=file_get_contents(__DIR__.'/../includes/Tasks/TaskApiController.php');
+$ok(str_contains($flags,"'task_auto_execute' => false"),'task_auto_execute existe y default OFF');
+$ok(str_contains($bridge,'prepareTurn(')&&str_contains($bridge,'beginExecution('),'preparación y ejecución están separadas');
+$ok(str_contains($orchestrator,'$target=$auto?\'ready\':\'waiting_user\''),'Auto OFF prepara waiting_user');
+$ok(strpos($orchestrator,'prepareChatTurn')<strpos($orchestrator,'executions->create'),'prepare no crea Execution');
+$ok(str_contains($chat,"'approval_required'=>true"),'respuesta controlada exige aprobación');
+$ok(str_contains($chat,"'task_supervision_unavailable'"),'fallo supervisado no hace fail-open');
+$ok(str_contains($api,"\$action==='approve'")&&str_contains($api,"\$action==='reject'"),'API expone approve y reject');
+$ok(str_contains($chat,"execute_approved_task")&&str_contains($chat,'resumeApproved('),'Task aprobada reanuda el pipeline común');
+$ok(str_contains($chat,'approvedChatTurn('),'reanudación usa contexto persistido y ownership');
 echo"Resultado: $p passed, $f failed\n";
 echo"SKIP integración MySQL (Task/Step/Execution, duplicados, resultados, eventos y fallos): no hay TASK_TEST_DB_* configurado.\n";
 exit($f?1:0);

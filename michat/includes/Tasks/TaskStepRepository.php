@@ -3,10 +3,11 @@ declare(strict_types=1);
 final class TaskStepRepository
 {
     public function __construct(private mysqli $db) {}
-    public function createRespond(int $taskId): array
+    public function createRespond(int $taskId, array $input = []): array
     {
-        $s=$this->prepare("INSERT INTO TaskSteps(task_id_,position,step_key,title,step_type,status,agent_key,max_attempts) VALUES(?,1,'respond','Generar respuesta','model','pending','chat_main',1)");
-        $s->bind_param('i',$taskId);$this->execute($s);$id=(int)$this->db->insert_id;$s->close();return $this->findById($id)??throw new RuntimeException('step_create_failed');
+        $json=$input ? json_encode($input,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES) : null;
+        $s=$this->prepare("INSERT INTO TaskSteps(task_id_,position,step_key,title,step_type,status,agent_key,max_attempts,input_json) VALUES(?,1,'respond','Generar respuesta','model','pending','chat_main',1,?)");
+        $s->bind_param('is',$taskId,$json);$this->execute($s);$id=(int)$this->db->insert_id;$s->close();return $this->findById($id)??throw new RuntimeException('step_create_failed');
     }
     public function findById(int$id):?array{return $this->one('SELECT * FROM TaskSteps WHERE id_=?','i',[$id]);}
     public function findByKey(int$taskId,string$key):?array{return $this->one('SELECT * FROM TaskSteps WHERE task_id_=? AND step_key=?','is',[$taskId,$key]);}
