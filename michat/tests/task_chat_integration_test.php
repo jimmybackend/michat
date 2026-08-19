@@ -36,6 +36,9 @@ $ok(str_contains($chat,"'task_supervision_unavailable'"),'fallo supervisado no h
 $ok(str_contains($api,"\$action==='approve'")&&str_contains($api,"\$action==='reject'"),'API expone approve y reject');
 $ok(str_contains($chat,"execute_approved_task")&&str_contains($chat,'resumeApproved('),'Task aprobada reanuda el pipeline común');
 $ok(str_contains($chat,'approvedChatTurn('),'reanudación usa contexto persistido y ownership');
+$factory=file_get_contents(__DIR__.'/../includes/Chat/ChatExecutionServiceFactory.php');
+$worker=file_get_contents(__DIR__.'/../bin/task_worker.php');
+$ok(str_contains($factory,'BedrockChatRuntime')&&str_contains($worker,'ChatExecutionServiceFactory'),'Factory concreta disponible para Worker');
 echo"Resultado: $p passed, $f failed\n";
 echo"SKIP integración MySQL (Task/Step/Execution, duplicados, resultados, eventos y fallos): no hay TASK_TEST_DB_* configurado.\n";
 exit($f?1:0);
