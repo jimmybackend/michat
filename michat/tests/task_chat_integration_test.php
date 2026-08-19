@@ -22,7 +22,7 @@ $ok(!str_contains($bridge,"POST['user_id']"),'bridge no confía en user_id del c
 $ok(!preg_match('/(?:INSERT INTO|UPDATE)\s+(?:Tasks|TaskEvents|TaskExecutions)/i',$chat),'bedrock_chat2 no contiene SQL de Tasks');
 $ok(str_contains($chat,"'public_id' =>")&&!str_contains(substr($chat,(int)strrpos($chat,"\$out['task']")),'lease_token'),'respuesta pública no expone lease_token');
 $ok(str_contains($chat,'$activityTraceId')&&str_contains($chat,'beginExecution('),'Execution reutiliza el trace real');
-$ok(str_contains($chat,'CHAT_TASK_BRIDGE_BEGIN')&&str_contains($chat,'CHAT_TASK_BRIDGE_FINISH'),'bridge aplica fail-open');
+$ok(str_contains($chat,'CHAT_TASK_BRIDGE_BEGIN')&&str_contains($chat,"'task_execution_unavailable'"),'fallo Task no cae al pipeline legacy');
 
 $flags=file_get_contents(__DIR__.'/../includes/Pipeline/PipelineFeatureFlags.php');
 $orchestrator=file_get_contents(__DIR__.'/../includes/Tasks/TaskOrchestrator.php');
@@ -32,13 +32,14 @@ $ok(str_contains($bridge,'prepareTurn(')&&str_contains($bridge,'beginExecution('
 $ok(str_contains($orchestrator,'$target=$auto?\'ready\':\'waiting_user\''),'Auto OFF prepara waiting_user');
 $ok(strpos($orchestrator,'prepareChatTurn')<strpos($orchestrator,'executions->create'),'prepare no crea Execution');
 $ok(str_contains($chat,"'approval_required'=>true"),'respuesta controlada exige aprobación');
-$ok(str_contains($chat,"'task_supervision_unavailable'"),'fallo supervisado no hace fail-open');
+$ok(str_contains($chat,"'task_execution_unavailable'"),'fallo supervisado no hace fail-open');
 $ok(str_contains($api,"\$action==='approve'")&&str_contains($api,"\$action==='reject'"),'API expone approve y reject');
 $ok(str_contains($chat,"execute_approved_task")&&str_contains($chat,'resumeApproved('),'Task aprobada reanuda el pipeline común');
 $ok(str_contains($chat,'approvedChatTurn('),'reanudación usa contexto persistido y ownership');
 $factory=file_get_contents(__DIR__.'/../includes/Chat/ChatExecutionServiceFactory.php');
+$stepFactory=file_get_contents(__DIR__.'/../includes/Tasks/TaskStepExecutionServiceFactory.php');
 $worker=file_get_contents(__DIR__.'/../bin/task_worker.php');
-$ok(str_contains($factory,'BedrockChatRuntime')&&str_contains($worker,'ChatExecutionServiceFactory'),'Factory concreta disponible para Worker');
+$ok(str_contains($factory,'BedrockChatRuntime')&&str_contains($stepFactory,'ChatExecutionServiceFactory')&&str_contains($worker,'TaskStepExecutionServiceFactory'),'Factory concreta compartida disponible para HTTP y Worker');
 echo"Resultado: $p passed, $f failed\n";
 echo"SKIP integración MySQL (Task/Step/Execution, duplicados, resultados, eventos y fallos): no hay TASK_TEST_DB_* configurado.\n";
 exit($f?1:0);

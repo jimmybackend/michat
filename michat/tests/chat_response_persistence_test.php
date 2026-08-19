@@ -1,0 +1,24 @@
+<?php
+declare(strict_types=1);
+if(PHP_SAPI!=='cli')exit(1);
+$passed=0;$failed=0;$ok=function(bool$v,string$n)use(&$passed,&$failed):void{echo($v?'PASS ':'FAIL ').$n."\n";$v?$passed++:$failed++;};
+$service=file_get_contents(__DIR__.'/../includes/Chat/ChatResponsePersistenceService.php');
+$chat=file_get_contents(__DIR__.'/../includes/Chat/ChatExecutionService.php');
+$factory=file_get_contents(__DIR__.'/../includes/Chat/ChatExecutionServiceFactory.php');
+$tasks=file_get_contents(__DIR__.'/../includes/Tasks/TaskRepository.php');
+$queue=file_get_contents(__DIR__.'/../includes/Tasks/TaskQueueRepository.php');
+$http=file_get_contents(__DIR__.'/../bedrock_chat2.php');
+$ok(str_contains($service,'INSERT INTO ChatMessages')&&str_contains($service,"\$role='assistant'")&&str_contains($service,"\$type='text'")&&str_contains($service,"\$phase='respond'"),'persiste exactamente el contrato assistant text respond');
+$ok(str_contains($service,'$modelId')&&str_contains($service,'prompt_tokens')&&str_contains($service,'completion_tokens'),'persiste modelo efectivo y tokens disponibles');
+$ok(str_contains($service,'lockOwnedForResponse')&&str_contains($service,"\$task['result_message_id_']")&&str_contains($service,'validAssistantMessage'),'finalización repetida devuelve el mensaje válido existente');
+$ok(substr_count($service,'INSERT INTO ChatMessages')===1&&str_contains($tasks,'assignResultIfEmpty'),'un único INSERT actualiza result_message_id_ por Repository');
+$ok(!preg_match('/\b(?:INSERT|UPDATE|DELETE)\s+Tasks\b/i',$service),'servicio no contiene SQL de Tasks');
+$ok(str_contains($chat,'responses->persist')&&str_contains($factory,'ChatResponsePersistenceService'),'HTTP y Worker comparten el mismo servicio POO');
+$ok(str_contains($http,"'persist_final_response'=>true")&&str_contains($queue,"'persist_final_response'=>"),'sync y async marcan únicamente la respuesta final');
+$ok(str_contains($queue,"origin_type']==='chat'")&&str_contains($queue,"step_key']==='respond'"),'Steps internos no crean ChatMessages assistant');
+$ok(str_contains($chat,'new ChatExecutionResult($result->replyText,$messageId'),'el runtime devuelve el ID real persistido');
+$ok(!preg_match('/\$_(?:POST|GET|SESSION|COOKIE)\b/',$service),'persistencia Worker no depende de superglobals');
+$ok(!str_contains($service,'MemoryWriter')&&!str_contains($service,'SessionContextBlocks')&&!str_contains($service,'EmbeddingJobs'),'no adelanta persistencias de 8.6D.2C');
+echo"Resultado: $passed passed, $failed failed\n";
+echo"SKIP integración MySQL real: no hay TASK_TEST_DB_* configurado.\n";
+exit($failed?1:0);

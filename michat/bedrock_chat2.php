@@ -1704,6 +1704,7 @@ $pipelineEffective['attachment_rag'] = !empty($pipelineConfigured['attachment_ra
 // Una aprobación se reanuda exclusivamente desde referencias persistidas y ownership.
 $executeApprovedTask = isset($_POST['action']) && $_POST['action'] === 'execute_approved_task';
 $approvedTaskPublicId = trim((string)($_POST['task_public_id'] ?? ''));
+$approvedOriginMessageId = null;
 if ($executeApprovedTask) {
     require_once __DIR__ . '/includes/Tasks/bootstrap.php';
     if (empty($pipelineEffective['task_orchestrator']) || !TaskPublicId::isValid($approvedTaskPublicId)) {
@@ -1712,6 +1713,7 @@ if ($executeApprovedTask) {
     $approvedData = (new TaskRepository($db_connection))->approvedChatTurn($approvedTaskPublicId,$user_id);
     if (!$approvedData || (int)$approvedData['session_id_'] !== $session_id) jexit(['ok'=>false,'error'=>'task_not_found'],404);
     if ($approvedData['task_status'] !== 'ready' || $approvedData['step_status'] !== 'ready') jexit(['ok'=>false,'error'=>'task_not_ready'],409);
+    $approvedOriginMessageId = (int)$approvedData['origin_message_id_'];
     $savedInput = json_decode((string)($approvedData['input_json'] ?? ''),true);
     if (!is_array($savedInput)) $savedInput=[];
     $_POST['text']=(string)$approvedData['original_text'];
@@ -1982,7 +1984,7 @@ if (isset($_POST['use_rag'])) {
 // Si el usuario aprobó un prompt compilado (Fase 2), el mensaje de usuario
 // ya se guardó en la Fase 1. Necesitamos ese ID para SessionContextBlocks.
 // ========================================================================
-$saved_user_text_id = null;
+$saved_user_text_id = $approvedOriginMessageId;
 if ($compilation_id > 0) {
     $stmtCompMsg = $db_connection->prepare("SELECT user_msg_id FROM PromptCompilations WHERE id_ = ? LIMIT 1");
     if ($stmtCompMsg) {
@@ -2713,8 +2715,7 @@ if ($compile_only) {
     ]);
 }
 
-// Fase 8.3: adaptación pasiva del turno síncrono al dominio Tasks. El bridge
-// encapsula toda la persistencia; si el subsistema nuevo falla, el chat continúa.
+// Fase 8.6D.1: las Tasks síncronas salen por el mismo servicio de Steps que el Worker.
 $chatTaskBridge = null;
 $chatTaskContext = null;
 $chatPipelineFailure = null;
@@ -2758,11 +2759,39 @@ if (!empty($pipelineEffective['task_orchestrator']) && $saved_user_text_id) {
         }
     } catch (Throwable $taskError) {
         error_log('CHAT_TASK_BRIDGE_BEGIN: ' . ChatTaskBridge::sanitizeError($taskError));
-        if (empty($pipelineEffective['task_auto_execute'])) {
-            jexit(['ok'=>false,'error'=>'task_supervision_unavailable'],503);
+        jexit(['ok'=>false,'error'=>'task_execution_unavailable'],503);
+    }
+
+    // Async queda exclusivamente en manos del Worker. Toda Task HTTP que ya
+    // comenzó una Execution síncrona termina aquí y nunca cae al pipeline legacy.
+    if ($chatTaskContext instanceof ChatTaskContext && (!$taskAsyncExecute || $executeApprovedTask)) {
+        $taskStepContext = [
+            'execution_id'=>$chatTaskContext->executionId,'task_id'=>$chatTaskContext->taskId,
+            'step_id'=>$chatTaskContext->stepId,'step_key'=>'respond','step_type'=>'model','agent_key'=>'chat_main',
+            'origin_type'=>'chat','persist_final_response'=>true,
+            'user_id'=>$user_id,'session_id'=>$session_id,'project_id'=>$projectId > 0 ? $projectId : null,
+            'origin_message_id'=>(int)$saved_user_text_id,'objective'=>$text,
+            'trace_id'=>(string)$chatTaskContext->traceId,'attempt_number'=>1,
+            'input'=>['request_id'=>$taskRequestId,'compilation_id'=>$compilation_id ?: null,
+                'compiled_prompt'=>$compiled_prompt_input !== '' ? $compiled_prompt_input : null,
+                'temperature'=>$temperature,'max_tokens'=>$max_tokens,'top_p'=>$top_p,'model_id'=>$model_id],
+        ];
+        try {
+            $taskStepResult=(new TaskStepExecutionServiceFactory($db_connection))->create()->execute(
+                $taskStepContext, static function():void {}, static fn():bool=>false
+            );
+            if ($taskStepResult->status !== 'completed' || $taskStepResult->messageId === null) {
+                throw new RuntimeException('sync_task_step_did_not_complete');
+            }
+            $chatTaskBridge->completeTurn($chatTaskContext,$user_id,$taskStepResult->messageId,$taskStepResult->summary,$model_id);
+            jexit(['ok'=>true,'trace_id'=>$chatTaskContext->traceId,
+                'saved'=>['user_text_id'=>$saved_user_text_id,'file_ids'=>$file_ids,'assistant_id'=>$taskStepResult->messageId],
+                'reply'=>$taskStepResult->summary,'task'=>['public_id'=>$chatTaskContext->publicId,'status'=>'completed']]);
+        } catch (Throwable $taskError) {
+            $chatTaskBridge->failTurn($chatTaskContext,$user_id,$taskError);
+            error_log('CHAT_TASK_STEP_EXECUTION: '.ChatTaskBridge::sanitizeError($taskError));
+            jexit(['ok'=>false,'error'=>'task_execution_failed'],500);
         }
-        $chatTaskBridge = null;
-        $chatTaskContext = null;
     }
 }
 
