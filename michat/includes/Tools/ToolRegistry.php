@@ -14,6 +14,7 @@ final class ToolRegistry
     }
 
     public function effect(string $key): string { return $this->definition($key)['effect']; }
+    public function keys(): array { return array_keys($this->tools); }
     public function execute(string $key, array $input): ToolExecutionResult
     {
         $result = ($this->definition($key)['handler'])($input);

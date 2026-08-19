@@ -11,7 +11,7 @@ $ok(str_contains($cli,"PHP_SAPI!=='cli'"),'CLI rechaza web');$ok(str_contains($c
 $ok(!preg_match('/\b(?:SELECT|INSERT|UPDATE|DELETE)\b/i',$cli),'CLI no contiene SQL');
 $ok(str_contains($flags,"'task_async_execute' => false"),'async default false');
 $ok(str_contains($repo,"JSON_EXTRACT(s.input_json,'$.execution_mode')")&&str_contains($repo,"='async'"),'legacy y sync no se reclaman');
-foreach(['t.status=\'ready\'','s.status=\'ready\'','scheduled_at','FOR UPDATE SKIP LOCKED']as$needle)$ok(str_contains($repo,$needle),'claim seguro: '.$needle);
+foreach(["t.status IN ('ready','running')","s.status='ready'",'scheduled_at','FOR UPDATE SKIP LOCKED']as$needle)$ok(str_contains($repo,$needle),'claim seguro: '.$needle);
 $ok(str_contains($repo,"WHEN 'urgent' THEN 1")&&str_contains($repo,"WHEN 'high' THEN 2")&&str_contains($repo,"WHEN 'normal' THEN 3"),'prioridad explícita');
 $ok(str_contains($repo,'MAX(attempt_number)'),'attempt real');$ok(str_contains($repo,"status='running'")&&str_contains($repo,'lease_token'),'ownership por lease');
 $ok(str_contains($repo,'heartbeat_at=NOW(6)')&&str_contains($repo,'last_heartbeat_at=NOW(6)'),'heartbeat Task y Execution');
@@ -21,6 +21,8 @@ $ok(str_contains($runner,'assertActive')&&str_contains($runner,'cancel_requested
 $ok(!str_contains($runner,'http://')&&!str_contains($runner,'bedrock_chat2.php'),'runner no usa HTTP');
 $ok(!str_contains($api,'lease_token')&&!str_contains($api,'worker_id'),'API no expone lease/worker');
 $ok(str_contains($chat,'TaskExecutionRunner')||str_contains($runner,'Shared lifecycle boundary'),'HTTP/Worker comparten frontera POO');
-$ok(str_contains($repo,"s.step_key='respond'"),'política conservadora solo respond');
+$ok(!str_contains($repo,"s.step_key='respond'")&&str_contains($repo,'s.position'),'claim avanza por posición sin limitarse a respond');
+$ok(!str_contains($cli,'task_chat_execution'.'_service')&&str_contains($cli,'ChatExecutionServiceFactory'),'Worker compone runtime real sin global');
+$ok(str_contains($cli,'ToolRegistryFactory'),'Worker usa registry de producción compartido');
 $ok(!str_contains($repo,"status='waiting_user'")&&!str_contains($repo,"status='waiting_dependency'"),'supervisión/dependencias no equivalen a ready');
 echo"Resultado: $passed passed, $failed failed\n";echo"SKIP integración MySQL/concurrencia real: no hay TASK_TEST_DB_* configurado.\n";exit($failed?1:0);

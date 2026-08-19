@@ -2,7 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/../includes/Tasks/bootstrap.php';
 $passed=0;$failed=0;$ok=function(bool$v,string$n)use(&$passed,&$failed){echo($v?'PASS ':'FAIL ').$n."\n";$v?$passed++:$failed++;};
-$chat=new ChatExecutionService(static fn(ChatExecutionRequest$r)=>new ChatExecutionResult('real reply',42,$r->model??'configured',$r->traceId));
+$chat=new ChatExecutionService(new CallableChatRuntime(static fn(ChatExecutionRequest$r)=>new ChatExecutionResult('real reply',42,$r->model??'configured',$r->traceId)));
 $tools=new ToolRegistry();$calls=0;
 $tools->register('view',static function(array$i)use(&$calls){$calls++;return new ToolExecutionResult('viewed',[['type'=>'file_version','id'=>7,'relation'=>'read']]);},'read_only');
 $registry=new TaskStepExecutorRegistry();

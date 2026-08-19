@@ -216,3 +216,28 @@ persistencia formal `TaskArtifacts` se implementará en Fase 8.7; no se modifica
 esquema en esta fase. La extracción de todas las tools legacy y el lint ampliado se
 harán incrementalmente: únicamente handlers registrados explícitamente pueden ser
 usados por Steps, y `plan` nunca planifica recursivamente.
+# Fase 8.6B: runtime compartido y progresión
+
+La composición CLI ya no acepta una callable global. `ChatExecutionServiceFactory`
+construye `BedrockChatRuntime` con el cliente central de `Config`, configuración
+dinámica de agentes y el `ToolRegistryFactory` de producción.
+
+```text
+HTTP Adapter ─┐
+              ↓
+       ChatExecutionService
+              ↑
+Worker ───────┘
+```
+
+El Worker reclama el Step `ready` de menor posición, crea una Execution y trace
+por intento, y al completarlo calcula `floor(100 * (completed + skipped) / total)`.
+Si queda otro Step, lo deja `ready`, mantiene la Task `running` y actualiza
+`current_step_id_`; sólo el último limpia `current_step_id_` y completa al 100%.
+
+```text
+Task → Step → Execution → Executor → Progression → Next Step
+```
+
+Los Steps `approval` y `wait` no duermen: liberan el lease y persisten el estado
+de espera. La ampliación de condiciones/checkpoints de espera pertenece a 8.8.
