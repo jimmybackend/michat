@@ -18,7 +18,8 @@ $ok(str_contains($http,"'persist_final_response'=>true")&&str_contains($queue,"'
 $ok(str_contains($queue,"origin_type']==='chat'")&&str_contains($queue,"step_key']==='respond'"),'Steps internos no crean ChatMessages assistant');
 $ok(str_contains($chat,'new ChatExecutionResult($result->replyText,$messageId'),'el runtime devuelve el ID real persistido');
 $ok(!preg_match('/\$_(?:POST|GET|SESSION|COOKIE)\b/',$service),'persistencia Worker no depende de superglobals');
-$ok(!str_contains($service,'MemoryWriter')&&!str_contains($service,'SessionContextBlocks')&&!str_contains($service,'EmbeddingJobs'),'no adelanta persistencias de 8.6D.2C');
+$memory=file_get_contents(__DIR__.'/../includes/Chat/ChatMemoryFinalizationService.php');
+$ok(!str_contains($service,'MemoryWriter')&&str_contains($memory,'MemoryWriter'),'persistencia assistant delega la memoria al finalizador de 8.6D.2C');
 echo"Resultado: $passed passed, $failed failed\n";
 echo"SKIP integración MySQL real: no hay TASK_TEST_DB_* configurado.\n";
 exit($failed?1:0);

@@ -581,7 +581,7 @@ CREATE TABLE IF NOT EXISTS `ToolCalls` (
   `session_id_` int NOT NULL,
   `project_id_` int DEFAULT NULL,
   `message_id_` int DEFAULT NULL,
-  `tool` enum('grep','view','search','str_replace','list_dir','read_chunk','run_shell','create_file','write_file','delete_file','move_file','lint','run_tests','preview_diff','restore_version') NOT NULL,
+  `tool` enum('grep','view','search','str_replace','code_edit','list_dir','read_chunk','run_shell','create_file','write_file','delete_file','move_file','lint','run_tests','preview_diff','restore_version') NOT NULL,
   `params` json NOT NULL,
   `target_path` varchar(1024) DEFAULT NULL COMMENT 'Archivo o prefijo sobre el que operó la herramienta',
   `params_hash` char(64) GENERATED ALWAYS AS (sha2(cast(`params` as char charset utf8mb4),256)) VIRTUAL COMMENT 'Hash de params para detectar llamadas idénticas repetidas',
