@@ -27,10 +27,16 @@ final class ToolRegistryFactory
     }
     private function read(array $input,string $tool):ToolExecutionResult
     {
-        [$project,$a,$c]=$this->scope($input);$data=[];
-        if($tool==='view'){$id=(int)($a['chunk_id']??0);$s=$this->db->prepare('SELECT sc.content,sc.name,sc.start_line,sc.end_line,ps.filename FROM SourceChunks sc JOIN ProjectSources ps ON ps.id_=sc.source_id_ WHERE sc.id_=? AND sc.project_id_=?');$s->bind_param('ii',$id,$project);}
+        [$project,$a,$c]=$this->scope($input);$data=[];$resolvedChunkId=null;$readChunkIds=[];
+        if($tool==='view'){$id=(int)($a['chunk_id']??0);if($id<1)throw new TaskValidationException('tool_argument_invalid');$s=$this->db->prepare('SELECT sc.id_ resolved_chunk_id,sc.content,sc.name,sc.start_line,sc.end_line,ps.filename FROM SourceChunks sc JOIN ProjectSources ps ON ps.id_=sc.source_id_ WHERE sc.id_=? AND sc.project_id_=?');$s->bind_param('ii',$id,$project);}
         else{$term=trim((string)($a[$tool==='grep'?'pattern':'query']??''));if($term==='')throw new TaskValidationException('tool_argument_invalid');$like='%'.$term.'%';$s=$this->db->prepare('SELECT sc.id_ chunk_id,ps.filename,sc.name,LEFT(sc.content,1200) content,sc.start_line,sc.end_line FROM SourceChunks sc JOIN ProjectSources ps ON ps.id_=sc.source_id_ WHERE sc.project_id_=? AND (sc.content LIKE ? OR ps.filename LIKE ?) LIMIT 30');$s->bind_param('iss',$project,$like,$like);}
-        $s->execute();$res=$s->get_result();while($row=$res->fetch_assoc())$data[]=$row;$s->close();return new ToolExecutionResult($tool.' returned '.count($data).' result(s).',[],['results'=>$data]);
+        $s->execute();$res=$s->get_result();while($row=$res->fetch_assoc()){if($tool==='view'){$resolvedChunkId=(int)$row['resolved_chunk_id'];unset($row['resolved_chunk_id']);}else{$readChunkIds[]=(int)$row['chunk_id'];}$data[]=$row;}$s->close();
+        $artifacts=$tool==='view'?($resolvedChunkId===null?[]:[['relation'=>'read','resource_type'=>'source_chunk','resource_id'=>$resolvedChunkId]]):self::chunkArtifacts($readChunkIds);
+        return new ToolExecutionResult($tool.' returned '.count($data).' result(s).',$artifacts,['results'=>$data]);
+    }
+    private static function chunkArtifacts(array$chunkIds):array
+    {
+        $artifacts=[];$seen=[];foreach($chunkIds as$id){$id=(int)$id;if($id<1||isset($seen[$id]))continue;$seen[$id]=true;$artifacts[]=['relation'=>'read','resource_type'=>'source_chunk','resource_id'=>$id];}return$artifacts;
     }
     private function strReplace(array $input):ToolExecutionResult
     {

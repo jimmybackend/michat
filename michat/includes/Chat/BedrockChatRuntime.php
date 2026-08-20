@@ -4,7 +4,7 @@ declare(strict_types=1);
 /** Request-agnostic production runtime. AWS clients come exclusively from Config. */
 final class BedrockChatRuntime implements ChatRuntimeInterface
 {
-    public function __construct(private mysqli $db, private ToolRegistry $tools,private ?TaskCancellationGuard $cancellations=null) {}
+    public function __construct(private mysqli $db, private ToolRegistry $tools,private ?TaskCancellationGuard $cancellations=null,private ?ToolExecutionObserverInterface $toolObserver=null) {}
 
     public function execute(ChatExecutionRequest $request, ?callable $heartbeat = null): ChatExecutionResult
     {
@@ -52,6 +52,7 @@ final class BedrockChatRuntime implements ChatRuntimeInterface
                     'trace_id'=>$request->traceId,'execution_id'=>$request->taskContext['execution_id'] ?? null,'task_id'=>$request->taskContext['task_id']??null,
                 ]];
                 $result=$this->tools->execute((string)($use['name'] ?? ''),$toolInput);
+                $this->toolObserver?->observe($toolInput['context'],$result);
                 $results[]=['toolResult'=>['toolUseId'=>(string)$use['toolUseId'],'content'=>[['text'=>json_encode(['success'=>$result->success,'summary'=>$result->summary,'data'=>$result->data],JSON_UNESCAPED_UNICODE)]]]];
             }
             $params['messages'][]=['role'=>'user','content'=>$results];

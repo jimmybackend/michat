@@ -38,7 +38,8 @@ final class StrReplaceService
                 'index_queued'=>(bool)($index['queued']??false),'index_jobs'=>(int)($index['jobs']??0),
                 'embedding_model'=>$index['model']??null,'needs_indexing'=>empty($index['ok']),
                 'index_error'=>empty($index['ok'])?($index['error']??null):null];
-            return new ToolExecutionResult("str_replace modificó {$data['file']} ({$count} reemplazo(s)).",[],$data);
+            $artifacts=[['relation'=>'modified','resource_type'=>'project_source','resource_id'=>$sourceId]];
+            return new ToolExecutionResult("str_replace modificó {$data['file']} ({$count} reemplazo(s)).",$artifacts,$data);
         }catch(TaskTransitionException $e){throw $e;
         }catch(Throwable $e){
             return new ToolExecutionResult('str_replace rechazado: '.$e->getMessage(),[],['error'=>$e->getMessage()],false,'error');
