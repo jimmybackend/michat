@@ -10,21 +10,21 @@ final class ToolCallRepository
     public function __construct(private mysqli $db) {}
 
     /** @param array<string,mixed> $context @param array<string,mixed> $arguments */
-    public function record(array$context,string$tool,array$arguments,ToolExecutionResult$result,int$durationMs):void
+    public function record(array$context,string$tool,array$arguments,ToolExecutionResult$result,int$durationMs):int
     {
-        $this->persist($context,$tool,$arguments,$result->status,$result->summary,$result->data,$result->artifacts,$durationMs);
+        return $this->persist($context,$tool,$arguments,$result->status,$result->summary,$result->data,$result->artifacts,$durationMs);
     }
 
     /** @param array<string,mixed> $context @param array<string,mixed> $arguments */
-    public function recordError(array$context,string$tool,array$arguments,Throwable$error,int$durationMs):void
+    public function recordError(array$context,string$tool,array$arguments,Throwable$error,int$durationMs):int
     {
         $status=str_contains(strtolower($error->getMessage()),'timeout')?'timeout':'error';
-        $this->persist($context,$tool,$arguments,$status,$error->getMessage(),['error'=>$error->getMessage()],[],$durationMs);
+        return $this->persist($context,$tool,$arguments,$status,$error->getMessage(),['error'=>$error->getMessage()],[],$durationMs);
     }
 
-    private function persist(array$context,string$tool,array$arguments,string$status,string$summary,array$data,array$artifacts,int$durationMs):void
+    private function persist(array$context,string$tool,array$arguments,string$status,string$summary,array$data,array$artifacts,int$durationMs):int
     {
-        if(!in_array($tool,self::TOOLS,true))return;
+        if(!in_array($tool,self::TOOLS,true))throw new TaskValidationException('tool_not_supported');
         $session=(int)($context['session_id']??0);$project=isset($context['project_id'])?(int)$context['project_id']:null;$message=isset($context['message_id'])?(int)$context['message_id']:null;
         if($session<1)throw new TaskValidationException('tool_call_session_invalid');
         if(!in_array($status,self::STATUSES,true))$status=$status==='ok'?'ok':'error';
@@ -33,7 +33,8 @@ final class ToolCallRepository
         $duration=max(0,$durationMs);
         $stmt=$this->db->prepare('INSERT INTO ToolCalls(session_id_,project_id_,message_id_,tool,params,target_path,result,status,duration_ms) VALUES(?,?,?,?,?,?,?,?,?)');
         if(!$stmt)throw new RuntimeException('database_error');$stmt->bind_param('iiisssssi',$session,$project,$message,$tool,$paramsJson,$target,$resultJson,$status,$duration);
-        if(!$stmt->execute())throw new RuntimeException('database_error');$stmt->close();
+        if(!$stmt->execute())throw new RuntimeException('database_error');$id=(int)$this->db->insert_id;$stmt->close();
+        if($id<1)throw new RuntimeException('tool_call_id_invalid');return$id;
     }
 
     private function targetPath(array$params,array$data):?string

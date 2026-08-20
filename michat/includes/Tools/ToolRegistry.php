@@ -25,8 +25,9 @@ final class ToolRegistry
         try{
             $result=($definition['handler'])($input);
             if(!$result instanceof ToolExecutionResult)throw new RuntimeException('tool_result_invalid');
-            $this->calls?->record($context,$key,$arguments,$result,(int)round((microtime(true)-$started)*1000));
-            return$result;
+            if($this->calls===null)return$result;
+            $toolCallId=$this->calls->record($context,$key,$arguments,$result,(int)round((microtime(true)-$started)*1000));
+            return new ToolExecutionResult($result->summary,$result->artifacts,$result->data,$result->success,$result->status,$toolCallId);
         }catch(Throwable$e){
             $this->calls?->recordError($context,$key,$arguments,$e,(int)round((microtime(true)-$started)*1000));
             throw$e;

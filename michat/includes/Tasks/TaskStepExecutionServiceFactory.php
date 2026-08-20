@@ -8,9 +8,11 @@ final class TaskStepExecutionServiceFactory
 
     public function create(): TaskStepExecutionService
     {
+        $artifacts = new TaskArtifactRepository($this->db);
+        $toolObserver = new TaskToolExecutionArtifactObserver($artifacts);
         $registry = new TaskStepExecutorRegistry();
-        $registry->register('model', new ModelTaskStepExecutor((new ChatExecutionServiceFactory($this->db))->create()));
-        $registry->register('tool', new ToolTaskStepExecutor((new ToolRegistryFactory($this->db))->create()));
+        $registry->register('model', new ModelTaskStepExecutor((new ChatExecutionServiceFactory($this->db,$toolObserver))->create()));
+        $registry->register('tool', new ToolTaskStepExecutor((new ToolRegistryFactory($this->db))->create(), $artifacts));
         $registry->register('validation', new ValidationTaskStepExecutor());
         $registry->register('finalize', new FinalizeTaskStepExecutor());
         $registry->register('approval', new ApprovalTaskStepExecutor());

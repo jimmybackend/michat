@@ -19,7 +19,10 @@ final class CodeEditService
             $key=$this->safeKey((string)$scope['root_prefix'],(string)$source['s3_key']);
             $s3=Config::getS3();$bucket=Config::getBucket();
             $object=$s3->getObject(['Bucket'=>$bucket,'Key'=>$key]);$current=(string)$object['Body'];
-            if($action==='read')return new ToolExecutionResult("code_edit leyó {$filename}.",[],['action'=>'read','file'=>$filename,'source_id'=>(int)$source['id_'],'size_bytes'=>strlen($current),'content'=>$current]);
+            if($action==='read'){
+                $readArtifacts=[['relation'=>'read','resource_type'=>'project_source','resource_id'=>(int)$source['id_']]];
+                return new ToolExecutionResult("code_edit leyó {$filename}.",$readArtifacts,['action'=>'read','file'=>$filename,'source_id'=>(int)$source['id_'],'size_bytes'=>strlen($current),'content'=>$current]);
+            }
             if($action==='delete'){
                 $this->cancellations?->assertActive(['task_id'=>$taskId,'user_id'=>$userId]);
                 $s3->deleteObject(['Bucket'=>$bucket,'Key'=>$key]);$this->deleteSource($projectId,(int)$source['id_']);
@@ -38,12 +41,15 @@ final class CodeEditService
             $s3->putObject(['Bucket'=>$bucket,'Key'=>$key,'Body'=>$updated,'ContentType'=>(string)($source['mime_type']?:'text/plain'),'ACL'=>'private']);
             $this->cancellations?->assertActive(['task_id'=>$taskId,'user_id'=>$userId]);
             $index=indexProjectSourceContent($this->db,null,$projectId,(int)$source['id_'],$filename,$updated);
-            $artifact=['type'=>'file_version','file_version_id'=>$version['id'],'project_id'=>$projectId,'source_id'=>(int)$source['id_'],'filename'=>$filename,'version'=>$version['version']];
+            $artifacts=[
+                ['relation'=>'modified','resource_type'=>'project_source','resource_id'=>(int)$source['id_']],
+                ['relation'=>'generated','resource_type'=>'file_version','resource_id'=>$version['id']],
+            ];
             $data=['action'=>'write','file'=>$filename,'source_id'=>(int)$source['id_'],'file_version_id'=>$version['id'],'version'=>$version['version'],'model_used'=>$model,
                 'summary'=>mb_substr(trim((string)$instruction),0,500),'indexed'=>(bool)($index['indexed']??false),
                 'index_queued'=>(bool)($index['queued']??false),'index_jobs'=>(int)($index['jobs']??0),
                 'embedding_model'=>$index['model']??null,'needs_indexing'=>empty($index['ok'])];
-            return new ToolExecutionResult("code_edit editó {$filename}: {$data['summary']}",[$artifact],$data);
+            return new ToolExecutionResult("code_edit editó {$filename}: {$data['summary']}",$artifacts,$data);
         }catch(TaskTransitionException$e){throw$e;
         }catch(Throwable$e){return new ToolExecutionResult('code_edit rechazado: '.$e->getMessage(),[],['error'=>$e->getMessage()],false,'error');}
     }
