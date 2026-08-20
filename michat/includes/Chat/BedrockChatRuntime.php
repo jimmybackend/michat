@@ -4,7 +4,7 @@ declare(strict_types=1);
 /** Request-agnostic production runtime. AWS clients come exclusively from Config. */
 final class BedrockChatRuntime implements ChatRuntimeInterface
 {
-    public function __construct(private mysqli $db, private ToolRegistry $tools) {}
+    public function __construct(private mysqli $db, private ToolRegistry $tools,private ?TaskCancellationGuard $cancellations=null) {}
 
     public function execute(ChatExecutionRequest $request, ?callable $heartbeat = null): ChatExecutionResult
     {
@@ -28,8 +28,12 @@ final class BedrockChatRuntime implements ChatRuntimeInterface
         $bedrock = Config::getBedrockRuntime();
         $usage = ['prompt_tokens'=>0,'completion_tokens'=>0,'total_tokens'=>0];
         for ($round=0; $round<5; $round++) {
+            $this->checkpoint($request);
             $heartbeat && $heartbeat();
             $response = $bedrock->converse($params);
+            // Cancellation may arrive while Bedrock is in flight. Do not consume the
+            // response or proceed to persistence/tool execution after that point.
+            $this->checkpoint($request);
             $usage['prompt_tokens'] += (int)($response['usage']['inputTokens'] ?? 0);
             $usage['completion_tokens'] += (int)($response['usage']['outputTokens'] ?? 0);
             $usage['total_tokens'] += (int)($response['usage']['totalTokens'] ?? 0);
@@ -41,10 +45,11 @@ final class BedrockChatRuntime implements ChatRuntimeInterface
             }
             $params['messages'][] = $response['output']['message']; $results=[];
             foreach ($uses as $use) {
+                $this->checkpoint($request);
                 $heartbeat && $heartbeat();
                 $toolInput = ['arguments'=>(array)($use['input'] ?? []),'context'=>[
                     'user_id'=>$request->userId,'project_id'=>$request->projectId,'session_id'=>$request->sessionId,
-                    'trace_id'=>$request->traceId,'execution_id'=>$request->taskContext['execution_id'] ?? null,
+                    'trace_id'=>$request->traceId,'execution_id'=>$request->taskContext['execution_id'] ?? null,'task_id'=>$request->taskContext['task_id']??null,
                 ]];
                 $result=$this->tools->execute((string)($use['name'] ?? ''),$toolInput);
                 $results[]=['toolResult'=>['toolUseId'=>(string)$use['toolUseId'],'content'=>[['text'=>json_encode(['success'=>$result->success,'summary'=>$result->summary,'data'=>$result->data],JSON_UNESCAPED_UNICODE)]]]];
@@ -53,4 +58,5 @@ final class BedrockChatRuntime implements ChatRuntimeInterface
         }
         throw new RuntimeException('chat_tool_round_limit');
     }
+    private function checkpoint(ChatExecutionRequest$request):void{$this->cancellations?->assertActive(['task_id'=>$request->taskContext['task_id']??null,'user_id'=>$request->userId]);}
 }

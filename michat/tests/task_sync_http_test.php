@@ -50,7 +50,8 @@ $ok(str_contains($contextService,'$projectId=$scope->projectId()')&&str_contains
 $router=new MemoryContextRouter();
 $ok(!empty($router->route('revisa el archivo src/app.php',['project_id'=>7])['use_project_rag']),'con proyecto una operación de código solicita RAG');
 $ok(empty($router->route('revisa el archivo src/app.php',['project_id'=>null])['use_project_rag']),'sin proyecto no solicita RAG de proyecto');
-$ok(!str_contains($contextService,'MemoryWriter'),'MemoryWriter todavía no se ejecuta en el runtime compartido');
+$memoryService=file_get_contents(__DIR__.'/../includes/Chat/ChatMemoryFinalizationService.php');
+$ok(!str_contains($contextService,'MemoryWriter')&&str_contains($memoryService,'MemoryWriter'),'MemoryWriter se limita a la finalización posterior a la respuesta');
 $responseService=file_get_contents(__DIR__.'/../includes/Chat/ChatResponsePersistenceService.php');
 $ok(str_contains($chatService,'responses->persist')&&str_contains($taskBlock,"'persist_final_response'=>true"),'Task sync persiste assistant con el servicio compartido');
 $ok(str_contains($responseService,'assignResultIfEmpty'),'Task sync enlaza result_message_id_ idempotentemente');
