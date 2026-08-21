@@ -17,31 +17,40 @@ if (defined('APP_BOOTSTRAP_LOADED')) {
 }
 define('APP_BOOTSTRAP_LOADED', true);
 
+$APP_ROOT = realpath(__DIR__ . '/../');
+if ($APP_ROOT === false) {
+    error_log('MiChat bootstrap: no se pudo resolver APP_ROOT.');
+    http_response_code(500);
+    exit('Error de configuración del servidor.');
+}
+
+require_once __DIR__ . '/includes/Config/EnvironmentLoader.php';
+(new EnvironmentLoader())->loadIfPresent($APP_ROOT . '/.env');
+
 // =====================================================================
 // ✅ GUARD: Evitar doble carga del autoloader de Composer
 // Si la clase del autoloader ya existe, no incluirlo de nuevo.
 // =====================================================================
 $autoload = __DIR__ . '/../vendor/autoload.php';
 if (!is_file($autoload)) {
-    die("No existe: {$autoload}");
+    error_log('MiChat bootstrap: falta vendor/autoload.php.');
+    http_response_code(500);
+    exit('Error de configuración del servidor.');
 }
 
 if (!class_exists('ComposerAutoloaderInitbd9357ed7e4e67fe1f5490cbadb5b6f1', false)) {
     require_once $autoload;
 }
 
-// 2) Ruta privada (1 nivel arriba de public_html/s3v2)
-$APP_ROOT = realpath(__DIR__ . '/../');
-if ($APP_ROOT === false) {
-    die('No se pudo resolver APP_ROOT con realpath(). Revisa la ruta /../');
-}
-
 // 3) Archivos privados
 $configPath = $APP_ROOT . '/Config-s3.php';
 $dbPath     = $APP_ROOT . '/db-s3.php';
 
-if (!is_file($configPath)) die("No existe: {$configPath}");
-if (!is_file($dbPath))     die("No existe: {$dbPath}");
+if (!is_file($configPath) || !is_file($dbPath)) {
+    error_log('MiChat bootstrap: faltan archivos privados de configuración.');
+    http_response_code(500);
+    exit('Error de configuración del servidor.');
+}
 
 require_once $configPath;
 require_once $dbPath;
