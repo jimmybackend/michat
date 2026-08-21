@@ -25,14 +25,14 @@ $artifact=$artifactDto->invoke($application,[
     'resource_type'=>'source_chunk','resource_id'=>'99','created_at'=>'2026-08-20 12:00:00.000000',
     'tool_call_identity'=>0,'params'=>'secret','result'=>'secret','Ruta'=>'private/path','content'=>'secret',
 ]);
-$ok(array_keys($artifact)===['id','execution_id','tool_call_id','relation','resource_type','resource_id','resource','created_at']&&$artifact['resource']===null,'artifact público contiene whitelist estable y resource nullable');
-$ok($artifact['tool_call_id']===null,'tool_call_id histórico nullable permanece válido');
-$ok($artifact['resource_id']===99&&$artifact['resource_type']==='source_chunk','referencia histórica se expone sin resolver recurso');
+$ok(array_keys($artifact)===['relation','resource_type','resource','created_at']&&$artifact['resource']===null,'artifact público contiene whitelist estable y resource nullable');
+$ok(!isset($artifact['tool_call_id'],$artifact['resource_id']),'IDs históricos permanecen privados');
+$ok($artifact['resource_type']==='source_chunk','tipo de referencia histórica se expone sin resolver recurso');
 $ok(!str_contains(json_encode($artifact),'secret')&&!array_key_exists('tool_call_identity',$artifact)&&!array_key_exists('Ruta',$artifact),'artifact no filtra identidad, params, result, rutas o contenido');
 
 $executionDto=(new ReflectionClass(TaskApplicationService::class))->getMethod('executionDto');
 $execution=$executionDto->invoke($application,['id_'=>'17','trace_id'=>'trace','attempt_number'=>'1','agent_key'=>'agent','model_id'=>'model','status'=>'completed','started_at'=>null,'heartbeat_at'=>null,'finished_at'=>null,'error_message'=>null,'created_at'=>'now','lease_token'=>'secret','worker_id'=>'secret']);
-$ok($execution['id']===17&&$artifact['execution_id']===$execution['id'],'execution y artifact son correlacionables por ID real');
+$ok(!isset($execution['id'],$artifact['execution_id']),'execution y artifact no exponen IDs internos');
 $ok(!array_key_exists('lease_token',$execution)&&!array_key_exists('worker_id',$execution),'execution no expone lease ni datos internos del worker');
 
 $listByTaskStart=strpos($repository,'public function listByTask');

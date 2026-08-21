@@ -11,7 +11,8 @@ $orchestrator=file_get_contents(__DIR__.'/../includes/Tasks/TaskOrchestrator.php
 $ok(str_contains($orchestrator,'lockOwnedForRetry')&&str_contains($orchestrator,'lockForRetry')&&strpos($orchestrator,'updateStatus($stepId,\'ready\'')<strpos($orchestrator,'$this->tasks->retry'),'retry bloquea y reactiva Step/Task dentro de una transacción única');
 $ok(str_contains($orchestrator,"status']!=='failed'")&&str_contains($orchestrator,"retry_task_invalid")&&str_contains($orchestrator,"retry_step_invalid"),'retry exige Task failed y current Step failed, sin reutilizar waiting/approval');
 $ok(str_contains($taskRepo,'FOR UPDATE')&&str_contains($stepRepo,'LIMIT 1 FOR UPDATE'),'retry bloquea filas Task y current Step');
-$ok(!str_contains($orchestrator,'TaskExecutions SET')&&!str_contains($orchestrator,'checkpoint_json'),'retry no revive Executions ni modifica checkpoint/approval');
+$retry=substr($orchestrator,strpos($orchestrator,'public function retryTask'),strpos($orchestrator,'public function prepareChatTurn')-strpos($orchestrator,'public function retryTask'));
+$ok(!str_contains($retry,'TaskExecutions SET')&&!str_contains($retry,'checkpoint_json'),'retry no revive Executions ni modifica checkpoint/approval');
 $ok(str_contains($orchestrator,'\'step_id\'=>$stepId')&&str_contains($orchestrator,"'event_key'=>'task_ready'"),'evento histórico task_ready referencia el Step reactivado');
 $queue=file_get_contents(__DIR__.'/../includes/Tasks/TaskQueueRepository.php');$ok(str_contains($queue,"s.status='ready'")&&str_contains($queue,'INSERT INTO TaskExecutions'),'Worker reclamará Step reactivado creando nueva Execution');
 echo"SKIP — integración MySQL recovery/retry/claim no ejecutada: TASK_TEST_DB_* no configurado.\nResultado: $passed PASS, $failed FAIL.\n";exit($failed?1:0);

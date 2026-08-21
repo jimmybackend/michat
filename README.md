@@ -605,7 +605,7 @@ sin modificar el código fuente.
 
 ## Task Orchestrator
 
-The platform includes supervised and automatic persistent Tasks, validated multi-step plans, and same-owner Task-to-Task dependencies. Execution remains compatible with the existing chat pipeline while worker-based processing is developed progressively.
+The platform includes supervised and automatic persistent Tasks, validated multi-step plans, same-owner Task-to-Task dependencies, durable workers and an integrated Task Center.
 
 The objective is to evolve from:
 
@@ -639,45 +639,61 @@ Trace
 
 This allows workflows to preserve structured state independently from individual chat messages; human approval remains authoritative when automatic execution is disabled.
 
+```mermaid
+flowchart LR
+  UI[Chat / Task Center] --> API[Task Application API]
+  API --> DB[(MySQL source of truth)]
+  DB --> Worker[Leased Task Worker]
+  Worker --> Model[Amazon Bedrock]
+  Model --> Gate{Tool HITL gate}
+  Gate -->|read| Tools[Tool Registry]
+  Gate -->|write proposal| DB
+  UI -->|approve exact fingerprint| API
+  API --> DB
+  DB -->|new Execution| Worker
+  Tools --> Artifacts[ToolCalls / Artifacts / FileVersions]
+  Worker --> Trace[Events / Trace / TokenUsage]
+```
+
+Write-capable tools pause durably and expose only a safe proposal. Approval is bound to the persisted fingerprint and consumed at most once by a new Execution. Task-level model, tool, write, token and duration limits are enforced server-side. Durable retry limits remain in MySQL.
+
+Open `michat/task_center.php` to inspect owned Tasks, Steps, pending approvals, errors, artifacts and traces; cancel or retry eligible Tasks; and approve or reject the correct HITL contract without sending internal IDs.
+
 ---
 
 ## Requirements
 
 The current implementation is based on approximately:
 
-- PHP 8.x
-- MySQL 8.x
+- PHP 8.1 or newer
+- MySQL 8.0 or newer (JSON, generated columns and `SKIP LOCKED` are used)
 - JavaScript
 - Composer
 - AWS SDK for PHP
 - Amazon Bedrock access
 - Amazon S3
 
-Exact production requirements will be documented as the portable release process is completed.
+- PHP extensions: `mysqli`, `json`, `mbstring`, `curl`, `openssl` and `fileinfo`
+- A web server capable of serving PHP (Apache or nginx with PHP-FPM)
 
 ---
 
 ## Installation
 
-The public installation workflow is being prepared.
-
-The intended process is:
-
 ```bash
-git clone <repository>
-cd <repository>
+git clone https://github.com/jimmybackend/michat.git
+cd michat
 
-composer install
+composer install --no-dev --prefer-dist --optimize-autoloader
 
 cp .env.example .env
+mysql -u root -p -e 'CREATE DATABASE michat CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci'
+mysql -u root -p michat < adbbmis1_Cloud.sql
 ```
 
 Configure your environment:
 
 ```env
-APP_ENV=production
-APP_URL=https://your-domain.example
-
 DB_HOST=localhost
 DB_PORT=3306
 DB_NAME=
@@ -694,7 +710,39 @@ MICHAT_MAINTENANCE_SECRET=
 
 For AWS environments, IAM roles should be preferred over long-lived credentials whenever possible.
 
-> «The installation process may change until the first stable release.»
+Grant the runtime identity only the Bedrock model invocation and S3 bucket/object actions required by the configured agents and bucket. Do not grant blanket administrator access. The S3 bucket must remain private.
+
+Point the web-server document root at the repository directory (or map `/michat` explicitly), deny access to `.env`, and allow the PHP user to write only application upload/cache locations used by your deployment. Never make the source tree world-writable.
+
+Run a smoke test and the complete isolated test suite:
+
+```bash
+php michat/tests/task_api_test.php
+for test in michat/tests/*_test.php; do php "$test"; done
+```
+
+Database integration tests use the optional `TASK_TEST_DB_*` variables and explicitly report `SKIP` when they are absent.
+
+### Worker
+
+Run one job while validating an installation:
+
+```bash
+php michat/bin/task_worker.php --once
+```
+
+For production, supervise the durable loop with systemd or Supervisor rather than cron:
+
+```ini
+[Service]
+WorkingDirectory=/var/www/michat
+ExecStart=/usr/bin/php michat/bin/task_worker.php --loop
+Restart=always
+User=www-data
+EnvironmentFile=/var/www/michat/.env
+```
+
+Use a unique `TASK_WORKER_ID` per process. Lease expiry and recovery are handled by the worker; do not run overlapping cron invocations with the same worker identity.
 
 ---
 
@@ -739,11 +787,9 @@ A production AI application should make it possible to inspect:
 
 ## Project Status
 
-This project is under active development.
+This project is release-ready for controlled public deployments and remains under active development.
 
-The core architecture is functional, but the public repository is being prepared for greater portability, object-oriented organization, installation automation and production hardening.
-
-APIs, database structures and internal interfaces may change before the first stable release.
+Review model access, IAM permissions, database backups and worker supervision before exposing a deployment to users. External AWS/MySQL E2E validation is environment-specific.
 
 ---
 

@@ -28,9 +28,9 @@ $cases=[
  'file_version'=>[['filename'=>'App.php','version'=>'1.2','s3_path'=>'secret'],['filename'=>'App.php','version'=>'1.2']],
  'file_s3'=>[['filename'=>'notes.txt','Ruta'=>'secret','Encriptado'=>'secret','PasswordHash'=>'secret','SecureHint'=>'secret'],['filename'=>'notes.txt']],
 ];
-foreach($cases as$type=>[$input,$expected]){$artifact=$dto->invoke($application,$base+['resource_type'=>$type],$input);$ok($artifact['resource']===$expected,"{$type} expone DTO público exacto");$ok($artifact['resource_type']===$type&&$artifact['resource_id']===12&&$artifact['execution_id']===17&&$artifact['tool_call_id']===90,"{$type} conserva identidad y correlaciones");$ok(!str_contains(json_encode($artifact),'secret'),"{$type} no expone metadata privada");}
+foreach($cases as$type=>[$input,$expected]){$artifact=$dto->invoke($application,$base+['resource_type'=>$type],$input);$ok($artifact['resource']===$expected,"{$type} expone DTO público exacto");$ok($artifact['resource_type']===$type&&!isset($artifact['resource_id'],$artifact['execution_id'],$artifact['tool_call_id']),"{$type} oculta identidad y correlaciones internas");$ok(!str_contains(json_encode($artifact),'secret'),"{$type} no expone metadata privada");}
 $missing=$dto->invoke($application,$base+['resource_type'=>'project_source'],null);
-$ok($missing['resource']===null&&$missing['resource_id']===12,'recurso eliminado conserva artifact con resource null');
+$ok($missing['resource']===null&&!isset($missing['resource_id']),'recurso eliminado conserva artifact público con resource null');
 
 echo"Resultado: {$passed} passed, {$failed} failed\n";
 exit($failed?1:0);
