@@ -1712,7 +1712,7 @@ if ($executeApprovedTask) {
     }
     $approvedData = (new TaskRepository($db_connection))->approvedChatTurn($approvedTaskPublicId,$user_id);
     if (!$approvedData || (int)$approvedData['session_id_'] !== $session_id) jexit(['ok'=>false,'error'=>'task_not_found'],404);
-    if ($approvedData['task_status'] !== 'ready' || $approvedData['step_status'] !== 'ready') jexit(['ok'=>false,'error'=>'task_not_ready'],409);
+    if (!in_array($approvedData['task_status'],['ready','running'],true) || !in_array($approvedData['step_status'],['ready','running'],true)) jexit(['ok'=>false,'error'=>'task_not_ready'],409);
     $approvedOriginMessageId = (int)$approvedData['origin_message_id_'];
     $savedInput = json_decode((string)($approvedData['input_json'] ?? ''),true);
     if (!is_array($savedInput)) $savedInput=[];
@@ -2719,6 +2719,7 @@ if ($compile_only) {
 $chatTaskBridge = null;
 $chatTaskContext = null;
 $chatPipelineFailure = null;
+$httpResumeLeaseToken = null;
 if (!empty($pipelineEffective['task_orchestrator']) && $saved_user_text_id) {
     try {
         require_once __DIR__ . '/includes/Tasks/bootstrap.php';
@@ -2736,7 +2737,10 @@ if (!empty($pipelineEffective['task_orchestrator']) && $saved_user_text_id) {
         $taskAutoExecute = !empty($pipelineEffective['task_auto_execute']);
         $taskAsyncExecute = !empty($pipelineEffective['task_async_execute']);
         if ($executeApprovedTask) {
-            $chatTaskContext = $chatTaskBridge->resumeApproved($approvedTaskPublicId,$user_id,$activityTraceId,$model_id);
+            $resume=$chatTaskBridge->resumeApprovedToolTask($approvedTaskPublicId,$user_id,$activityTraceId,$model_id);
+            if($resume['outcome']==='already_resumed')jexit(['ok'=>true,'resume'=>'already_resumed','task'=>['public_id'=>$approvedTaskPublicId,'status'=>'running']]);
+            $chatTaskContext=$resume['context'];
+            $httpResumeLeaseToken=$resume['lease_token'];
         } else {
         $chatTaskContext = $chatTaskBridge->prepareTurn(
             $user_id, $session_id, $projectId > 0 ? $projectId : null,
@@ -2776,9 +2780,16 @@ if (!empty($pipelineEffective['task_orchestrator']) && $saved_user_text_id) {
                 'compiled_prompt'=>$compiled_prompt_input !== '' ? $compiled_prompt_input : null,
                 'temperature'=>$temperature,'max_tokens'=>$max_tokens,'top_p'=>$top_p,'model_id'=>$model_id],
         ];
+        $httpLease=null;
+        if($executeApprovedTask&&is_string($httpResumeLeaseToken)&&$httpResumeLeaseToken!==''){
+            $taskStepContext['worker_id']='http-sync';$taskStepContext['lease_token']=$httpResumeLeaseToken;
+            $httpLease=new TaskLeaseService(new TaskQueueRepository($db_connection),300);
+        }
+        $httpHeartbeat=$httpLease===null?static function():void {}:function()use($httpLease,$taskStepContext):void{if(!$httpLease->heartbeat($taskStepContext))throw new TaskConcurrencyException('lease_lost');$httpLease->assertActive($taskStepContext);};
+        $httpCancelled=$httpLease===null?static fn():bool=>false:function()use($httpLease,$taskStepContext):bool{try{$httpLease->assertActive($taskStepContext);return false;}catch(TaskTransitionException$e){if($e->getMessage()==='cancel_requested')return true;throw$e;}};
         try {
             $taskStepResult=(new TaskStepExecutionServiceFactory($db_connection))->create()->execute(
-                $taskStepContext, static function():void {}, static fn():bool=>false
+                $taskStepContext,$httpHeartbeat,$httpCancelled
             );
             $persistedPause=TaskSyncHttpPauseResponse::fromResult($chatTaskContext->publicId,$taskStepResult);
             if($persistedPause!==null)jexit($persistedPause->toArray());

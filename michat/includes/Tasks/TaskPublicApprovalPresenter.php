@@ -14,9 +14,12 @@ final class TaskPublicApprovalPresenter
         $fingerprint = (string)($proposal['fingerprint'] ?? '');
         if (preg_match('/^[a-f0-9]{64}$/D', $fingerprint) !== 1) return null;
         $decision = is_array($approval['decision'] ?? null) ? $approval['decision'] : null;
+        $consumed=($decision['consumed']??false)===true;$input=json_decode((string)($step['input_json']??''),true);
+        $canResume=$decision!==null&&($decision['status']??null)==='approved'&&!$consumed&&in_array(($step['status']??null),['ready','running'],true)&&is_array($input)&&($input['execution_mode']??'sync')==='sync';
         return [
             'type' => 'tool',
-            'status' => $decision === null ? 'pending' : (string)($decision['status'] ?? 'unknown'),
+            'status' => $consumed ? 'consumed' : ($decision === null ? 'pending' : (string)($decision['status'] ?? 'unknown')),
+            'can_resume' => $canResume,
             'safe_summary' => $this->text($proposal['safe_summary'] ?? null, 500),
             'safe_target' => $this->text($proposal['safe_target'] ?? null, 500),
             'effect' => $this->text($proposal['effect'] ?? null, 64),

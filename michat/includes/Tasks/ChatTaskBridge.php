@@ -16,6 +16,8 @@ final class ChatTaskBridge
     }
     public function beginExecution(ChatTaskContext $prepared,int $userId,string $traceId,string $modelId):ChatTaskContext{return $this->orchestrator->beginChatExecution($prepared,$userId,$traceId,$modelId);}
     public function resumeApproved(string $publicId,int $userId,string $traceId,string $modelId):ChatTaskContext{return $this->orchestrator->beginApprovedChatExecution($publicId,$userId,$traceId,$modelId);}
+    /** @return array{outcome:'resume_started'|'resume_recovered'|'already_resumed',context:ChatTaskContext,lease_token:?string} */
+    public function resumeApprovedToolTask(string$publicId,int$userId,string$traceId,string$modelId):array{return$this->orchestrator->resumeApprovedToolTask($publicId,$userId,$traceId,$modelId);}
     public function completeTurn(ChatTaskContext$c,int$userId,int$resultMessageId,string$answer,string$modelId):void{$this->orchestrator->completeChatTurn($c,$userId,$resultMessageId,self::summary($answer),$modelId);}
     public function failTurn(ChatTaskContext$c,int$userId,Throwable$error):void{$this->orchestrator->failChatTurn($c,$userId,self::sanitizeError($error));}
 }
