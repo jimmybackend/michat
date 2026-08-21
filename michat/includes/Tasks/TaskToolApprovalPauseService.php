@@ -1,8 +1,9 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/TaskToolApprovalGateContracts.php';
 
 /** Atomic persistence boundary for a Tool approval pause; it never executes a Tool. */
-final class TaskToolApprovalPauseService
+final class TaskToolApprovalPauseService implements TaskToolApprovalPauseInterface
 {
     private TaskStateMachine $taskStates;
     private TaskStepStateMachine $stepStates;
