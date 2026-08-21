@@ -145,4 +145,6 @@ Parte de los tests de integración reportan SKIP cuando no existen variables `TA
 
 Fase 8 — Task Orchestrator: CERRADA.
 
-Lo siguiente ya no es continuar 8.6, 8.7 u 8.8. Los siguientes trabajos deben tratarse como nuevas fases de evolución del proyecto, incluyendo portabilidad/industrialización de MiChat y el diseño de MCMA.
+La infraestructura cerrada de Fase 8 es la base de Fase 9 — Task Center 2.0. La siguiente fase no reconstruirá Tasks ni el Task Center básico: añadirá la UX operativa de proyectos, Tasks y trabajo humano/IA definida en `michat/doc/estado-actual.md`.
+
+Scheduling de producto, autonomía operativa e industrialización pertenecen respectivamente a las Fases 10, 11 y 12. No deben incorporarse retroactivamente a Fase 8 ni presentarse como pendientes de su cierre.

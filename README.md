@@ -587,19 +587,15 @@ sin modificar el código fuente.
 - [x] 2D visualization
 - [x] 3D visualization
 - [x] Token and cost observability
+- [x] Phase 8: persistent Task Orchestrator
+- [x] Basic Task Center for inspection and HITL operations
 
-### Planned
+### Current roadmap
 
-- [ ] Complete object-oriented refactor
-- [ ] PSR-4 application structure
-- [ ] Portable ".env" configuration
-- [ ] Database migrations
-- [ ] Installation wizard
-- [ ] Provider abstraction
-- [ ] Storage abstraction
-- [ ] Automated regression tests
-- [ ] Persistent task orchestrator
-- [ ] Public stable release
+- [ ] **Phase 9 — Next:** Task Center 2.0, an operational project/Task UX for human and AI work. The existing Task Center is the foundation; navigation, search, combined filters, pagination, visible priority and dates, waits and dependency management, operational list/board views, richer history/artifacts and chat/trace navigation remain planned.
+- [ ] **Phase 10 — Planned:** product scheduling and declarative automation. The existing Worker, not-before `scheduled_at`, temporal Wait Steps, dependencies, retry and recovery do not yet constitute a product Scheduler; recurrence, triggers, operational deadlines, condition watchers and declarative retry/backoff remain future work.
+- [ ] **Phase 11 — Planned:** operational autonomy inside MiChat, building on the Planner, Model/Tool Steps, Worker, Memory/RAG, HITL, limits and recovery. Subtasks, replanning, persistent goals, internal delegation, executor roles, autonomy policies, global budgets and cross-session continuity require design and audit before implementation.
+- [ ] **Phase 12 — Planned:** progressive PSR-4 adoption, fewer manual requires, thin endpoints, schema migrations/versioning, reproducible installation, portability-driven AI/storage abstractions, MySQL/AWS E2E coverage, final security review, packaging and stable release.
 
 ---
 
