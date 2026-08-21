@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 final class ChatExecutionServiceFactory
 {
-    public function __construct(private mysqli $db,private ?ToolExecutionObserverInterface $toolObserver=null) {}
+    public function __construct(private mysqli $db,private ?ToolExecutionObserverInterface $toolObserver=null,private ?ToolRegistry $tools=null,private ?ToolExecutionGateInterface $toolGate=null,private ?TaskCancellationGuard $cancellations=null) {}
     public function create(): ChatExecutionService
     {
         require_once dirname(__DIR__).'/ai_agent_runtime.php';
@@ -17,7 +17,8 @@ final class ChatExecutionServiceFactory
         $memory=new ChatMemoryFinalizationService($this->db,$bedrock);
         $tokens=new ChatTokenUsageService($this->db);
         $activity=new ChatActivityTelemetryService($this->db);
-        $cancellations=new TaskCancellationGuard($this->db);
-        return new ChatExecutionService(new BedrockChatRuntime($this->db,(new ToolRegistryFactory($this->db,$cancellations))->create(),$cancellations,$this->toolObserver),$contexts,$responses,$memory,$tokens,$activity);
+        $cancellations=$this->cancellations??new TaskCancellationGuard($this->db);
+        $tools=$this->tools??(new ToolRegistryFactory($this->db,$cancellations))->create();
+        return new ChatExecutionService(new BedrockChatRuntime($this->db,$tools,$cancellations,$this->toolObserver,$this->toolGate),$contexts,$responses,$memory,$tokens,$activity);
     }
 }

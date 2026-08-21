@@ -22,7 +22,7 @@ $ok($calls===0,'clasificación pura no ejecuta handler');
 $readerSource=file_get_contents(__DIR__.'/../includes/Tasks/TaskToolApprovalStateReader.php');$executorSource=file_get_contents(__DIR__.'/../includes/Tasks/ToolTaskStepExecutor.php');
 $ok(!preg_match('/\b(?:UPDATE|INSERT|DELETE|FOR UPDATE)\b/i',$readerSource),'reader contiene únicamente SELECT sin FOR UPDATE');
 $ok(!str_contains($readerSource,'ToolRegistry')&&!str_contains($readerSource,'pause(')&&!str_contains($readerSource,'consume('),'reader no ejecuta, pausa ni consume Tools');
-$ok(str_contains($executorSource,'TaskToolApprovalStateReaderInterface'),'reader está conectado únicamente al gate de Tool Steps explícitos');
+$modelGateSource=file_get_contents(__DIR__.'/../includes/Tasks/TaskChatToolExecutionGate.php');$ok(str_contains($executorSource,'TaskToolApprovalStateReaderInterface')&&str_contains($modelGateSource,'TaskToolApprovalStateReaderInterface'),'reader compartido alimenta gates Tool Step y Model sin entrar en Chat genérico');
 
 $required=['TASK_TEST_DB_HOST','TASK_TEST_DB_PORT','TASK_TEST_DB_USER','TASK_TEST_DB_PASSWORD','TASK_TEST_DB_NAME'];
 foreach($required as$key){if(getenv($key)===false||getenv($key)===''){echo"SKIP — integración MySQL del reader no ejecutada: TASK_TEST_DB_* no configurado.\nResultado: {$passed} PASS, {$failed} FAIL.\n";exit($failed?1:0);}}

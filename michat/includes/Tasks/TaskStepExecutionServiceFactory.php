@@ -10,12 +10,17 @@ final class TaskStepExecutionServiceFactory
     {
         $artifacts = new TaskArtifactRepository($this->db);
         $toolObserver = new TaskToolExecutionArtifactObserver($artifacts);
-        $tools=(new ToolRegistryFactory($this->db))->create();
+        $cancellations=new TaskCancellationGuard($this->db);
+        $tools=(new ToolRegistryFactory($this->db,$cancellations))->create();
         $risk=new TaskToolRiskPolicy($tools);
         $proposals=new TaskToolApprovalProposalFactory($risk,new TaskToolApprovalFingerprint());
+        $approvalStates=new TaskToolApprovalStateReader($this->db);
+        $pauses=new TaskToolApprovalPauseService($this->db,$proposals);
+        $consumptions=new TaskToolApprovalConsumptionService($this->db,$proposals);
+        $modelGate=new TaskChatToolExecutionGate($risk,$approvalStates,$proposals,$pauses,$consumptions);
         $registry = new TaskStepExecutorRegistry();
-        $registry->register('model', new ModelTaskStepExecutor((new ChatExecutionServiceFactory($this->db,$toolObserver))->create()));
-        $registry->register('tool',new ToolTaskStepExecutor($tools,$artifacts,$risk,new TaskToolApprovalStateReader($this->db),$proposals,new TaskToolApprovalPauseService($this->db,$proposals),new TaskToolApprovalConsumptionService($this->db,$proposals)));
+        $registry->register('model', new ModelTaskStepExecutor((new ChatExecutionServiceFactory($this->db,$toolObserver,$tools,$modelGate,$cancellations))->create()));
+        $registry->register('tool',new ToolTaskStepExecutor($tools,$artifacts,$risk,$approvalStates,$proposals,$pauses,$consumptions));
         $registry->register('validation', new ValidationTaskStepExecutor());
         $registry->register('finalize', new FinalizeTaskStepExecutor());
         $registry->register('approval', new ApprovalTaskStepExecutor());
