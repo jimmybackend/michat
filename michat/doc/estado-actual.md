@@ -95,19 +95,39 @@ La revisión posterior a Fase 8 reportó:
 
 Los tests que necesitan `TASK_TEST_DB_*`, MySQL real o infraestructura AWS pueden reportar SKIP cuando ese entorno no está disponible. Un SKIP E2E debe documentarse como validación externa pendiente, no como funcionalidad inexistente.
 
-## Trabajo siguiente
+## Roadmap posterior a Fase 8
 
-Los siguientes bloques ya no pertenecen a Fase 8:
+Fase 8 — Task Orchestrator está **CERRADA**. Su infraestructura ya incluye Tasks, Steps, Executions, Worker persistente, Planner, Tools server-side, HITL, approvals, waits temporales persistentes, dependencias, prioridad backend, `scheduled_at` como límite *not-before*, `due_at`, artifacts, events, trace, memoria/RAG y un Task Center básico.
 
-- completar refactor orientado a objetos del código legacy;
-- introducir autoload PSR-4 en Composer y reducir `require` manual progresivamente;
-- consolidar migraciones/versionado de esquema;
-- instalación portable / wizard cuando se defina su alcance;
-- abstracción de proveedores de IA;
-- abstracción de storage;
-- ampliar regresión automatizada y E2E MySQL/AWS;
-- preparar release público estable;
-- diseñar e implementar MCMA como nueva evolución, sin fingir que ya existe en el repositorio.
+### Fase 9 — SIGUIENTE: Task Center 2.0
+
+Fase 9 no creará Task Center desde cero. Evolucionará la interfaz existente hacia una UX operativa tipo Monday para proyectos, Tasks y trabajo humano/IA.
+
+Su alcance previsto comprende:
+
+- navegación por proyecto y sesión;
+- búsqueda, filtros combinables y paginación;
+- prioridad, `scheduled_at`, `due_at`, progreso y Step actual visibles;
+- explicación de waits, bloqueos y dependencias;
+- dependencias visibles y gestionables;
+- lista operativa y tablero por estados;
+- approvals, resume, retry y cancel;
+- artifacts e historial;
+- navegación a chat y trace.
+
+Estas capacidades se consideran **PLANIFICADAS** hasta que exista implementación, integración y validación. Fase 9 debe reutilizar el dominio y runtime cerrados en Fase 8, sin duplicarlos ni reabrirlos.
+
+### Fase 10 — PLANIFICADA: Scheduling y automatización declarativa
+
+El Worker persistente no equivale a un Scheduler de producto. Actualmente existen Worker, `scheduled_at` como *not-before*, Wait Steps temporales, dependencias, retry y recovery. Fase 10 deberá diseñar posteriormente scheduler de producto, recurrencia, triggers, deadlines operativos, condition watchers y retry/backoff declarativo.
+
+### Fase 11 — PLANIFICADA: Autonomía operativa de MiChat
+
+Partirá de Planner, Model Steps, Tool Steps, Worker, memoria/RAG, HITL, límites y recovery ya existentes. Antes de implementar deberán auditarse y diseñarse posibles subtareas, replanning, objetivos persistentes, delegación interna, roles o ejecutores, políticas de autonomía, presupuestos globales y continuidad entre sesiones.
+
+### Fase 12 — PLANIFICADA: Industrialización y release estable
+
+Comprenderá PSR-4 progresivo, reducción de `require` manuales, endpoints delgados, migraciones y versionado de esquema, instalación reproducible, abstracciones de proveedores IA o storage cuando aporten portabilidad real, E2E MySQL/AWS, revisión final de seguridad, packaging y release estable.
 
 ## Regla de cierre para nuevas fases
 
@@ -127,3 +147,5 @@ Antes de declararla cerrada se debe revisar, según aplique:
 - compatibilidad con instalación limpia.
 
 La documentación debe describir lo que existe en `main`, distinguiendo claramente entre IMPLEMENTADO, VALIDACIÓN E2E PENDIENTE y PLANIFICADO.
+
+Cada fase o subfase que cambie una capacidad pública debe actualizar, cuando corresponda, este archivo, la documentación arquitectónica relevante y `README.md` cuando cambie la instalación o una capacidad pública. El código y la documentación no deben divergir.
