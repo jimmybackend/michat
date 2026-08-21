@@ -5,8 +5,8 @@ final class TaskExecutionStateMachine
 {
     private const TRANSITIONS = [
         'queued' => ['running', 'cancelled'],
-        'running' => ['completed', 'failed', 'cancelled'],
-        'waiting' => ['running', 'failed', 'cancelled'],
+        'running' => ['waiting', 'completed', 'failed', 'cancelled'],
+        'waiting' => ['running', 'completed', 'failed', 'cancelled'],
         'completed' => [],
         'failed' => [],
         'cancelled' => [],
