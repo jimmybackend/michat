@@ -1,12 +1,13 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/TaskToolApprovalGateContracts.php';
 
 /**
  * Atomically consumes one approved Tool permission before any physical effect.
  * A committed consumption is deliberately never reset automatically: this is
  * at-most-once permission consumption, not an exactly-once external effect.
  */
-final class TaskToolApprovalConsumptionService
+final class TaskToolApprovalConsumptionService implements TaskToolApprovalConsumptionInterface
 {
     public function __construct(private mysqli$db,private TaskToolApprovalProposalFactory$proposals){}
 

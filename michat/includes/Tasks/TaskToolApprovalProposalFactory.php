@@ -1,8 +1,9 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/TaskToolApprovalGateContracts.php';
 
 /** Builds a safe proposal without executing or persisting the exact operation. */
-final class TaskToolApprovalProposalFactory
+final class TaskToolApprovalProposalFactory implements TaskToolApprovalProposalFactoryInterface
 {
     public function __construct(private TaskToolRiskPolicy $risk,private TaskToolApprovalFingerprint $fingerprints) {}
 

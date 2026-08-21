@@ -1,8 +1,9 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/TaskToolApprovalGateContracts.php';
 
 /** Conservative Task HITL policy backed exclusively by registered Tool metadata. */
-final class TaskToolRiskPolicy
+final class TaskToolRiskPolicy implements TaskToolRiskPolicyInterface
 {
     public function __construct(private ToolRegistry $tools) {}
 
