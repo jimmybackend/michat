@@ -31,7 +31,9 @@ final class BedrockChatRuntime implements ChatRuntimeInterface
         if ($instruction !== '') $params['system'] = [['text'=>$instruction]];
         $bedrock = $this->bedrockRuntime ?? Config::getBedrockRuntime();
         $usage = ['prompt_tokens'=>0,'completion_tokens'=>0,'total_tokens'=>0];
+        $budget=isset($request->taskContext['task_id'])?TaskExecutionBudget::serverDefaults():null;
         for ($round=0; $round<5; $round++) {
+            $budget?->beforeModelRound();
             $this->checkpoint($request);
             $heartbeat && $heartbeat();
             $response = $bedrock->converse($params);
@@ -41,6 +43,7 @@ final class BedrockChatRuntime implements ChatRuntimeInterface
             $usage['prompt_tokens'] += (int)($response['usage']['inputTokens'] ?? 0);
             $usage['completion_tokens'] += (int)($response['usage']['outputTokens'] ?? 0);
             $usage['total_tokens'] += (int)($response['usage']['totalTokens'] ?? 0);
+            $budget?->recordUsage((int)($response['usage']['inputTokens']??0),(int)($response['usage']['outputTokens']??0));
             $blocks = $response['output']['message']['content'] ?? [];
             $text=''; $uses=[];
             foreach ($blocks as $block) { if(isset($block['text']))$text.=$block['text']; elseif(isset($block['toolUse']))$uses[]=$block['toolUse']; }
@@ -53,6 +56,7 @@ final class BedrockChatRuntime implements ChatRuntimeInterface
                 $this->checkpoint($request);
                 $heartbeat && $heartbeat();
                 $toolInput = ['arguments'=>(array)($use['input'] ?? []),'context'=>$this->serverContext($request)];
+                $budget?->beforeTool($this->tools->effect((string)($use['name']??'')));
                 $decision=$this->toolGate?->beforeExecute((string)($use['name']??''),$toolInput['arguments'],$toolInput['context'])??ToolExecutionGateDecision::allow();
                 if($decision->isPauseAlreadyPersisted())return ChatExecutionResult::pauseAlreadyPersisted($model,$request->traceId,$decision->safeSummary,$usage);
                 $result=$this->tools->execute((string)($use['name'] ?? ''),$toolInput);
