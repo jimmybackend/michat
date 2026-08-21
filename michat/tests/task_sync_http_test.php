@@ -22,6 +22,11 @@ $registry=new TaskStepExecutorRegistry();
 $registry->register('model',$double);
 $result=(new TaskStepExecutionService($registry))->execute(['step_type'=>'model'],static function():void{},static fn():bool=>false);
 $ok($double->calls===1&&$result->messageId===91,'TaskStepExecutionService ejecuta el double sin Bedrock');
+$pause=TaskStepExecutionResult::persistedWaitingUser('Se requiere aprobación: Modificar archivo');
+$pauseResponse=TaskSyncHttpPauseResponse::fromResult('00000000-0000-4000-8000-000000000000',$pause)?->toArray();
+$ok($pauseResponse===['ok'=>true,'approval_required'=>true,'status'=>'waiting_user','approval_summary'=>'Se requiere aprobación: Modificar archivo','task'=>['public_id'=>'00000000-0000-4000-8000-000000000000','status'=>'waiting_user']],'pausa durable produce DTO HTTP 200 seguro waiting_user');
+$encodedPause=json_encode($pauseResponse);$ok(!str_contains($encodedPause,'execution_id')&&!str_contains($encodedPause,'step_id')&&!str_contains($encodedPause,'task_id')&&!str_contains($encodedPause,'checkpoint_json')&&!str_contains($encodedPause,'input_json')&&!str_contains($encodedPause,'fingerprint')&&!str_contains($encodedPause,'consumer_execution_id'),'DTO de pausa no expone IDs internos, checkpoint, input ni fingerprint');
+$ok(TaskSyncHttpPauseResponse::fromResult('public',TaskStepExecutionResult::waiting('ordinary'))===null&&TaskSyncHttpPauseResponse::fromResult('public',TaskStepExecutionResult::completed('done',[],null,91))===null,'waiting ordinario y completed no se confunden con pausa durable');
 
 $chat=file_get_contents(__DIR__.'/../bedrock_chat2.php');
 $worker=file_get_contents(__DIR__.'/../bin/task_worker.php');
@@ -40,6 +45,9 @@ $ok(str_contains($taskBlock,'$taskAutoExecute')&&str_contains($taskBlock,'beginE
 $ok(str_contains($taskBlock,"'async_queued'=>true")&&str_contains($worker,'TaskExecutionRunner'),'async continúa en Worker');
 $ok(substr_count($taskBlock,'beginExecution(')===1&&substr_count($taskBlock,'resumeApproved(')===1,'HTTP crea una sola TaskExecution');
 $ok($servicePos!==false&&$exitPos!==false&&$exitPos>$servicePos,'Task sync sale antes del pipeline procedural');
+$executePos=strpos($taskBlock,'->create()->execute(');$pausePos=strpos($taskBlock,'TaskSyncHttpPauseResponse::fromResult',$executePos?:0);$invalidPos=strpos($taskBlock,'sync_task_step_did_not_complete',$executePos?:0);$completePos=strpos($taskBlock,'completeTurn(',$executePos?:0);$failPos=strpos($taskBlock,'failTurn(',$executePos?:0);
+$ok($executePos!==false&&$pausePos>$executePos&&$pausePos<$invalidPos&&$pausePos<$completePos&&$pausePos<$failPos,'HTTP detecta pausa tipada inmediatamente antes de failure y complete/fail');
+$pauseBranch=substr($taskBlock,$pausePos,$invalidPos-$pausePos);$ok(str_contains($pauseBranch,'jexit($persistedPause->toArray())')&&!str_contains($pauseBranch,'completeTurn')&&!str_contains($pauseBranch,'failTurn')&&!str_contains($pauseBranch,'heartbeat')&&!str_contains($pauseBranch,'finish('),'rama de pausa termina request sin complete, fail, heartbeat ni double finish');
 $bootstrap=file_get_contents(__DIR__.'/../includes/Tasks/bootstrap.php');
 $application=file_get_contents(__DIR__.'/../includes/Tasks/TaskApplicationService.php');
 $ok(str_contains($bootstrap,'TaskWaitService')&&str_contains($application,'approveStep('),'Approval Step y Wait permanecen disponibles');

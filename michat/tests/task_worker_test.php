@@ -13,7 +13,7 @@ $ok(str_contains($flags,"'task_async_execute' => false"),'async default false');
 $ok(str_contains($repo,"JSON_EXTRACT(s.input_json,'$.execution_mode')")&&str_contains($repo,"='async'"),'legacy y sync no se reclaman');
 foreach(["t.status IN ('ready','running')","s.status='ready'",'scheduled_at','FOR UPDATE SKIP LOCKED']as$needle)$ok(str_contains($repo,$needle),'claim seguro: '.$needle);
 $ok(str_contains($repo,"WHEN 'urgent' THEN 1")&&str_contains($repo,"WHEN 'high' THEN 2")&&str_contains($repo,"WHEN 'normal' THEN 3"),'prioridad explícita');
-$ok(str_contains($repo,'MAX(attempt_number)'),'attempt real');$ok(str_contains($repo,"status='running'")&&str_contains($repo,'lease_token'),'ownership por lease');
+$attemptBudget=file_get_contents(__DIR__.'/../includes/Tasks/TaskClaimAttemptBudget.php');$ok(str_contains($repo,'ORDER BY attempt_number,id_')&&str_contains($repo,'nextAttemptNumber')&&str_contains($attemptBudget,'$highest+1'),'attempt_number histórico monotónico separado del budget HITL');$ok(str_contains($repo,"status='running'")&&str_contains($repo,'lease_token'),'ownership por lease');
 $ok(str_contains($repo,'heartbeat_at=NOW(6)')&&str_contains($repo,'last_heartbeat_at=NOW(6)'),'heartbeat Task y Execution');
 $ok(str_contains($repo,"status='abandoned'")&&str_contains($repo,'execution_abandoned'),'recovery abandoned');
 $ok(str_contains($repo,"UPDATE Tasks SET status='failed'")&&!str_contains($repo,'DELETE FROM TaskExecutions'),'recovery conservadora e histórica');

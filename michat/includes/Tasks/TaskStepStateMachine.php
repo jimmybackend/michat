@@ -9,7 +9,7 @@ final class TaskStepStateMachine
         'running' => ['completed', 'failed', 'waiting_user', 'cancelled'],
         'waiting_user' => ['ready', 'cancelled'],
         'waiting_dependency' => ['ready', 'failed', 'cancelled'],
-        'completed' => [], 'failed' => [], 'cancelled' => [], 'skipped' => [],
+        'completed' => [], 'failed' => ['ready'], 'cancelled' => [], 'skipped' => [],
     ];
 
     public function assertTransition(string $from, string $to): void

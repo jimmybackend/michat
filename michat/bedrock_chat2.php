@@ -2780,6 +2780,8 @@ if (!empty($pipelineEffective['task_orchestrator']) && $saved_user_text_id) {
             $taskStepResult=(new TaskStepExecutionServiceFactory($db_connection))->create()->execute(
                 $taskStepContext, static function():void {}, static fn():bool=>false
             );
+            $persistedPause=TaskSyncHttpPauseResponse::fromResult($chatTaskContext->publicId,$taskStepResult);
+            if($persistedPause!==null)jexit($persistedPause->toArray());
             if ($taskStepResult->status !== 'completed' || $taskStepResult->messageId === null) {
                 throw new RuntimeException('sync_task_step_did_not_complete');
             }

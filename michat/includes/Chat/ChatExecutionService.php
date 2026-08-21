@@ -31,11 +31,12 @@ final class ChatExecutionService
         }
         $modelStartedAt=microtime(true);
         $result = $this->runtime->execute($request, $heartbeat);
+        if($result->isPauseAlreadyPersisted())return$result;
         $modelDuration=$result->latencyMs??max(0,(int)round((microtime(true)-$modelStartedAt)*1000));
         $this->activity?->emit($request->traceId,$request->userId,$request->sessionId,'respond','model_round_completed','completed','Respuesta del modelo completada','El modelo efectivo terminó la generación.',['usage'=>$result->tokenUsage,'stop_reason'=>$result->stopReason],$result->modelId,$modelDuration);
         if($this->responses&&!empty($request->taskContext['persist_final_response'])){
             $messageId=$this->responses->persist((int)$request->taskContext['task_id'],$request->userId,$request->sessionId,$result->replyText,$result->modelId,$request->traceId,$result->tokenUsage,$result->stopReason,$result->latencyMs);
-            $result=new ChatExecutionResult($result->replyText,$messageId,$result->modelId,$result->traceId,$result->tokenUsage,$result->tools,$result->artifacts,$result->warnings,$result->stopReason,$result->latencyMs);
+            $result=new ChatExecutionResult($result->replyText,$messageId,$result->modelId,$result->traceId,$result->tokenUsage,$result->tools,$result->artifacts,$result->warnings,$result->stopReason,$result->latencyMs,$result->controlDecision);
             $this->tokens?->recordFinal($request->userId,$request->sessionId,$messageId,$result->modelId,$result->tokenUsage,$result->latencyMs);
             if($this->memory){
                 $questionId=(int)($request->originMessageId??0);

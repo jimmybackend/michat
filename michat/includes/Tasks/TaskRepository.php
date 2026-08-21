@@ -6,6 +6,7 @@ final class TaskRepository{
  public function findById(int$id):?array{return$this->one('SELECT * FROM Tasks WHERE id_=?','i',[$id]);}
  public function findOwnedById(int$id,int$u):?array{return$this->one('SELECT * FROM Tasks WHERE id_=? AND user_id_=?','ii',[$id,$u]);}
  public function lockOwnedForResponse(int$id,int$u):?array{$s=$this->p('SELECT * FROM Tasks WHERE id_=? AND user_id_=? FOR UPDATE');$s->bind_param('ii',$id,$u);$this->x($s);$r=$s->get_result()->fetch_assoc();$s->close();return$r?:null;}
+ public function lockOwnedForRetry(int$id,int$u):?array{return$this->lockOwnedForResponse($id,$u);}
  public function findOwnedByPublicId(string$p,int$u):?array{return$this->one('SELECT * FROM Tasks WHERE public_id=? AND user_id_=?','si',[$p,$u]);}
  public function findOwnedByIdempotencyKey(int$u,string$k):?array{return$this->one('SELECT * FROM Tasks WHERE user_id_=? AND idempotency_key=?','is',[$u,$k]);}
  public function setCurrentStep(int$id,int$u,int$step):void{$s=$this->p('UPDATE Tasks SET current_step_id_=? WHERE id_=? AND user_id_=?');$s->bind_param('iii',$step,$id,$u);$this->x($s);$s->close();}
