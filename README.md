@@ -691,6 +691,10 @@ mysql -u root -p -e 'CREATE DATABASE michat CHARACTER SET utf8mb4 COLLATE utf8mb
 mysql -u root -p michat < adbbmis1_Cloud.sql
 ```
 
+MiChat carga el archivo `.env` de la raíz cuando existe. Las variables ya
+inyectadas por el proceso, PHP-FPM, Apache, EC2 o systemd tienen prioridad y no
+son sobrescritas por el archivo.
+
 Configure your environment:
 
 ```env
