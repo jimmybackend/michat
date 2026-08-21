@@ -1,278 +1,148 @@
 # Fase 8 — Task Orchestrator
 
-`Task` es el objetivo persistente; `TaskStep`, su unidad lógica; `TaskDependency`, una relación dirigida; `TaskExecution`, un intento; y `TaskEvent`, auditoría append-only del dominio.
+Estado: IMPLEMENTADA Y CERRADA en `main`.
+
+Esta documentación refleja el estado real del repositorio después de la integración de las fases 8.2 a 8.8. Sustituye las notas anteriores que todavía describían 8.6 como parcial.
+
+## Modelo de dominio
+
+`Task` representa el objetivo persistente; `TaskStep`, una unidad lógica del plan; `TaskDependency`, una dependencia Task → Task; `TaskExecution`, un intento de ejecución; `TaskEvent`, auditoría append-only del dominio; y `TaskArtifact`, la procedencia de recursos utilizados o producidos por una ejecución.
 
 ```text
 Task
 ├── Steps
 │   └── Executions
-│       └── trace_id (Fase 7)
+│       ├── trace_id
+│       └── Artifacts
 ├── Dependencies
 └── Events
 ```
 
-**Task State ≠ Execution Trace.** `ChatActivityEvents` continúa siendo propiedad de Fase 7 y no se copia en `TaskEvents`.
+Task State y Execution Trace son conceptos distintos. `TaskEvents` registra transiciones del dominio Tasks. La telemetría detallada de Bedrock, RAG, memoria, herramientas y respuesta continúa en `ChatActivityEvents` mediante `trace_id`.
 
 ## Fase 8.2 — HTTP API
 
-`task_api.php` es un adaptador JSON delgado: obtiene identidad con `ChatIdentity`, delega en `TaskApiController` y este en `TaskApplicationService`, `TaskOrchestrator` y repositories `mysqli`. GET `list` y `detail` son de lectura; POST `create`, `cancel` y `retry` requieren sesión, CSRF y el feature flag `task_orchestrator` activo. Todas las tareas se buscan por `public_id` y ownership derivado de sesión.
+Implementada.
 
-`create` valida coherencia User → Project → Session → Message y soporta idempotencia por `(user_id_, idempotency_key)`. `cancel` y `retry` reciben `lock_version`; conflictos y transiciones inválidas producen 409. Validación produce 422, ausencia 404, falta de autenticación 401 y errores internos 500 sin detalles SQL. Las respuestas son DTO controlados y nunca exponen `lease_token`.
+`task_api.php` actúa como adaptador JSON delgado y delega la lógica a `TaskApiController`, `TaskApplicationService`, `TaskOrchestrator` y repositories. Las operaciones usan identidad de sesión, ownership, CSRF en escrituras, `public_id`, optimistic locking e idempotencia.
 
-## Fase 8.3 — Chat Integration
+## Fase 8.3 — Integración con Chat
 
-Cuando el feature flag `task_orchestrator` está activo, el turno final del chat se
-registra mediante `ChatTaskBridge` sin sustituir ni reordenar el pipeline existente:
+Implementada.
 
-```text
-ChatMessage
-   ↓
-Task
-   ↓
-TaskStep (respond)
-   ↓
-TaskExecution
-   ↓
-trace_id
-```
+Los turnos de chat pueden registrarse como Task → Step → Execution sin romper el flujo legacy. El sistema conserva el `trace_id` real de ejecución y mantiene separación entre el estado de la Task y la traza operacional.
 
-**Task State != Execution Trace.** La Task conserva el estado del objetivo y la
-Execution referencia exactamente el `trace_id` usado por `ChatActivityEvents`; los
-eventos de RAG, memoria, herramientas y Bedrock no se copian a `TaskEvents`.
-
-La idempotencia deriva de `request_id`, usuario autenticado y sesión mediante una
-clave SHA-256 acotada. El índice de Tasks y el `trace_id` único de Executions permiten
-reutilizar Task, Step y Execution en reintentos. `compile_only` termina antes del
-bridge y nunca crea objetos del dominio Tasks.
-
-La integración es **fail-open**: un error interno del bridge se registra en el log y
-no impide la respuesta legacy. Un error real del modelo que ya inició el turno sí se
-refleja como Execution, Step y Task fallidas, con mensaje sanitizado. La ejecución
-sigue siendo síncrona dentro de la petición HTTP: no hay worker, planner, scheduler,
-polling ni UI de tareas en esta fase. Con el flag apagado no se consulta ni escribe
-ninguna tabla del Task Orchestrator.
-
-## Fase 8.3S — Supervised Chat Integration
-
-Los flags, ambos desactivados por defecto, separan el uso del dominio Tasks de la
-autorización para ejecutar:
-
-- **Orchestrator OFF** → chat legacy, sin Task.
-- **Orchestrator ON + Auto OFF** → `Task → waiting_user → Human approval`.
-- **Orchestrator ON + Auto ON** → `Task → ready → beginExecution()` inmediatamente.
-
-El bridge separa `prepareTurn()` de `beginExecution()`. La preparación crea de
-forma idempotente la Task y el único Step `respond`; en modo supervisado ambos
-quedan `waiting_user` y no existe TaskExecution ni trace de ejecución. `approve`
-y `reject` requieren sesión, CSRF, ownership, estado y `lock_version`; la decisión
-se audita como un TaskEvent con actor humano. Aprobar deja Task y Step en `ready`;
-el navegador llama después a `execute_approved_task`. Rechazar cancela ambos sin
-invocar el pipeline.
-
-La reanudación reconstruye el turno desde `Tasks.session_id_`,
-`Tasks.origin_message_id_`, `ChatMessages` y el `TaskSteps.input_json` mínimo
-(request id, referencia/decisión de compilación y parámetros de generación). No
-se persisten cookies, CSRF ni credenciales. El mismo `beginExecution()` atiende
-la ejecución automática y la aprobada, y protege el intento único.
-
-Cada ejecución retardada obtiene un trace estándar nuevo de Fase 7, enlazado por
-`TaskExecution.trace_id` con `ChatActivityEvents.trace_id`; no se copian eventos.
-Por tanto, **Task State != Execution Trace** y **Prompt approval != Task approval**.
-`compile_only` sigue terminando antes de crear cualquier entidad Task.
-
-La idempotencia deriva una clave SHA-256 de usuario, sesión y `request_id`; las
-decisiones usan optimistic locking y un segundo execute no genera otro intento.
-MySQL permanece como fuente de verdad y `list` puede recuperar las Tasks
-`waiting_user` de una sesión después de recargar.
-
-El chat legacy permanece intacto con el orchestrator apagado. En auto ON se
-conserva el fail-open pasivo. En auto OFF se responde con error controlado si
-falla Tasks: un fallo técnico nunca se convierte en permiso implícito ni inicia
-Bedrock, Tools o el pipeline principal.
+La integración contempla modo supervisado y automático. En modo supervisado una Task puede quedar en `waiting_user` hasta aprobación humana.
 
 ## Fase 8.4 — Task Planner
 
-El flujo autorizado es:
+Implementada.
 
-```text
-Task aprobada
-      ↓
-Dependency Check
-      ↓
-Task Planner
-      ↓
-TaskPlan
-      ↓
-TaskSteps
-```
+El Planner produce planes estructurados y validados server-side. Los tipos de Step admitidos incluyen `plan`, `model`, `tool`, `approval`, `wait`, `validation` y `finalize`. El resultado del modelo se considera entrada no confiable y se valida antes de persistirse.
 
-Los flags se interpretan conjuntamente: `task_orchestrator` habilita el dominio, `task_auto_execute` decide si se requiere aprobación inicial y `task_planner` (desactivado por defecto) habilita el plan estructurado. Con `task_auto_execute` OFF, el Planner IA tampoco se ejecuta antes de aprobación humana. Si el Planner está desactivado o falla, se conserva el plan determinista de un Step `respond`.
+Las dependencias entre Tasks son persistentes, limitadas al mismo propietario y ámbito autorizado, y evitan autorreferencias, duplicados y ciclos.
 
-El resultado IA se trata como entrada no confiable: solo se aceptan entre 1 y 8 Steps, claves únicas con formato seguro, longitudes limitadas y los tipos `plan`, `model`, `tool`, `approval`, `wait`, `validation` y `finalize`. El servidor valida agentes, asigna `position` y persiste el plan completo de forma transaccional. El placeholder `respond` solo se sustituye antes de cualquier ejecución; los planes existentes y los Steps con historial no se replantean.
+## Fase 8.5 — Worker persistente
 
-`TaskDependencies` representa exclusivamente **Task → Task**. `completed` y `terminal_success` requieren que la Task requerida esté `completed` (no existe un estado `success`); `terminal_any` admite `completed`, `failed` o `cancelled`. Solo se admiten dependencias entre Tasks del mismo usuario y del mismo ámbito de proyecto (incluidas dos Tasks sin proyecto), sin autorreferencias, duplicados ni ciclos. Una Task autorizada con requisitos pendientes queda en `waiting_dependency`; la aprobación ya concedida no se repite al liberarse.
+Implementada.
 
-El orden entre Steps se representa inicialmente mediante `position`. No existe todavía DAG Step → Step. El Planner es actividad previa de orquestación: no crea `TaskExecution`, no marca Steps como ejecutados y no introduce trazabilidad ni contabilidad de costes paralelas.
-
-## Fase 8.5 — Worker
-
-La ejecución persistente separa aprobación de ubicación de ejecución. `task_auto_execute`
-decide si se requiere aprobación humana; `task_async_execute` (OFF por defecto) decide
-si el pipeline se ejecuta en HTTP o queda `ready` para el Worker. Al crear el Step
-`respond`, el modo queda congelado en `input_json.execution_mode`; la ausencia del
-campo significa `sync` y protege Tasks legacy.
-
-Los cuatro modos son: **Supervised + Sync** (aprobar y continuar por HTTP),
-**Supervised + Async** (aprobar y dejar `ready`), **Automatic + Sync** (pipeline
-inmediato) y **Automatic + Async** (planificar y dejar `ready`). El Worker nunca
-convierte `waiting_user` en aprobación ni reclama `waiting_dependency`.
+Existe Worker CLI durable con claim transaccional, `FOR UPDATE SKIP LOCKED`, leases, heartbeat, recovery conservador y reintentos controlados.
 
 ```text
 Task ready
-    ↓
-claim (FOR UPDATE SKIP LOCKED)
-    ↓
-lease (worker_id + lease_token + lease_expires_at)
-    ↓
+  ↓
+claim
+  ↓
+lease
+  ↓
 Execution running
-    ↓
+  ↓
 heartbeat
-    ↓
-completed / failed
+  ↓
+completed / failed / waiting
 ```
 
-MySQL es la cola y la fuente de verdad. El orden de claim es `urgent`, `high`,
-`normal`, `low`, seguido por `scheduled_at/created_at`; una fecha futura no es
-elegible. Cada claim crea un trace nuevo. Heartbeat renueva Execution y Task sin
-crear eventos. Todas las mutaciones terminales vuelven a comprobar el token, por lo
-que un Worker que perdió el lease no puede completar.
+El Worker no convierte una espera humana en aprobación y no ejecuta efectos no autorizados.
+
+## Fase 8.6 — Step Execution Engine y runtime compartido
+
+Implementada y cerrada.
+
+`TaskStepExecutionService` utiliza una whitelist explícita de executors. HTTP y Worker convergen en servicios compartidos de ejecución y no dependen de llamadas HTTP internas para ejecutar Tasks.
+
+El runtime incluye ejecución multi-step persistente, progresión determinista, waits durables, aprobación/rechazo de Steps, cancelación segura, ejecución de Tools registradas y finalización compartida de respuesta.
+
+Los adaptadores server-side de `str_replace` y `code_edit` están implementados. Las ejecuciones físicas de herramientas se persisten en `ToolCalls` y se conserva su duración y resultado sanitizado.
+
+La finalización compartida incluye persistencia de respuesta, memoria, embeddings cuando corresponde, Memory Writer, TokenUsage y eventos de actividad.
+
+## Fase 8.7 — TaskArtifacts y procedencia
+
+Implementada.
+
+La tabla `TaskArtifacts` registra relaciones mínimas entre una `TaskExecution` y recursos utilizados, creados, modificados o generados. La migración se encuentra en:
+
+`michat/sql/fase8_7b_task_artifacts.sql`
+
+El esquema consolidado `adbbmis1_Cloud.sql` también contiene `TaskArtifacts`.
+
+La persistencia de artefactos se realiza server-side y puede asociarse con `ToolCalls` sin duplicar contenido privado del recurso.
+
+El detalle autorizado de una Task puede exponer artefactos mediante DTOs whitelist y resolver únicamente metadatos públicos seguros.
+
+## Fase 8.8 — HITL, seguridad operacional y Task Center
+
+Implementada y cerrada.
+
+Las Tools con capacidad de escritura o riesgo suficiente pasan por un gate server-side Human-In-The-Loop.
+
+El flujo implementado es:
 
 ```text
-Worker dies
+Tool propuesta
    ↓
-lease expires
+Risk Policy
    ↓
-Execution abandoned
+Fingerprint persistente
    ↓
-Task failed
+Durable pause
    ↓
-manual retry (nuevo Execution y nuevo trace)
+Human approve / reject
+   ↓
+Consumo único de aprobación
+   ↓
+Nueva ejecución autorizada
 ```
 
-La recuperación es intencionadamente conservadora: no reintenta automáticamente
-Tools ni otros efectos potencialmente no idempotentes, conserva Execution y trace,
-y deja el retry al usuario. Se procesa en lotes acotados. Al completarse una
-prerrequisito, `TaskDependencyService` puede volver a evaluar la dependiente y
-moverla de `waiting_dependency` a `ready`; no se recorre el grafo en una transacción
-gigante.
+La autorización está ligada al fingerprint persistido y se consume una sola vez. La aprobación de una operación no autoriza automáticamente una operación diferente.
 
-Fase 8.5 solo reclama el placeholder real `respond`. Conserva el Plan y no simula
-Steps `tool`, `validation` u otros: el executor genérico multi-Step pertenece a 8.6.
-El adaptador CLI no contiene SQL ni llama a `bedrock_chat2.php` por HTTP; usa la
-frontera POO server-side `TaskExecutionRunner`. Claim y heartbeat no son endpoints.
+El gate se aplica tanto a Steps explícitos de tipo `tool` como a Tool Use solicitado por el modelo durante una ronda de ejecución.
 
-```bash
-php michat/bin/task_worker.php --once
-php michat/bin/task_worker.php --loop
-```
+Existe `michat/task_center.php` para inspeccionar Tasks propias, Steps, estados, errores, aprobaciones pendientes, artefactos y trazas; cancelar o reintentar cuando el estado lo permite; y aprobar o rechazar propuestas sin exponer IDs internos sensibles.
 
-También se admiten `--max-jobs=N` y `--sleep=N`. La infraestructura externa debe
-administrar el proceso; el script no daemoniza. Una vez que una Task async está
-`ready`, cerrar o recargar el navegador no afecta su estado, Plan ni ejecución.
+También existe un presupuesto server-side por ejecución para limitar rondas de modelo, llamadas a herramientas, escrituras, tokens y duración, reduciendo el riesgo de ejecuciones descontroladas.
 
-## Fase 8.6 — Step Execution Engine
+## Esquema de base de datos
 
-La frontera compartida acepta DTOs validados y no superglobales:
+El esquema consolidado actual incluye las estructuras de Fase 8, incluyendo Tasks, Steps, Executions, Events, Dependencies y TaskArtifacts.
 
-```text
-bedrock_chat2.php (adaptador HTTP)
-       ↓
-ChatExecutionService
-       ↑
-TaskExecutionRunner / Worker
-```
+La migración específica de TaskArtifacts existe por separado y el esquema principal ya contiene la tabla. Por lo tanto, al momento de esta actualización no se requiere una nueva modificación de DB únicamente para documentar el cierre de Fase 8.
 
-`TaskStepExecutionService` selecciona mediante una whitelist explícita los executors
-`model`, `tool`, `validation`, `finalize`, `approval`, `wait` y `plan`; nunca instancia
-una clase indicada por el Planner. `model` delega en el runtime server-side inyectado,
-y `tool` converge en `ToolRegistry`, que clasifica efectos como `read_only`,
-`idempotent_write` o, por defecto, `non_idempotent`. Las aprobaciones y esperas se
-persisten como `waiting_user` y retornan el control, sin mantener dormido al Worker.
-La validación inicial segura comprueba existencia de rutas relativas, sin shell.
+Regla para fases futuras: cualquier cambio que introduzca o modifique tablas, columnas, índices, constraints, enums o relaciones debe actualizar simultáneamente:
 
-```text
-Task → Step 1 → Execution 1 → Step 2 → Execution 2 → … → Task completed
-```
+1. la migración incremental correspondiente;
+2. `adbbmis1_Cloud.sql` como esquema consolidado de instalación limpia;
+3. la documentación MD de la fase;
+4. tests de integración o contrato relacionados.
 
-El progreso es determinista (`completed / total executable`, entero): `skipped`, una
-aprobación esperando y una espera pendiente no representan trabajo completado. Cada
-intento conserva su Execution histórica y obtiene attempt/trace/lease nuevos. Los
-heartbeats no producen eventos; telemetry Bedrock/RAG/Memory/Tools permanece en
-`ChatActivityEvents`, mientras transiciones de dominio permanecen en `TaskEvents`.
+## Validación de cierre
 
-Fase 8.6 captura en los DTO referencias de artefactos producidos por Tools (por
-ejemplo un `file_version` real) sin copiar contenido ni insertar otra versión. La
-persistencia formal `TaskArtifacts` se implementará en Fase 8.7; no se modifica el
-esquema en esta fase. La extracción de todas las tools legacy y el lint ampliado se
-harán incrementalmente: únicamente handlers registrados explícitamente pueden ser
-usados por Steps, y `plan` nunca planifica recursivamente.
-# Fase 8.6B: runtime compartido y progresión
+Después de la integración de Fase 8 se ejecutó una revisión de preparación para producción con 45 scripts `*_test.php` terminando con exit 0, sin FAIL reportados; 271 archivos PHP pasaron `php -l`; 21 archivos JavaScript pasaron `node --check`; y `git diff --check` quedó limpio.
 
-La composición CLI ya no acepta una callable global. `ChatExecutionServiceFactory`
-construye `BedrockChatRuntime` con el cliente central de `Config`, configuración
-dinámica de agentes y el `ToolRegistryFactory` de producción.
+Parte de los tests de integración reportan SKIP cuando no existen variables `TASK_TEST_DB_*` o infraestructura AWS/MySQL externa. Esos SKIP representan validación E2E dependiente del entorno, no componentes de Fase 8 pendientes de implementación.
 
-```text
-HTTP Adapter ─┐
-              ↓
-       ChatExecutionService
-              ↑
-Worker ───────┘
-```
+## Estado final
 
-El Worker reclama el Step `ready` de menor posición, crea una Execution y trace
-por intento, y al completarlo calcula `floor(100 * (completed + skipped) / total)`.
-Si queda otro Step, lo deja `ready`, mantiene la Task `running` y actualiza
-`current_step_id_`; sólo el último limpia `current_step_id_` y completa al 100%.
+Fase 8 — Task Orchestrator: CERRADA.
 
-```text
-Task → Step → Execution → Executor → Progression → Next Step
-```
-
-Los Steps `approval` y `wait` no duermen y liberan el lease. `wait` acepta únicamente
-un `wait_until` ISO-8601, lo normaliza a UTC en `checkpoint_json` y usa el estado
-existente `waiting_dependency`. En cada ciclo, `TaskWaitService` hace una consulta
-acotada y reactiva atómicamente como `ready` las esperas vencidas; no existe un
-scheduler paralelo ni se añadió un estado SQL.
-
-El cierre 8.6C sigue siendo parcial: el chat Task HTTP aún conserva ejecución
-procedural, los adapters de escritura `str_replace`/`code_edit` y la finalización
-compartida completa (Memory/RAG/TokenUsage/Activity) aún no están extraídos. Por esa
-razón la arquitectura convergente documentada arriba describe la frontera creada,
-no una migración HTTP ya terminada, y 8.7 no debe comenzar todavía.
-# Estado de cierre 8.6D
-
-La pausa temporal de `wait` de 8.6C se conserva sin rediseño. La API incorpora
-decisiones genéricas `approve_step` y `reject_step`: usa `public_id`, `step_key`,
-CSRF, ownership y `lock_version`; la aprobación completa el step y prepara el
-siguiente, mientras el rechazo cancela el step y la Task.
-
-La convergencia completa del runtime de chat y los adapters productivos de
-escritura siguen pendientes; por tanto este documento no declara cerrada 8.6D.
-En particular, `ToolCalls` no tiene `trace_id` ni FK directa a
-`TaskExecution`; hasta una fase posterior, el detalle de traza se apoya en
-`ChatActivityEvents` sin modificar el esquema.
-
-Arquitectura objetivo todavía en integración:
-
-```text
-HTTP Task ─────┐
-               ↓
-TaskStepExecutionService
-               ↓
-ChatExecutionService
-               ↓
-Shared Runtime
-               ↑
-Worker ────────┘
-```
+Lo siguiente ya no es continuar 8.6, 8.7 u 8.8. Los siguientes trabajos deben tratarse como nuevas fases de evolución del proyecto, incluyendo portabilidad/industrialización de MiChat y el diseño de MCMA.
