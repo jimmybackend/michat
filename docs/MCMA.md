@@ -85,23 +85,33 @@ La estructura interna no pretende estar completamente impuesta por humanos. Los 
 
 La meta es una representación eficiente para la IA, no necesariamente un árbol de archivos pensado para lectura manual humana.
 
-## 4. Memoria HOT, TIBIO y COOL
+## 4. Memory levels: HOT, WARM, COLD and FROZEN
 
-Los archivos/memorias se manejarán conceptualmente en tres estados:
+Los archivos/memorias se manejarán conceptualmente en cuatro estados. Los nombres oficiales que se utilizarán en archivos, código y documentación son en inglés:
 
 ### HOT
 
-Memoria activa, frecuente o de alta utilidad inmediata.
+Memoria caliente: activa, frecuente o de alta utilidad inmediata. Es el nivel de mayor actividad y acceso más cercano al trabajo actual del usuario.
 
-### TIBIO
+### WARM
 
-Memoria de uso intermedio o contextual que no necesita permanecer siempre en el área de mayor actividad.
+Memoria tibia: información todavía relevante y relativamente accesible, pero que no necesita permanecer en el nivel de actividad inmediata de HOT.
 
-### COOL
+### COLD
 
-Memoria más profunda o de uso poco frecuente, conservada para recuperación cuando vuelva a ser necesaria.
+Memoria fría: información de menor frecuencia de uso o mayor profundidad. Se conserva y puede recuperarse cuando el contexto vuelva a requerirla.
 
-Estos estados no son necesariamente permanentes. La actividad posterior del usuario puede hacer que una memoria cambie de nivel. Una memoria COOL puede volver a TIBIO o HOT cuando nuevas interacciones demuestren nuevamente su relevancia.
+### FROZEN
+
+Memoria congelada: información de muy baja actividad o profundidad máxima dentro de este esquema. Permanece conservada, fuera del trabajo habitual, pero puede recuperarse o reactivarse si nuevas interacciones demuestran nuevamente su relevancia.
+
+Los cuatro estados son dinámicos y no necesariamente permanentes:
+
+```text
+HOT ↔ WARM ↔ COLD ↔ FROZEN
+```
+
+La actividad posterior del usuario y el trabajo de los agentes pueden promover o degradar una memoria entre estos niveles. Por ejemplo, una memoria `FROZEN` puede regresar a `COLD`, `WARM` o `HOT` cuando vuelva a ser necesaria.
 
 La clasificación debe ayudar a controlar profundidad, velocidad de recuperación, ruido contextual y consumo de recursos.
 
@@ -224,7 +234,7 @@ El principio buscado es que el conocimiento colectivo pueda mejorar estrategias 
 6. La memoria persistente vive bajo `data/chat/{iduser}/memoria/`.
 7. `index.md` es el punto de entrada de la memoria basada en archivos.
 8. Los agentes pueden administrar estructura, nombres, formatos y contenido dentro de políticas controladas.
-9. La memoria se organiza dinámicamente mediante HOT, TIBIO y COOL.
+9. La memoria se organiza dinámicamente mediante cuatro niveles oficiales: `HOT`, `WARM`, `COLD` y `FROZEN`.
 10. Los agentes comienzan supervisados y ganan autonomía mediante resultados comprobados.
 11. Prompts y parámetros deben poder afinarse y versionarse.
 12. El sistema aprende sobre resultados e interacciones; no modifica directamente los pesos del LLM.
