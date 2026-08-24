@@ -3545,6 +3545,10 @@ window.addEventListener('pagehide', () => {
 (async function boot() {
   setStatus('Cargando...');
   await Promise.all([loadSessions(), loadProjects()]);
+  const requestedSessionId = Number(new URLSearchParams(window.location.search).get('session_id') || 0);
+  if (requestedSessionId > 0 && sessions.some(session => Number(session.id) === requestedSessionId)) {
+    await selectSession(requestedSessionId);
+  }
   setStatus('');
   startNotifyPoller();
 }());

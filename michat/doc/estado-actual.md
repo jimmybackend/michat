@@ -99,7 +99,7 @@ Los tests que necesitan `TASK_TEST_DB_*`, MySQL real o infraestructura AWS puede
 
 Fase 8 — Task Orchestrator está **CERRADA**. Su infraestructura ya incluye Tasks, Steps, Executions, Worker persistente, Planner, Tools server-side, HITL, approvals, waits temporales persistentes, dependencias, prioridad backend, `scheduled_at` como límite *not-before*, `due_at`, artifacts, events, trace, memoria/RAG y un Task Center básico.
 
-### Fase 9 — SIGUIENTE: Task Center 2.0
+### Fase 9 — EN CURSO: Task Center 2.0
 
 Fase 9 no creará Task Center desde cero. Evolucionará la interfaz existente hacia una UX operativa tipo Monday para proyectos, Tasks y trabajo humano/IA.
 
@@ -115,7 +115,53 @@ Su alcance previsto comprende:
 - artifacts e historial;
 - navegación a chat y trace.
 
-Estas capacidades se consideran **PLANIFICADAS** hasta que exista implementación, integración y validación. Fase 9 debe reutilizar el dominio y runtime cerrados en Fase 8, sin duplicarlos ni reabrirlos.
+#### Fase 9A — Base de navegación y descubrimiento completada
+
+`michat/task_center.php` es la superficie oficial e independiente de Task Center; `michat/chat.php` conserva la responsabilidad de conversación normal. Ambas reutilizan las mismas Tasks, Projects y ChatSessions existentes, sin duplicar backend ni modificar el esquema.
+
+Fase 9A incorpora:
+
+- búsqueda combinable sobre los campos reales `Tasks.title` y `Tasks.objective`;
+- filtros combinables por estado, prioridad, proyecto y sesión;
+- paginación real mediante el contrato existente `limit` / `offset` y su metadata `total`;
+- persistencia de filtros y página en la URL;
+- nombres de proyecto y sesión en el listado, junto con estado, prioridad y progreso;
+- navegación chat → Task Center y Task → chat mediante una `session_id` validada contra las sesiones del usuario;
+- estados vacíos y validación server-side de búsqueda y paginación;
+- conservación del aislamiento por `Tasks.user_id_` tanto en listado como en conteo.
+
+No se añadieron tablas, columnas ni índices. El resto de Fase 9 — fechas operativas más ricas, explicación y gestión visual de waits/dependencias, tablero, agrupaciones e historial/artifacts ampliados — permanece **PLANIFICADO**. Fase 9 debe seguir reutilizando el dominio y runtime cerrados en Fase 8, sin duplicarlos ni reabrirlos.
+
+#### Fase 9B — Contexto operativo completado
+
+Task Center expone ahora, sin alterar el motor ni el esquema:
+
+- `scheduled_at` y `due_at`, incluyendo la presentación derivada de Tasks vencidas sin crear un estado persistente nuevo;
+- el Step señalado por `Tasks.current_step_id_`, cargado junto al listado sin consultas N+1, con tipo, estado, agente y modelo cuando existen;
+- situaciones operativas derivadas de estados reales: ejecutable, en ejecución, espera temporal, bloqueo por dependencias y acción humana requerida;
+- la fecha pública `wait_until` exclusivamente para Wait Steps, sin exponer `checkpoint_json`;
+- dependencias con título, condición, estado y distinción entre satisfechas y bloqueantes;
+- gestión mínima para agregar y quitar dependencias mediante las APIs existentes, que mantienen en servidor ownership, scope de proyecto, duplicados, self-dependency y detección de ciclos.
+
+Los filtros operativos adicionales siguen pendientes: 9B reutiliza los filtros de estado `waiting_user` y `waiting_dependency` de 9A en vez de añadir semánticas de consulta redundantes. Al cierre de 9B, el tablero y las agrupaciones todavía estaban planificados; 9C, documentada a continuación, implementa ese tablero. El scheduling declarativo continúa reservado para Fase 10.
+
+#### Fase 9C — Tablero operativo completado
+
+La superficie oficial `michat/task_center.php` ofrece ahora las vistas **Lista** y **Tablero** sobre la misma respuesta owned y paginada de Tasks. El tablero no es una fuente de verdad nueva: agrupa visualmente los estados persistentes del Orchestrator así:
+
+- Pendientes: `pending`, `ready`;
+- En ejecución: `running`;
+- Requiere acción: `waiting_user`;
+- Esperando / bloqueadas: `waiting_dependency`;
+- Completadas: `completed`;
+- Fallidas / canceladas: `failed`, `cancelled`;
+- Otros: fallback defensivo que conserva visible cualquier valor desconocido.
+
+Las tarjetas reutilizan el DTO enriquecido de 9B y abren el mismo detalle que la Lista; no consultan Steps, Dependencies, Events ni detalles individualmente durante el render del tablero. Búsqueda, estado, prioridad, proyecto, sesión y contexto operativo se comparten entre vistas, y `view=board` se conserva en la URL.
+
+El tablero representa de forma explícita **la página filtrada actual** (`limit` / `offset`): su aviso muestra el rango visible frente al total filtrado y los contadores de columna se etiquetan como visibles. No carga todas las Tasks ni presenta esos conteos como totales globales.
+
+9C no añade drag/drop, orden persistente, columnas configurables, endpoints genéricos de estado ni transiciones arbitrarias. Approve, reject, resume, retry y cancel permanecen como acciones de dominio en el detalle compartido. No se modificó la DB. Fase 9 continúa **EN CURSO**; historial/artifacts ampliados, dependencias inversas o grafo y pulido posterior permanecen pendientes.
 
 ### Fase 10 — PLANIFICADA: Scheduling y automatización declarativa
 
