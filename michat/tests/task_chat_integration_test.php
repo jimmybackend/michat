@@ -34,7 +34,7 @@ $ok(strpos($orchestrator,'prepareChatTurn')<strpos($orchestrator,'executions->cr
 $ok(str_contains($chat,"'approval_required'=>true"),'respuesta controlada exige aprobación');
 $ok(str_contains($chat,"'task_execution_unavailable'"),'fallo supervisado no hace fail-open');
 $ok(str_contains($api,"\$action==='approve'")&&str_contains($api,"\$action==='reject'"),'API expone approve y reject');
-$ok(str_contains($chat,"execute_approved_task")&&str_contains($chat,'resumeApproved('),'Task aprobada reanuda el pipeline común');
+$ok(str_contains($chat,"execute_approved_task")&&str_contains($chat,'resumeApprovedToolTask('),'Task aprobada reanuda el pipeline común');
 $ok(str_contains($chat,'approvedChatTurn('),'reanudación usa contexto persistido y ownership');
 $factory=file_get_contents(__DIR__.'/../includes/Chat/ChatExecutionServiceFactory.php');
 $stepFactory=file_get_contents(__DIR__.'/../includes/Tasks/TaskStepExecutionServiceFactory.php');
