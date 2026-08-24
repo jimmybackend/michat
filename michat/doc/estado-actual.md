@@ -99,11 +99,11 @@ Los tests que necesitan `TASK_TEST_DB_*`, MySQL real o infraestructura AWS puede
 
 Fase 8 — Task Orchestrator está **CERRADA**. Su infraestructura ya incluye Tasks, Steps, Executions, Worker persistente, Planner, Tools server-side, HITL, approvals, waits temporales persistentes, dependencias, prioridad backend, `scheduled_at` como límite *not-before*, `due_at`, artifacts, events, trace, memoria/RAG y un Task Center básico.
 
-### Fase 9 — EN CURSO: Task Center 2.0
+### Fase 9 — CERRADA: Task Center 2.0
 
-Fase 9 no creará Task Center desde cero. Evolucionará la interfaz existente hacia una UX operativa tipo Monday para proyectos, Tasks y trabajo humano/IA.
+Fase 9 evolucionó la interfaz existente, sin reconstruir Task Center, hacia una UX operativa para proyectos, Tasks y trabajo humano/IA.
 
-Su alcance previsto comprende:
+Su alcance cerrado comprende:
 
 - navegación por proyecto y sesión;
 - búsqueda, filtros combinables y paginación;
@@ -162,6 +162,57 @@ Las tarjetas reutilizan el DTO enriquecido de 9B y abren el mismo detalle que la
 El tablero representa de forma explícita **la página filtrada actual** (`limit` / `offset`): su aviso muestra el rango visible frente al total filtrado y los contadores de columna se etiquetan como visibles. No carga todas las Tasks ni presenta esos conteos como totales globales.
 
 9C no añade drag/drop, orden persistente, columnas configurables, endpoints genéricos de estado ni transiciones arbitrarias. Approve, reject, resume, retry y cancel permanecen como acciones de dominio en el detalle compartido. No se modificó la DB. Fase 9 continúa **EN CURSO**; historial/artifacts ampliados, dependencias inversas o grafo y pulido posterior permanecen pendientes.
+
+#### Fase 9D — Relaciones y dependencias operativas completadas
+
+Task Center sustituye la captura manual del `public_id` por un selector asistido que reutiliza `GET task_api.php?action=list`: busca de forma incremental con debounce, solicita como máximo 20 resultados owned, aplica el proyecto de la Task cuando existe y excluye en la experiencia la propia Task, las dependencias ya agregadas y resultados fuera de scope. El identificador elegido sigue siendo el `public_id` exigido por `add_dependency`; el filtrado visual no sustituye las validaciones server-side ante carreras, ciclos, duplicados, ownership, scope o Tasks inexistentes.
+
+El detalle presenta ahora una sección de relaciones con dos sentidos navegables:
+
+- **Esta Task depende de** muestra título y contexto humano, estado, prioridad, condición real y si la relación está satisfecha o continúa bloqueando;
+- **Tasks que dependen de esta** muestra las Tasks posteriores, sus estados, prioridades, contextos y condición;
+- seleccionar cualquier relación abre la misma abstracción de detalle, tanto desde Lista como desde Tablero, conservando el estado de filtros, vista y paginación en la URL;
+- quitar una dependencia y agregar una nueva continúan usando exclusivamente `remove_dependency` y `add_dependency`.
+
+Las dependencias inversas se incorporan al contrato `detail` como `dependents`. Una consulta JOIN compacta exige ownership de la Task requerida **y** de cada Task dependiente; no expone IDs internos ni ejecuta una consulta por relación. Las dependencias directas también enriquecen su DTO en su JOIN existente con prioridad, proyecto y sesión. El selector usa una única consulta listada/paginada y no solicita detalles por candidato, por lo que 9D no introduce N+1.
+
+Se conservan exactamente las condiciones `completed`, `terminal_success` y `terminal_any`, con etiquetas humanas en la UI y valores de dominio sin cambios. El DAG fue evaluado y **pospuesto**: las listas bidireccionales aportan una representación más clara, accesible y móvil de las relaciones inmediatas, mientras un grafo local parcial podría sugerir una visión transitiva incompleta. No se añadieron tablas, columnas, índices, librerías ni endpoints.
+
+Las verificaciones de 9D cubren filtrado y límite del selector, estados vacíos, DTOs directos/inversos navegables, condiciones, contrato API, ownership de ambos extremos en la consulta inversa, UI responsive y regresión de Task Center. La integración MySQL real queda marcada como SKIP cuando no están configuradas las variables `TASK_TEST_DB_*`.
+
+Fase 9 continúa **EN CURSO**. Para 9E quedan el historial operativo, Events y Artifacts ampliados; para 9F quedan responsive/accesibilidad finales, estados de carga/error, E2E en navegador e integración MySQL real. Los filtros operativos específicos pendientes de 9C tampoco se adelantan en 9D.
+
+#### Fase 9E — Historial operativo completado
+
+Task Center transforma ahora los `TaskEvents` reales en una timeline operativa dentro del mismo detalle utilizado por Lista y Tablero. Cada entrada conserva el orden autoritativo de `TaskEvents.id_`, muestra `created_at`, `event_key` con una etiqueta humana cuando la clave es conocida, `summary`, el `actor_type` persistido y la transición `from_status → to_status` solamente cuando ambos valores existen. Los Events relacionados de forma explícita muestran el título del Step, el intento de Execution y acceso al trace correspondiente. Claves o actores futuros/desconocidos se presentan sin inferir semántica adicional.
+
+El contrato público deja de devolver `details_json`: la timeline no renderiza payloads internos. La query owned enlaza Task, Step y Execution en una sola operación, exige ownership de la Task y comprueba coherencia de las relaciones mediante `task_id_`. Se consultan como máximo 101 filas para publicar los 100 Events más recientes en orden ascendente y el indicador `history.has_earlier`; la UI avisa honestamente cuando existe historial anterior no incluido.
+
+La sección **Intentos de ejecución** presenta el `attempt_number` persistido, estado, Step relacionado, agente/modelo, inicio, final, error sanitizado y la acción **Ver trace** cuando `trace_id` existe. Los errores de Task, Step y Execution eliminan caracteres de control, redactan credenciales comunes, ocultan texto con forma de SQL y se acotan a una línea de 300 caracteres; los resúmenes públicos se limitan a 1000 caracteres. No se exponen IDs internos, `worker_id`, leases ni tokens. La query de Executions resuelve el Step con un único JOIN owned.
+
+La sección **¿Qué produjo esta Task?** mantiene los Artifacts como colección independiente porque no existe un Event que los referencie inequívocamente. Añade fecha y, usando las colecciones ya cargadas, el Step y número de intento de la Execution de origen. Conserva exclusivamente la metadata pública resuelta en batch —nombre, versión o rango de líneas según el recurso—, sin IDs, paths, S3 keys, URLs inventadas ni previews.
+
+Los `ToolCalls` no se incorporan directamente en 9E. No existe relación Task/Step/Execution en `ToolCalls`; la única relación inequívoca es opcional a través de un Artifact, y el acceso histórico existente separa deliberadamente su resolución para no exponer `params`, `target_path` o `result`. Los Events reales de aprobación de Tools sí aparecen en la timeline por sus claves persistidas.
+
+No se modificó la DB ni se crearon tablas, Events, estados, endpoints o viewers. El detalle realiza un número constante de queries y resoluciones batch, sin fetch por Event, Execution, Step o Artifact. Las pruebas cubren orden estable con timestamps iguales, Events desconocidos, actor presente/desconocido, referencias reales, payload privado omitido, límite, ownership, Executions múltiples, errores sanitizados, traces, Artifacts y regresiones de 8/9A–9D. Las integraciones MySQL/AWS y E2E navegador permanecen como SKIP cuando falta infraestructura.
+
+Al cierre de 9E, Fase 9 continuaba **EN CURSO** y quedaban para 9F el responsive y accesibilidad finales, estados de carga/error, consistencia visual, validación E2E autenticada, integración MySQL real, regresión/auditoría de seguridad integral y cierre formal de Task Center 2.0.
+
+#### Fase 9F — Hardening y cierre completados
+
+El cierre de Task Center 2.0 endurece la superficie existente sin añadir un bloque funcional ni modificar el dominio. Los filtros y el selector de dependencias tienen labels explícitos; Lista y Tablero conservan botones nativos; el detalle recibe foco después de una navegación dinámica; los resultados seleccionables comunican `aria-pressed`; y una región `role=status` anuncia carga, éxito y error sin depender de diálogos bloqueantes. Se añadieron estilos de `focus-visible`, soporte para movimiento reducido y targets/flujo responsive coherentes.
+
+Las cargas de Lista ignoran respuestas antiguas que lleguen fuera de orden. Las acciones HITL y de dependencias utilizan guards locales, deshabilitan el control iniciador y anuncian progreso/resultado, mientras el servidor permanece como autoridad. Listado, Tablero, detalle y candidatos comunican `aria-busy`; los errores de protocolo o respuestas no JSON reciben mensajes públicos controlados.
+
+El hardening responsive elimina la combinación de columnas mínimas que podía desbordar tablets, permite wrap de acciones y metadata, adapta cabecera/filtros/paginación a móvil y conserva el scroll horizontal intencional del Tablero. Las fechas visibles de Lista reutilizan la presentación UTC común.
+
+La auditoría XSS confirmó escape de títulos, objetivos, Events, actores, errores, Artifacts, proyectos, sesiones, agentes y modelos. La prueba de seguridad ejecuta el helper real con `< > & " '` y verifica su neutralización. Los DTOs conservan privadas las identidades internas, leases, checkpoints, inputs, payloads de Events, referencias internas de Artifacts, paths y secretos.
+
+9F no cambia DB, endpoints, estados, Worker, Orchestrator, Chat ni viewers. La suite disponible termina sin FAIL. La validación E2E autenticada, MySQL real y las integraciones AWS se registran como SKIP de entorno porque no hay navegador, sesión reutilizable ni `TASK_TEST_DB_*`; estos SKIPS no ocultan regresiones conocidas y no bloquean el cierre conforme a los criterios acordados.
+
+**Fase 9 queda CERRADA.** 9A cerró navegación y descubrimiento; 9B, contexto operativo; 9C, Lista/Tablero; 9D, relaciones; 9E, historial; y 9F, accesibilidad, feedback, responsive, seguridad y regresión final. La deuda no bloqueante comprende E2E/MySQL/AWS en infraestructura completa, filtros operativos específicos, paginación histórica avanzada y una auditoría WCAG con navegador.
+
+**SIGUIENTE FASE: Fase 10 — Scheduling y automatización declarativa.** No se implementa scheduling, recurrencia, cron ni automatización durante 9F.
 
 ### Fase 10 — PLANIFICADA: Scheduling y automatización declarativa
 

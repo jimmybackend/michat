@@ -592,8 +592,8 @@ sin modificar el código fuente.
 
 ### Current roadmap
 
-- [ ] **Phase 9 — Next:** Task Center 2.0, an operational project/Task UX for human and AI work. The existing Task Center is the foundation; navigation, search, combined filters, pagination, visible priority and dates, waits and dependency management, operational list/board views, richer history/artifacts and chat/trace navigation remain planned.
-- [ ] **Phase 10 — Planned:** product scheduling and declarative automation. The existing Worker, not-before `scheduled_at`, temporal Wait Steps, dependencies, retry and recovery do not yet constitute a product Scheduler; recurrence, triggers, operational deadlines, condition watchers and declarative retry/backoff remain future work.
+- [x] **Phase 9 — Closed:** Task Center 2.0 provides navigation, search, combined filters, pagination, operational List/Board views, visible priority and dates, waits, HITL actions, direct/inverse dependency management, owned history, executions, artifacts, and chat/trace navigation. Phase 9F completed accessibility, loading/error feedback, responsive and security hardening without database changes.
+- [ ] **Phase 10 — Next:** product scheduling and declarative automation. The existing Worker, not-before `scheduled_at`, temporal Wait Steps, dependencies, retry and recovery do not yet constitute a product Scheduler; recurrence, triggers, operational deadlines, condition watchers and declarative retry/backoff remain future work.
 - [ ] **Phase 11 — Planned:** operational autonomy inside MiChat, building on the Planner, Model/Tool Steps, Worker, Memory/RAG, HITL, limits and recovery. Subtasks, replanning, persistent goals, internal delegation, executor roles, autonomy policies, global budgets and cross-session continuity require design and audit before implementation.
 - [ ] **Phase 12 — Planned:** progressive PSR-4 adoption, fewer manual requires, thin endpoints, schema migrations/versioning, reproducible installation, portability-driven AI/storage abstractions, MySQL/AWS E2E coverage, final security review, packaging and stable release.
 
