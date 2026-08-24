@@ -1,0 +1,20 @@
+<?php
+declare(strict_types=1);
+final class TaskRecurrenceEvaluator{
+ public function __construct(private mysqli$db,private TaskRecurrenceRuleRepository$rules,private TaskRecurrenceOccurrenceRepository$occurrences,private TaskRepository$tasks,private TaskManualTaskCreator$creator,private TaskRecurrenceMisfirePlanner$misfires,private int$ruleBatch=10,private int$catchUpLimit=5,private int$retryBatch=10,private int$orphanSeconds=300){if($ruleBatch<1||$ruleBatch>50||$catchUpLimit<1||$catchUpLimit>20||$retryBatch<1||$retryBatch>50||$orphanSeconds<30||$orphanSeconds>86400)throw new InvalidArgumentException('recurrence_evaluator_config_invalid');}
+ /** @return array{rules_checked:int,occurrences_reserved:int,tasks_materialized:int,occurrences_failed:int,occurrences_skipped:int,retries_claimed:int} */
+ public function evaluate(?DateTimeImmutable$now=null):array{
+  $now=($now??new DateTimeImmutable('now',new DateTimeZone('UTC')))->setTimezone(new DateTimeZone('UTC'));$m=['rules_checked'=>0,'occurrences_reserved'=>0,'tasks_materialized'=>0,'occurrences_failed'=>0,'occurrences_skipped'=>0,'retries_claimed'=>0];
+  foreach($this->claimRetryable($now)as$item){$m['retries_claimed']++;$this->materialize($item,$m);}
+  $processed=[];for($i=0;$i<$this->ruleBatch;$i++){$batch=$this->reserveNextRule($now,$m,$processed);if($batch===null)break;$processed[]=$batch['rule_id'];foreach($batch['items']as$item)$this->materialize($item,$m);}
+  return$m;
+ }
+ private function claimRetryable(DateTimeImmutable$now):array{$this->db->begin_transaction();try{$before=$now->modify('-'.$this->orphanSeconds.' seconds')->format('Y-m-d H:i:s.u');$rows=$this->occurrences->claimRetryable($this->retryBatch,$before);$this->db->commit();return$rows;}catch(Throwable$e){$this->db->rollback();throw$e;}}
+ private function reserveNextRule(DateTimeImmutable$now,array&$m,array$exclude):?array{
+  $this->db->begin_transaction();try{$rule=$this->rules->lockNextDue($exclude);if($rule===null){$this->db->commit();return null;}$m['rules_checked']++;$plan=$this->misfires->plan($rule,$now,$this->catchUpLimit);$items=[];foreach($plan['slots']as$slot){$reservation=$this->occurrences->reserve((int)$rule['id_'],$slot);if($reservation['created'])$m['occurrences_reserved']++;$occurrence=$reservation['occurrence'];if($occurrence['task_id_']===null&&in_array($occurrence['status'],['reserved','failed'],true))$items[]=['rule'=>$rule,'occurrence'=>$occurrence];}$m['occurrences_skipped']+=$plan['skipped'];$this->rules->advance((int)$rule['id_'],(int)$rule['user_id_'],$plan['next'],(int)$rule['lock_version']);$this->db->commit();return['rule_id'=>(int)$rule['id_'],'items'=>$items];}catch(Throwable$e){$this->db->rollback();throw$e;}
+ }
+ private function materialize(array$item,array&$m):void{
+  $rule=$item['rule'];$occurrence=$item['occurrence'];$slot=(string)$occurrence['logical_occurrence_at'];try{$result=$this->creator->createManualTask((int)$rule['user_id_'],['title'=>(string)$rule['task_title'],'objective'=>(string)$rule['task_objective'],'session_id'=>(int)$rule['session_id_'],'project_id'=>$rule['project_id_']===null?null:(int)$rule['project_id_'],'priority'=>(string)$rule['task_priority'],'mode'=>(string)$rule['task_mode'],'scheduled_at'=>$this->iso($slot),'idempotency_key'=>TaskRecurrenceOccurrenceRepository::taskIdempotencyKey((string)$rule['public_id'],$slot)]);$task=$this->tasks->findOwnedByPublicId((string)$result['task']['public_id'],(int)$rule['user_id_'])??throw new RuntimeException('recurrence_task_not_found');$this->occurrences->linkTask((int)$occurrence['id_'],(int)$task['id_'],(int)$occurrence['lock_version']);$m['tasks_materialized']++;}catch(TaskConcurrencyException){/* Another worker linked the same deterministic Task. */}catch(Throwable$e){$code=$e instanceof TaskValidationException?'task_validation_failed':'task_materialization_failed';try{$this->occurrences->recordFailure((int)$occurrence['id_'],$code,(int)$occurrence['lock_version']);}catch(TaskConcurrencyException){}$m['occurrences_failed']++;}
+ }
+ private function iso(string$utc):string{return(new DateTimeImmutable($utc,new DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.u\Z');}
+}

@@ -17,7 +17,7 @@ final class TaskPhase9fHardeningTest{
   $this->ok(str_contains($css,':focus-visible')&&str_contains($css,'prefers-reduced-motion'),'focus visible y movimiento reducido');
 
   $this->ok(str_contains($js,"controls.tasks.setAttribute('aria-busy','true')")&&str_contains($js,"controls.detail.setAttribute('aria-busy','true')")&&str_contains($js,"results.setAttribute('aria-busy','true')"),'listado, detalle y candidatos comunican loading');
-  $this->ok(str_contains($js,'const busyActions=new Set()')&&substr_count($js,'if(busyActions.has(key))return')===2,'acciones y dependencias bloquean doble ejecución');
+  $this->ok(str_contains($js,'const busyActions=new Set()')&&substr_count($js,'if(busyActions.has(key))return')===3,'acciones y dependencias bloquean doble ejecución');
   $this->ok(str_contains($js,'if(sequence!==loadSequence)return')&&str_contains($js,'const sequence=++loadSequence'),'respuestas antiguas del listado no pisan estado nuevo');
   $this->ok(str_contains($js,"announce(success)")&&str_contains($js,"announce(e.message,'error')"),'acciones anuncian éxito y error');
   $this->ok(!str_contains($js,'alert('),'errores no dependen de alert bloqueante');

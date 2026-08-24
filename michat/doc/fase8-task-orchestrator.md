@@ -148,3 +148,20 @@ Fase 8 — Task Orchestrator: CERRADA.
 La infraestructura cerrada de Fase 8 es la base de Fase 9 — Task Center 2.0. La siguiente fase no reconstruirá Tasks ni el Task Center básico: añadirá la UX operativa de proyectos, Tasks y trabajo humano/IA definida en `michat/doc/estado-actual.md`.
 
 Scheduling de producto, autonomía operativa e industrialización pertenecen respectivamente a las Fases 10, 11 y 12. No deben incorporarse retroactivamente a Fase 8 ni presentarse como pendientes de su cierre.
+
+## Extensión Fase 10A — Scheduling one-shot
+
+Sin reabrir Fase 8, Fase 10A reutiliza `Tasks.scheduled_at` y `idx_tasks_queue` como límite *not-before*. El input productivo acepta ISO 8601 con zona explícita, persiste UTC `datetime(6)` y el guard server-side impide que Worker async o HTTP sync creen una Execution antes del instante programado. `due_at` conserva su semántica independiente de deadline. No se añadieron tablas, índices, estados, Workers, queues, Wait Steps ni cambios de DB.
+
+## Extensión Fase 10B — Administración one-shot
+
+La operación owned `reschedule` reutiliza el parser UTC de 10A y optimistic locking para modificar exclusivamente `scheduled_at` en Tasks `pending`, `ready` o `waiting_user` sin Executions previas. El bloqueo de fila y el UPDATE condicionado por estado/versión hacen que reschedule y Worker claim no puedan ganar simultáneamente. `NULL` quita la restricción temporal; `due_at`, Steps y Executions no cambian. Task Center actúa solo como cliente accesible del API. La creación manual ejecutable queda pospuesta a 10C porque el create actual no materializa Steps. No hay cambios de DB.
+
+## Extensión Fase 10C — Materialización manual canónica
+
+`TaskApplicationService::createManualTask` conserva scope owned e idempotencia, delega creación al Orchestrator y planificación a `TaskPlanningService`. El plan validado persiste el primer Step `ready` o `waiting_user`, los restantes `pending` y todos con modo `async`; la activación transaccional fija `current_step_id_` y emite la transición real. El fallback `respond/model/chat_main` existente evita Tasks huérfanas ante ausencia o fallo recuperable del Planner, sin marcar trabajo como completado. Chat conserva su bridge y ruta sync independientes. Task Center nunca envía Steps. No hay cambios de DB.
+
+
+## Cierre de Fase 10
+
+La auditoría PRE-MERGE cerró 10A–10F sobre el motor de Fase 8: scheduling one-shot, recurrencia daily/weekly y administración operativa reutilizan Tasks, Steps, Executions, Queue, Worker, ownership, HITL, Tool gates, límites y recovery existentes. No se creó un segundo motor. MySQL E2E real permanece SKIP por ausencia de `TASK_TEST_DB_*`; Fase 11 sigue planificada y no iniciada.

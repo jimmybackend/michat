@@ -8,6 +8,7 @@ $ok=static function(bool$condition,string$name)use(&$passed,&$failed):void{echo(
 $resolver=file_get_contents(__DIR__.'/../includes/Tasks/TaskArtifactResourceResolver.php');
 $service=file_get_contents(__DIR__.'/../includes/Tasks/TaskApplicationService.php');
 $adapter=file_get_contents(__DIR__.'/../task_api.php');
+$factory=file_get_contents(__DIR__.'/../includes/Tasks/TaskApplicationServiceFactory.php');
 
 $ok(str_contains($resolver,'$ids[$type][$id]=true')&&substr_count($resolver,'array_keys($ids[')===4,'resolver deduplica IDs y agrupa una vez por resource_type');
 $ok(substr_count($resolver,' IN (')===4,'resolver usa una consulta batch por cada tipo con IDs presentes');
@@ -17,7 +18,7 @@ $ok(str_contains($resolver,'fv.project_id_=?')&&str_contains($resolver,'p.id_=fv
 $ok(str_contains($resolver,'FROM FileS3 WHERE user_id_=?'),'file_s3 limita por usuario autorizado');
 $ok(!preg_match('/SELECT[^\n]*(?:s3_key|s3_path|Ruta|Encriptado|PasswordHash|SecureHint|content|params|result)/i',$resolver),'queries seleccionan únicamente metadata pública permitida');
 $ok(str_contains($service,'$this->owned(')&&strpos($service,'$this->owned(')<strpos($service,'$this->artifactResources?->resolve('),'Task se autoriza antes de resolver metadata');
-$ok(str_contains($adapter,'new TaskArtifactResourceResolver($db_connection)'),'resolver productivo comparte mysqli existente');
+$ok(str_contains($adapter,'new TaskApplicationServiceFactory($db_connection)')&&str_contains($factory,'new TaskArtifactResourceResolver($this->db)'),'resolver productivo comparte mysqli existente');
 
 $application=(new ReflectionClass(TaskApplicationService::class))->newInstanceWithoutConstructor();
 $dto=(new ReflectionClass(TaskApplicationService::class))->getMethod('artifactDto');

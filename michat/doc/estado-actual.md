@@ -214,9 +214,49 @@ La auditoría XSS confirmó escape de títulos, objetivos, Events, actores, erro
 
 **SIGUIENTE FASE: Fase 10 — Scheduling y automatización declarativa.** No se implementa scheduling, recurrencia, cron ni automatización durante 9F.
 
-### Fase 10 — PLANIFICADA: Scheduling y automatización declarativa
+### Fase 10 — EN CURSO: Scheduling y automatización declarativa
 
-El Worker persistente no equivale a un Scheduler de producto. Actualmente existen Worker, `scheduled_at` como *not-before*, Wait Steps temporales, dependencias, retry y recovery. Fase 10 deberá diseñar posteriormente scheduler de producto, recurrencia, triggers, deadlines operativos, condition watchers y retry/backoff declarativo.
+#### Fase 10A — Programación one-shot completada
+
+`Tasks.scheduled_at` es ahora un contrato productivo opcional de creación: la API exige un timestamp ISO 8601 con `Z` u offset explícito, lo normaliza a UTC `datetime(6)` y lo persiste mediante Application → Orchestrator → Repository. Una creación programada emite `task_scheduled` sin publicar el input ni modificar `due_at`.
+
+El límite *not-before* se aplica antes de crear una `TaskExecution` tanto en Worker async como en los dos caminos de inicio/reanudación HTTP sync. El claim compara contra `UTC_TIMESTAMP(6)`, por lo que una Task futura —aunque sea urgente— no desplaza trabajo ya elegible; una fecha vencida durante downtime entra naturalmente al volver el polling. Se reutilizan la queue, locks, leases, Worker, Orchestrator, estados e índice existentes: no hay cambios de DB, estado `scheduled`, Wait Step artificial, timers ni scheduler adicional.
+
+Fase 10 permanece **EN CURSO**. Recurrencia, Automation Rules, occurrence identity, triggers y templates no existen y no forman parte de 10A.
+
+#### Fase 10B — Administración one-shot completada
+
+Task API incorpora la acción explícita `reschedule`, protegida por autenticación, feature flag, CSRF, `public_id` owned y `lock_version`. Reutiliza exactamente el parser UTC de 10A y solo permite editar Tasks `pending`, `ready` o `waiting_user` que todavía no tengan Executions; `running`, `waiting_dependency`, `failed`, `completed` y `cancelled` fallan cerradas. La actualización condicional incrementa el lock y compite bajo el mismo bloqueo de fila que el claim, no crea Executions ni modifica `due_at`. `scheduled_at = null` elimina el límite *not-before* y emite el mismo Event mínimo `task_rescheduled` que una reprogramación.
+
+El detalle compartido por Lista y Tablero añade un editor compacto de fecha/hora local. JavaScript convierte `datetime-local` a ISO con zona, evita doble submit, comunica carga/éxito/error/conflicto y recarga siempre el detalle autoritativo; el backend vuelve a validar. Tasks no editables conservan visible su fecha histórica. No se añadió calendario, recurrencia, estado, tabla, índice, Worker, Queue ni cambio de DB.
+
+#### Fase 10C — Tasks manuales ejecutables completada
+
+`action=create` delega ahora en `TaskApplicationService::createManualTask`, la frontera canónica que valida Session/Project/Message owned, prioridad, modo, idempotency key y el contrato UTC de `scheduled_at`; crea o recupera la Task, materializa un plan server-side y activa su primer Step sin crear una Execution. `TaskPlanningService` valida todos los planes, persiste el primer Step como accionable y los siguientes como `pending`, y fija `input_json.execution_mode=async` para reutilizar exclusivamente el Worker. El Planner inyectado puede producir un plan; cuando está desactivado, no está compuesto o falla de forma recuperable se utiliza el `TaskPlan::fallback()` real y se registra `planning_fallback`. Fallos de validación/persistencia posteriores no se ocultan; la Task idempotente permanece recuperable mediante el mismo `create`.
+
+El modo `automatic` termina en Task/primer Step `ready`; `supervised`, en `waiting_user` con `approval_requested`. Aprobar una Task manual solo la deja `ready` para el Worker: el resume HTTP sync permanece exclusivo de Tasks `origin_type=chat`. Una Task futura puede quedar completamente planificada, pero los guards de 10A impiden Execution antes de `scheduled_at`. `due_at` no cambia.
+
+Task Center ofrece **Nueva Task manual** con título, objetivo, Project opcional, Session owned obligatoria, prioridad, modo y fecha one-shot opcional. Reutiliza catálogos y conversión local→ISO, filtra Sessions por Project, genera una idempotency key estable por intento lógico, evita doble submit, recarga Lista/Tablero y abre el detalle autoritativo. JavaScript no envía user IDs ni Steps.
+
+Fase 10 continúa **EN CURSO**. 10C no añade tablas, columnas, índices, tipos de Step, estados, templates, recurrencia, Rules, Queue, Worker ni Scheduler.
+
+**10D — Persistencia mínima de reglas temporales y ocurrencias: COMPLETADA (integración MySQL real pendiente cuando no existe `TASK_TEST_DB_*`).** Se añaden `TaskRecurrenceRules` y `TaskRecurrenceOccurrences` al dump consolidado y a un script de fase. La regla owned conserva Session/Project, estados administrativos `enabled|paused|cancelled`, recurrencia civil `daily|weekly`, zona IANA, `next_occurrence_at` UTC, misfire `skip|run_once|catch_up`, blueprint mínimo y optimistic locking. La ocurrencia usa `UNIQUE(rule_id_,logical_occurrence_at)`, estado de materialización, relación opcional a una Task nueva y una idempotency key determinista.
+
+10D confirma **NEW TASK PER OCCURRENCE**: no reutiliza Tasks terminadas ni persiste Steps/Executions/Artifacts como plantilla. No introduce API o UI recurrente, Worker, Queue, Planner u Orchestrator alternativos.
+
+**10E — Evaluador temporal recurrente integrado: COMPLETADA (MySQL real SKIP sin `TASK_TEST_DB_*`).** El único `TaskWorker` ejecuta recovery, waits, un batch recurrente acotado y después siempre intenta el claim normal. Reglas `enabled` vencidas se bloquean con `FOR UPDATE SKIP LOCKED`; `skip` avanza sin filas masivas, `run_once` usa el slot vencido más antiguo y `catch_up` conserva orden con límite obligatorio. La reserva UNIQUE precede a `TaskApplicationService::createManualTask()`, que recibe blueprint owned, key determinista y `scheduled_at` del slot lógico UTC.
+
+Fallos de materialización quedan durables y sanitizados; occurrences `failed` o `reserved` huérfanas se recuperan por antigüedad y reutilizan row/key. Automatic queda `ready`, supervised `waiting_user`, sin Execution prematura. 10E no añade DB, API, UI, segundo Worker/Queue/Orchestrator ni Events sintéticos.
+
+**10F — Administración de recurrencia y hardening: COMPLETADA (MySQL real SKIP sin `TASK_TEST_DB_*`).** Task API incorpora list/detail/create/pause/resume/cancel explícitos, owned, bajo feature flag y CSRF para mutaciones. Los DTO omiten IDs internos y limitan el detalle a 25 occurrences con Task UUID/failure code público. Task Center añade una pestaña accesible y responsive para daily/weekly, weekday, hora civil, timezone IANA, misfire, scope, prioridad/modo, locking y navegación a Tasks. Cancel no cancela Tasks existentes y pause no revoca reservas ya ganadas.
+
+10F no cambia DB ni introduce cron/RRULE, triggers, Rules genéricas, otro Worker/Queue/Orchestrator o autonomía.
+
+### FASE 10 — CERRADA
+
+La auditoría final PRE-MERGE confirmó 10A–10F, scheduling one-shot, reschedule, creación manual ejecutable, recurrence daily/weekly, misfires, occurrence identity, materialización en el Worker existente, API/UI owned, locking, seguridad y ausencia de un segundo motor. Todas las suites PHP/JS disponibles pasan. **MySQL real permanece SKIP**, no PASS, porque `TASK_TEST_DB_*` no estaba configurado; esta validación E2E aislada queda como deuda externa no bloqueante y no autoriza usar producción.
+
+Fase 11 continúa únicamente **PLANIFICADA** como siguiente bloque. Triggers event-driven genéricos, condition watchers, Rules abiertas, IA creando reglas, agent loops, self-healing estratégico y autonomía no fueron implementados en Fase 10.
 
 ### Fase 11 — PLANIFICADA: Autonomía operativa de MiChat
 
