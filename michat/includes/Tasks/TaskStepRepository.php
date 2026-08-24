@@ -9,10 +9,10 @@ final class TaskStepRepository
         $s=$this->prepare("INSERT INTO TaskSteps(task_id_,position,step_key,title,step_type,status,agent_key,max_attempts,input_json) VALUES(?,1,'respond','Generar respuesta','model','pending','chat_main',1,?)");
         $s->bind_param('is',$taskId,$json);$this->execute($s);$id=(int)$this->db->insert_id;$s->close();return $this->findById($id)??throw new RuntimeException('step_create_failed');
     }
-    public function createPlanned(int $taskId, TaskPlanStep $step, int $position, string $status='ready'): array
+    public function createPlanned(int $taskId, TaskPlanStep $step, int $position, string $status='ready', array $input=[]): array
     {
-        $s=$this->prepare('INSERT INTO TaskSteps(task_id_,position,step_key,title,description,step_type,status,agent_key,max_attempts) VALUES(?,?,?,?,?,?,?,?,1)');
-        $data=$step->persistenceData($position);$s->bind_param('iissssss',$taskId,$data['position'],$data['step_key'],$data['title'],$data['description'],$data['step_type'],$status,$data['agent_key']);$this->execute($s);$id=(int)$this->db->insert_id;$s->close();return $this->findById($id)??throw new RuntimeException('step_create_failed');
+        $s=$this->prepare('INSERT INTO TaskSteps(task_id_,position,step_key,title,description,step_type,status,agent_key,max_attempts,input_json) VALUES(?,?,?,?,?,?,?,?,1,?)');
+        $data=$step->persistenceData($position);$json=$input?json_encode($input,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES):null;$s->bind_param('iisssssss',$taskId,$data['position'],$data['step_key'],$data['title'],$data['description'],$data['step_type'],$status,$data['agent_key'],$json);$this->execute($s);$id=(int)$this->db->insert_id;$s->close();return $this->findById($id)??throw new RuntimeException('step_create_failed');
     }
     public function countByTask(int $taskId):int{$s=$this->prepare('SELECT COUNT(*) c FROM TaskSteps WHERE task_id_=?');$s->bind_param('i',$taskId);$this->execute($s);$n=(int)$s->get_result()->fetch_assoc()['c'];$s->close();return$n;}
     public function hasExecutions(int $taskId):bool{$s=$this->prepare('SELECT 1 FROM TaskExecutions WHERE task_id_=? LIMIT 1');$s->bind_param('i',$taskId);$this->execute($s);$found=(bool)$s->get_result()->fetch_assoc();$s->close();return$found;}

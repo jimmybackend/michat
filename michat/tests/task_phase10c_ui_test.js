@@ -1,0 +1,17 @@
+'use strict';
+const fs=require('fs'),path=require('path'),page=fs.readFileSync(path.join(__dirname,'../task_center.php'),'utf8'),js=fs.readFileSync(path.join(__dirname,'../js/task-center.js'),'utf8'),css=fs.readFileSync(path.join(__dirname,'../css/task-center.css'),'utf8');
+let passed=0,failed=0;const ok=(v,n)=>{console.log(`${v?'PASS':'FAIL'} ${n}`);v?passed++:failed++};
+for(const id of['new-task-title','new-task-objective','new-task-project','new-task-session','new-task-priority','new-task-mode','new-task-scheduled'])ok(page.includes(`for="${id}"`)&&page.includes(`id="${id}"`),`label accesible ${id}`);
+ok(page.includes('id="new-task-form"')&&page.includes('aria-busy="false"')&&page.includes('role="status"'),'formulario y feedback accesibles');
+ok(js.includes('createManualTask')&&js.includes("action:'create'"),'submit usa action create existente');
+ok(js.includes("mode:String(data.get('mode')")&&js.includes("priority:String(data.get('priority')"),'modo y prioridad se envían explícitos');
+ok(js.includes("resume=t.origin_type==='chat'")&&js.includes("t.origin_type==='chat'&&!generic"),'Task manual supervisada se aprueba para Worker sin resume HTTP sync');
+ok(js.includes('localInputToIso')&&js.includes('scheduled_at:scheduled'),'reutiliza conversión local a ISO 10B');
+ok(js.includes('manualCreateKey')&&js.includes('crypto.randomUUID')&&!js.includes('manualCreateKey=Date.now'),'idempotency key estable no depende de timestamp');
+ok(js.includes("busyActions.has(key)")&&js.includes("setAttribute('aria-busy','true')")&&js.includes('submit.disabled=true'),'loading y doble submit protegidos');
+ok(js.includes('await load()')&&js.includes('await detail(result.task.public_id)'),'éxito recarga lista y abre detalle real');
+ok(js.includes('renderCreateSessions')&&js.includes('Number(item.project_id||0)===projectId'),'Project filtra Sessions compatibles');
+ok(!page.includes('name="user_id"')&&!page.includes('name="steps"'),'frontend no envía user ni Steps');
+ok(css.includes('.new-task-panel')&&css.includes('@media(max-width:560px)'),'formulario responsive');
+ok(js.includes('esc(')&&js.includes('renderBoard(tasks)')&&js.includes('async function load()'),'escape Lista y Tablero conservados');
+console.log(`Resultado: ${passed} passed, ${failed} failed`);process.exit(failed?1:0);

@@ -7,6 +7,7 @@ $passed=0;$failed=0;
 $ok=static function(bool $condition,string $name)use(&$passed,&$failed):void{echo($condition?'PASS ':'FAIL ').$name."\n";$condition?$passed++:$failed++;};
 $service=file_get_contents(__DIR__.'/../includes/Tasks/TaskApplicationService.php');
 $adapter=file_get_contents(__DIR__.'/../task_api.php');
+$factory=file_get_contents(__DIR__.'/../includes/Tasks/TaskApplicationServiceFactory.php');
 $controller=file_get_contents(__DIR__.'/../includes/Tasks/TaskApiController.php');
 $repository=file_get_contents(__DIR__.'/../includes/Tasks/TaskArtifactRepository.php');
 
@@ -15,7 +16,7 @@ $artifactPosition=strpos($service,'$this->artifacts?->listByTask($id)');
 $ok($ownedPosition!==false&&$artifactPosition!==false&&$ownedPosition<$artifactPosition,'ownership ocurre antes de leer artifacts');
 $ok(str_contains($service,"'artifacts'=>array_map")&&str_contains($service,'??[]'),'detail siempre contiene artifacts y usa lista vacía sin repository');
 $ok(str_contains($service,'private ?TaskArtifactRepository$artifacts=null')&&str_contains($service,'private ?TaskArtifactResourceResolver$artifactResources=null'),'TaskApplicationService recibe repositories/resolver explícitamente y conserva compatibilidad');
-$ok(str_contains($adapter,'new TaskArtifactRepository($db_connection)')&&str_contains($adapter,'new TaskArtifactResourceResolver($db_connection)'),'adapter productivo usa la misma conexión mysqli');
+$ok(str_contains($adapter,'new TaskApplicationServiceFactory($db_connection)')&&str_contains($factory,'new TaskArtifactRepository($this->db)')&&str_contains($factory,'new TaskArtifactResourceResolver($this->db)'),'adapter productivo usa la misma conexión mysqli');
 $ok(!str_contains($controller,'TaskArtifactRepository')&&!str_contains($controller,'listByTask'),'controller permanece como adapter delgado');
 
 $application=(new ReflectionClass(TaskApplicationService::class))->newInstanceWithoutConstructor();

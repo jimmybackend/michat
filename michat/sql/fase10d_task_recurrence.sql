@@ -1,0 +1,48 @@
+-- Fase 10D: reglas temporales y slots lógicos. No evalúa reglas ni crea Tasks automáticamente.
+CREATE TABLE IF NOT EXISTS `TaskRecurrenceRules` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+  `public_id` char(36) NOT NULL,
+  `user_id_` int NOT NULL,
+  `project_id_` int DEFAULT NULL,
+  `session_id_` int NOT NULL,
+  `status` enum('enabled','paused','cancelled') NOT NULL DEFAULT 'enabled',
+  `frequency` enum('daily','weekly') NOT NULL,
+  `weekday` tinyint UNSIGNED DEFAULT NULL COMMENT 'ISO-8601 1=Monday..7=Sunday; required only for weekly',
+  `local_time` time NOT NULL,
+  `timezone` varchar(64) NOT NULL,
+  `next_occurrence_at` datetime(6) NOT NULL COMMENT 'UTC instant',
+  `misfire_policy` enum('skip','run_once','catch_up') NOT NULL DEFAULT 'run_once',
+  `task_title` varchar(255) NOT NULL,
+  `task_objective` text NOT NULL,
+  `task_priority` enum('low','normal','high','urgent') NOT NULL DEFAULT 'normal',
+  `task_mode` enum('automatic','supervised') NOT NULL DEFAULT 'supervised',
+  `lock_version` int UNSIGNED NOT NULL DEFAULT 0,
+  `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_task_recurrence_rules_public` (`public_id`),
+  KEY `idx_task_recurrence_rules_due` (`status`,`next_occurrence_at`),
+  KEY `idx_task_recurrence_rules_owner` (`user_id_`,`status`),
+  CONSTRAINT `fk_task_recurrence_rules_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_task_recurrence_rules_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE SET NULL,
+  CONSTRAINT `fk_task_recurrence_rules_session` FOREIGN KEY (`session_id_`) REFERENCES `ChatSessions` (`id_`) ON DELETE RESTRICT,
+  CONSTRAINT `chk_task_recurrence_rules_weekday` CHECK ((`frequency`='daily' AND `weekday` IS NULL) OR (`frequency`='weekly' AND `weekday` BETWEEN 1 AND 7))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS `TaskRecurrenceOccurrences` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+  `rule_id_` bigint UNSIGNED NOT NULL,
+  `logical_occurrence_at` datetime(6) NOT NULL COMMENT 'UTC identity of the civil slot',
+  `status` enum('reserved','materialized','skipped','failed') NOT NULL DEFAULT 'reserved',
+  `task_id_` bigint UNSIGNED DEFAULT NULL,
+  `failure_code` varchar(80) DEFAULT NULL,
+  `lock_version` int UNSIGNED NOT NULL DEFAULT 0,
+  `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_task_recurrence_occurrence` (`rule_id_`,`logical_occurrence_at`),
+  UNIQUE KEY `uq_task_recurrence_occurrence_task` (`task_id_`),
+  KEY `idx_task_recurrence_occurrence_status` (`status`,`updated_at`),
+  CONSTRAINT `fk_task_recurrence_occurrence_rule` FOREIGN KEY (`rule_id_`) REFERENCES `TaskRecurrenceRules` (`id_`) ON DELETE CASCADE,
+  CONSTRAINT `fk_task_recurrence_occurrence_task` FOREIGN KEY (`task_id_`) REFERENCES `Tasks` (`id_`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

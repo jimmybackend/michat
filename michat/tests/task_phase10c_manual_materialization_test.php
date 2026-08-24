@@ -1,0 +1,31 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__.'/../includes/Tasks/bootstrap.php';
+$passed=0;$failed=0;$ok=function(bool$v,string$n)use(&$passed,&$failed):void{echo($v?'PASS ':'FAIL ').$n."\n";$v?$passed++:$failed++;};
+$app=file_get_contents(__DIR__.'/../includes/Tasks/TaskApplicationService.php');
+$orchestrator=file_get_contents(__DIR__.'/../includes/Tasks/TaskOrchestrator.php');
+$planning=file_get_contents(__DIR__.'/../includes/Tasks/TaskPlanningService.php');
+$steps=file_get_contents(__DIR__.'/../includes/Tasks/TaskStepRepository.php');
+$api=file_get_contents(__DIR__.'/../task_api.php');$factory=file_get_contents(__DIR__.'/../includes/Tasks/TaskApplicationServiceFactory.php');
+$queue=file_get_contents(__DIR__.'/../includes/Tasks/TaskQueueRepository.php');
+$bridge=file_get_contents(__DIR__.'/../includes/Tasks/ChatTaskBridge.php');
+$ok(str_contains($app,'createManualTask')&&str_contains($app,'return$this->createManualTask($u,$d)'),'action create usa frontera canónica manual');
+foreach(['sessionScope','projectOwned','messageOwned','session_project_mismatch']as$guard)$ok(str_contains($app,$guard),"ownership conserva {$guard}");
+$ok(str_contains($app,"oneOf($"."d['mode']??'supervised',['automatic','supervised']"),'modo manual se valida server-side');
+$ok(str_contains($app,"optionalUtcDateTime($"."d,'scheduled_at')"),'scheduled_at reutiliza parser 10A');
+$ok(str_contains($app,'findOwnedByIdempotencyKey')&&str_contains($app,"'idempotency_key'=>$"."key"),'idempotencia owned se conserva y recupera');
+$ok(str_contains($app,'ensurePlan($task,$this->plannerEnabled,true,$target,\'async\')'),'Planner materializa exclusivamente Steps async');
+$ok(str_contains($planning,'$this->planner->plan')&&str_contains($planning,'TaskPlan::fallback()'),'Planner success y fallback existente se reutilizan');
+$ok(str_contains($planning,"status=$"."i===0?$"."firstStatus:'pending'")&&str_contains($steps,'input_json'),'primer Step accionable y siguientes pending con modo persistido');
+$ok(str_contains($orchestrator,'activatePlannedTask')&&str_contains($orchestrator,"$"."task['status']!=='pending'"),'activación exige Task pending');
+$ok(str_contains($orchestrator,"['ready','waiting_user']")&&str_contains($orchestrator,"'event_key'=>'task_'.$"."target"),'automatic ready y supervised waiting_user emiten transición real');
+$ok(str_contains($orchestrator,"'event_key'=>'approval_requested'")&&str_contains($orchestrator,'current_step_id_'),'supervised persiste aprobación sobre Step actual');
+$ok(!str_contains(substr($app,strpos($app,'createManualTask'),4000),'executions->create'),'materialización no crea Execution prematura');
+$ok(str_contains($queue,"JSON_UNQUOTE(JSON_EXTRACT(s.input_json,'$.execution_mode'))='async'"),'Worker puede reclamar Task manual automática');
+$ok(str_contains($queue,'scheduled_at,UTC_TIMESTAMP(6)'),'Task manual futura conserva not-before 10A');
+$ok(str_contains($factory,'new TaskPlanningService')&&str_contains($api,"enabled('task_planner')")&&str_contains($api,'TaskApplicationServiceFactory'),'composición productiva incluye PlanningService y feature flag');
+$ok(str_contains($bridge,'prepareChatTurn')&&!str_contains($bridge,'createManualTask'),'ChatTaskBridge permanece aislado del flujo manual');
+$validator=new TaskPlanValidator();$valid=$validator->validate(['steps'=>[['step_key'=>'respond','title'=>'Responder','description'=>'Resolver','step_type'=>'model','agent_key'=>'chat_main']]]);$ok($valid->count()===1,'plan válido se valida');
+try{$validator->validate(['steps'=>[['step_key'=>'bad key','title'=>'X','description'=>'','step_type'=>'model','agent_key'=>'chat_main']]]);$ok(false,'plan inválido se rechaza');}catch(TaskValidationException){$ok(true,'plan inválido se rechaza');}
+$ok(TaskPlan::fallback()->isFallback()&&TaskPlan::fallback()->steps()[0]->stepType==='model','fallback produce Step real no terminal');
+echo"Resultado: {$passed} passed, {$failed} failed\n";echo"SKIP integración MySQL/Bedrock real 10C: TASK_TEST_DB_* no configurado.\n";exit($failed?1:0);
