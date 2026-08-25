@@ -19,6 +19,6 @@ final class ChatExecutionServiceFactory
         $activity=new ChatActivityTelemetryService($this->db);
         $cancellations=$this->cancellations??new TaskCancellationGuard($this->db);
         $tools=$this->tools??(new ToolRegistryFactory($this->db,$cancellations))->create();
-        return new ChatExecutionService(new BedrockChatRuntime($this->db,$tools,$cancellations,$this->toolObserver,$this->toolGate),$contexts,$responses,$memory,$tokens,$activity);
+        return new ChatExecutionService(new BedrockChatRuntime($this->db,$tools,$cancellations,$this->toolObserver,$this->toolGate,null,$bedrock),$contexts,$responses,$memory,$tokens,$activity);
     }
 }

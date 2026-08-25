@@ -5,9 +5,11 @@ declare(strict_types=1);
 final class BedrockChatRuntime implements ChatRuntimeInterface
 {
     private $configLoader;
-    public function __construct(private mysqli $db, private ToolRegistry $tools,private ?TaskCancellationGuard $cancellations=null,private ?ToolExecutionObserverInterface $toolObserver=null,private ?ToolExecutionGateInterface $toolGate=null,?callable $configLoader=null,private ?object $bedrockRuntime=null)
+    private BedrockConverseClientInterface$converse;
+    public function __construct(private mysqli $db, private ToolRegistry $tools,private ?TaskCancellationGuard $cancellations=null,private ?ToolExecutionObserverInterface $toolObserver=null,private ?ToolExecutionGateInterface $toolGate=null,?callable $configLoader=null,?object$bedrockRuntime=null,?BedrockConverseClientInterface$converse=null)
     {
         $this->configLoader=$configLoader;
+        $this->converse=$converse??new BedrockConverseClient($bedrockRuntime);
     }
 
     public function execute(ChatExecutionRequest $request, ?callable $heartbeat = null): ChatExecutionResult
@@ -29,29 +31,26 @@ final class BedrockChatRuntime implements ChatRuntimeInterface
         $preparedContext=trim((string)($request->taskContext['prepared_context']['system_context']??''));
         if($preparedContext!=='')$instruction=trim($instruction."\n\n".$preparedContext);
         if ($instruction !== '') $params['system'] = [['text'=>$instruction]];
-        $bedrock = $this->bedrockRuntime ?? Config::getBedrockRuntime();
         $usage = ['prompt_tokens'=>0,'completion_tokens'=>0,'total_tokens'=>0];
         $budget=isset($request->taskContext['task_id'])?TaskExecutionBudget::serverDefaults():null;
         for ($round=0; $round<5; $round++) {
             $budget?->beforeModelRound();
             $this->checkpoint($request);
             $heartbeat && $heartbeat();
-            $response = $bedrock->converse($params);
+            $response = $this->converse->converse($params);
             // Cancellation may arrive while Bedrock is in flight. Do not consume the
             // response or proceed to persistence/tool execution after that point.
             $this->checkpoint($request);
-            $usage['prompt_tokens'] += (int)($response['usage']['inputTokens'] ?? 0);
-            $usage['completion_tokens'] += (int)($response['usage']['outputTokens'] ?? 0);
-            $usage['total_tokens'] += (int)($response['usage']['totalTokens'] ?? 0);
-            $budget?->recordUsage((int)($response['usage']['inputTokens']??0),(int)($response['usage']['outputTokens']??0));
-            $blocks = $response['output']['message']['content'] ?? [];
-            $text=''; $uses=[];
-            foreach ($blocks as $block) { if(isset($block['text']))$text.=$block['text']; elseif(isset($block['toolUse']))$uses[]=$block['toolUse']; }
-            if (($response['stopReason'] ?? '') !== 'tool_use' || !$uses) {
+            $usage['prompt_tokens'] += $response->usage['prompt_tokens'];
+            $usage['completion_tokens'] += $response->usage['completion_tokens'];
+            $usage['total_tokens'] += $response->usage['total_tokens'];
+            $budget?->recordUsage($response->usage['prompt_tokens'],$response->usage['completion_tokens']);
+            $text=$response->text;$uses=$response->toolUses;
+            if ($response->stopReason !== 'tool_use' || !$uses) {
                 if($this->toolGate instanceof ToolExecutionCompletionGuardInterface)$this->toolGate->assertCompletionAllowed($this->serverContext($request));
-                return new ChatExecutionResult(trim($text),null,$model,$request->traceId,$usage,[],[],[],(string)($response['stopReason']??''),null);
+                return new ChatExecutionResult(trim($text),null,$model,$request->traceId,$usage,[],[],[],$response->stopReason,null);
             }
-            $params['messages'][] = $response['output']['message']; $results=[];
+            $params['messages'][] = $response->outputMessage; $results=[];
             foreach ($uses as $use) {
                 $this->checkpoint($request);
                 $heartbeat && $heartbeat();

@@ -1,0 +1,13 @@
+<?php
+declare(strict_types=1);
+final class AutonomyPolicyService{
+ public function __construct(private AutonomyPolicyStoreInterface$store){}
+ public function getOrCreate(int$userId,int$projectId):AutonomyPolicy{$row=$this->store->findOwned($userId,$projectId)??$this->store->createDefault($userId,$projectId,TaskPublicId::generate());return AutonomyPolicy::fromRow($row);}
+ public function update(int$userId,int$projectId,int$lockVersion,string$mode,array$limits=[]):AutonomyPolicy{if(!in_array($mode,AutonomyPolicy::MODES,true))throw new TaskValidationException('autonomy_mode_invalid');$current=$this->getOrCreate($userId,$projectId);$values=$this->storageLimits(array_replace($current->limits,$limits));$row=$this->store->updateOwned($userId,$projectId,$lockVersion,['mode'=>$mode,'status'=>$current->status,'stop_reason'=>$current->stopReason]+$values);return AutonomyPolicy::fromRow($row);}
+ public function pause(int$u,int$p,int$l):AutonomyPolicy{$current=$this->getOrCreate($u,$p);if($current->status!=='active')throw new TaskTransitionException('autonomy_not_active');return$this->status($u,$p,$l,'paused',null);}
+ public function resume(int$u,int$p,int$l):AutonomyPolicy{$current=$this->getOrCreate($u,$p);if($current->status!=='paused')throw new TaskTransitionException('autonomy_not_paused');return$this->status($u,$p,$l,'active',null);}
+ public function stop(int$u,int$p,int$l,string$reason):AutonomyPolicy{if(!preg_match('/^[a-z][a-z0-9_]{0,79}$/D',$reason))throw new TaskValidationException('autonomy_stop_reason_invalid');return$this->status($u,$p,$l,'stopped',$reason);}
+ public function disable(int$u,int$p,int$l):AutonomyPolicy{$current=$this->getOrCreate($u,$p);return AutonomyPolicy::fromRow($this->store->updateOwned($u,$p,$l,['mode'=>'disabled','status'=>$current->status,'stop_reason'=>$current->stopReason]+$this->storageLimits($current->limits)));}
+ private function status(int$u,int$p,int$l,string$status,?string$reason):AutonomyPolicy{$current=$this->getOrCreate($u,$p);return AutonomyPolicy::fromRow($this->store->updateOwned($u,$p,$l,['mode'=>$current->mode,'status'=>$status,'stop_reason'=>$reason]+$this->storageLimits($current->limits)));}
+ private function storageLimits(array$input):array{$out=[];foreach(AutonomyPolicy::DEFAULTS as$key=>$default){if(!array_key_exists($key,$input)){$out[$key]=null;continue;}$value=$input[$key];if($value===null){$out[$key]=null;continue;}if(!is_int($value)||$value<1)throw new TaskValidationException('autonomy_limit_invalid');$out[$key]=min($value,AutonomyPolicy::CEILINGS[$key]);}if(array_diff(array_keys($input),array_keys(AutonomyPolicy::DEFAULTS))!==[])throw new TaskValidationException('autonomy_limit_unknown');return$out;}
+}

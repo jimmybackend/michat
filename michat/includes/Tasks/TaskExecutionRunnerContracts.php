@@ -4,7 +4,7 @@ declare(strict_types=1);
 interface TaskStepProgressionInterface
 {
     public function apply(array$context,TaskStepExecutionResult$result):bool;
-    public function fail(array$context,string$error):bool;
+    public function fail(array$context,string$error,?TaskFailureDisposition$disposition=null):bool;
     public function cancel(array$context):bool;
 }
 

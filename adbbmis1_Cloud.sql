@@ -803,7 +803,7 @@ CREATE TABLE IF NOT EXISTS `Users` (
 --
 CREATE TABLE IF NOT EXISTS `Tasks` (
  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT, `public_id` char(36) NOT NULL, `user_id_` int NOT NULL, `created_by_user_id_` int NOT NULL, `project_id_` int DEFAULT NULL, `session_id_` int NOT NULL, `origin_message_id_` int DEFAULT NULL, `result_message_id_` int DEFAULT NULL, `parent_task_id_` bigint UNSIGNED DEFAULT NULL, `idempotency_key` varchar(128) DEFAULT NULL,
- `origin_type` enum('chat','manual','retry','system') NOT NULL DEFAULT 'manual', `title` varchar(255) NOT NULL, `objective` text NOT NULL, `status` enum('pending','ready','running','waiting_user','waiting_dependency','completed','failed','cancelled') NOT NULL DEFAULT 'pending', `priority` enum('low','normal','high','urgent') NOT NULL DEFAULT 'normal', `progress_percent` tinyint UNSIGNED NOT NULL DEFAULT 0, `current_step_id_` bigint UNSIGNED DEFAULT NULL, `max_attempts` smallint UNSIGNED NOT NULL DEFAULT 1, `attempt_count` smallint UNSIGNED NOT NULL DEFAULT 0,
+ `origin_type` enum('chat','manual','retry','system') NOT NULL DEFAULT 'manual', `mode` enum('supervised','automatic') NOT NULL DEFAULT 'supervised', `title` varchar(255) NOT NULL, `objective` text NOT NULL, `status` enum('pending','ready','running','waiting_user','waiting_dependency','completed','failed','cancelled') NOT NULL DEFAULT 'pending', `priority` enum('low','normal','high','urgent') NOT NULL DEFAULT 'normal', `progress_percent` tinyint UNSIGNED NOT NULL DEFAULT 0, `current_step_id_` bigint UNSIGNED DEFAULT NULL, `max_attempts` smallint UNSIGNED NOT NULL DEFAULT 1, `attempt_count` smallint UNSIGNED NOT NULL DEFAULT 0,
  `scheduled_at` datetime(6) DEFAULT NULL, `started_at` datetime(6) DEFAULT NULL, `due_at` datetime(6) DEFAULT NULL, `completed_at` datetime(6) DEFAULT NULL, `cancel_requested_at` datetime(6) DEFAULT NULL, `cancelled_at` datetime(6) DEFAULT NULL, `last_heartbeat_at` datetime(6) DEFAULT NULL, `result_summary` mediumtext, `error_code` varchar(80) DEFAULT NULL, `error_message` text, `lock_version` int UNSIGNED NOT NULL DEFAULT 0, `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), `updated_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
  PRIMARY KEY (`id_`), UNIQUE KEY `uq_tasks_public_id` (`public_id`), UNIQUE KEY `uq_tasks_user_idempotency` (`user_id_`,`idempotency_key`), KEY `idx_tasks_user_status` (`user_id_`,`status`,`updated_at`), KEY `idx_tasks_project_status` (`project_id_`,`status`,`priority`), KEY `idx_tasks_session` (`session_id_`,`updated_at`), KEY `idx_tasks_origin_message` (`origin_message_id_`), KEY `idx_tasks_result_message` (`result_message_id_`), KEY `idx_tasks_parent` (`parent_task_id_`), KEY `idx_tasks_queue` (`status`,`scheduled_at`,`priority`), KEY `idx_tasks_heartbeat` (`status`,`last_heartbeat_at`), KEY `idx_tasks_current_step` (`current_step_id_`),
  CONSTRAINT `fk_tasks_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE RESTRICT, CONSTRAINT `fk_tasks_creator` FOREIGN KEY (`created_by_user_id_`) REFERENCES `Users` (`id`) ON DELETE RESTRICT, CONSTRAINT `fk_tasks_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE SET NULL, CONSTRAINT `fk_tasks_session` FOREIGN KEY (`session_id_`) REFERENCES `ChatSessions` (`id_`) ON DELETE RESTRICT, CONSTRAINT `fk_tasks_origin_message` FOREIGN KEY (`origin_message_id_`) REFERENCES `ChatMessages` (`id_`) ON DELETE SET NULL, CONSTRAINT `fk_tasks_result_message` FOREIGN KEY (`result_message_id_`) REFERENCES `ChatMessages` (`id_`) ON DELETE SET NULL, CONSTRAINT `fk_tasks_parent` FOREIGN KEY (`parent_task_id_`) REFERENCES `Tasks` (`id_`) ON DELETE SET NULL
@@ -1035,6 +1035,205 @@ ALTER TABLE `UserPreferences`
 ALTER TABLE `UserProceduralMemory`
   ADD CONSTRAINT `fk_upm_session` FOREIGN KEY (`source_session_id`) REFERENCES `ChatSessions` (`id_`) ON DELETE SET NULL,
   ADD CONSTRAINT `fk_upm_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE CASCADE;
+-- Fase 11B: policy de autonomía por Project, ciclos durables y reservas idempotentes.
+CREATE TABLE IF NOT EXISTS `ProjectAutonomyPolicies` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+  `public_id` char(36) NOT NULL,
+  `user_id_` int NOT NULL,
+  `project_id_` int NOT NULL,
+  `mode` enum('disabled','supervised','automatic') NOT NULL DEFAULT 'disabled',
+  `status` enum('active','paused','stopped') NOT NULL DEFAULT 'active',
+  `stop_reason` varchar(80) DEFAULT NULL,
+  `max_tasks_per_cycle` int UNSIGNED DEFAULT NULL,
+  `max_decisions_per_cycle` int UNSIGNED DEFAULT NULL,
+  `max_descendant_depth` int UNSIGNED DEFAULT NULL,
+  `max_replans_per_cycle` int UNSIGNED DEFAULT NULL,
+  `max_runtime_seconds` int UNSIGNED DEFAULT NULL,
+  `max_input_tokens` int UNSIGNED DEFAULT NULL,
+  `max_output_tokens` int UNSIGNED DEFAULT NULL,
+  `max_tool_calls` int UNSIGNED DEFAULT NULL,
+  `max_write_tool_calls` int UNSIGNED DEFAULT NULL,
+  `lock_version` int UNSIGNED NOT NULL DEFAULT 0,
+  `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_project_autonomy_policy_public` (`public_id`),
+  UNIQUE KEY `uq_project_autonomy_policy_project` (`project_id_`),
+  KEY `idx_project_autonomy_policy_owner` (`user_id_`,`status`),
+  CONSTRAINT `fk_project_autonomy_policy_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_project_autonomy_policy_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS `ProjectAutonomyCycles` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+  `public_id` char(36) NOT NULL,
+  `policy_id_` bigint UNSIGNED NOT NULL,
+  `user_id_` int NOT NULL,
+  `project_id_` int NOT NULL,
+  `status` enum('active','exhausted','closed','stopped') NOT NULL DEFAULT 'active',
+  `active_project_id_` int GENERATED ALWAYS AS (IF(`status`='active',`project_id_`,NULL)) STORED,
+  `decisions_consumed` int UNSIGNED NOT NULL DEFAULT 0,
+  `tasks_consumed` int UNSIGNED NOT NULL DEFAULT 0,
+  `replans_consumed` int UNSIGNED NOT NULL DEFAULT 0,
+  `input_tokens_consumed` bigint UNSIGNED NOT NULL DEFAULT 0,
+  `output_tokens_consumed` bigint UNSIGNED NOT NULL DEFAULT 0,
+  `tool_calls_consumed` int UNSIGNED NOT NULL DEFAULT 0,
+  `write_tool_calls_consumed` int UNSIGNED NOT NULL DEFAULT 0,
+  `runtime_seconds_consumed` int UNSIGNED NOT NULL DEFAULT 0,
+  `lock_version` int UNSIGNED NOT NULL DEFAULT 0,
+  `started_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `finished_at` datetime(6) DEFAULT NULL,
+  `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_project_autonomy_cycle_public` (`public_id`),
+  UNIQUE KEY `uq_project_autonomy_cycle_active` (`active_project_id_`),
+  KEY `idx_project_autonomy_cycle_owner` (`user_id_`,`project_id_`,`status`),
+  CONSTRAINT `fk_project_autonomy_cycle_policy` FOREIGN KEY (`policy_id_`) REFERENCES `ProjectAutonomyPolicies` (`id_`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_autonomy_cycle_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_project_autonomy_cycle_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS `ProjectAutonomyReservations` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+  `public_id` char(36) NOT NULL,
+  `cycle_id_` bigint UNSIGNED NOT NULL,
+  `user_id_` int NOT NULL,
+  `project_id_` int NOT NULL,
+  `idempotency_key` varchar(128) NOT NULL,
+  `status` enum('reserved','consumed','released') NOT NULL DEFAULT 'reserved',
+  `decisions` int UNSIGNED NOT NULL DEFAULT 0,
+  `tasks` int UNSIGNED NOT NULL DEFAULT 0,
+  `replans` int UNSIGNED NOT NULL DEFAULT 0,
+  `input_tokens` bigint UNSIGNED NOT NULL DEFAULT 0,
+  `output_tokens` bigint UNSIGNED NOT NULL DEFAULT 0,
+  `tool_calls` int UNSIGNED NOT NULL DEFAULT 0,
+  `write_tool_calls` int UNSIGNED NOT NULL DEFAULT 0,
+  `runtime_seconds` int UNSIGNED NOT NULL DEFAULT 0,
+  `descendant_depth` int UNSIGNED NOT NULL DEFAULT 0,
+  `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  `consumed_at` datetime(6) DEFAULT NULL,
+  `released_at` datetime(6) DEFAULT NULL,
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_project_autonomy_reservation_public` (`public_id`),
+  UNIQUE KEY `uq_project_autonomy_reservation_idempotency` (`cycle_id_`,`idempotency_key`),
+  KEY `idx_project_autonomy_reservation_owner` (`user_id_`,`project_id_`,`status`),
+  CONSTRAINT `fk_project_autonomy_reservation_cycle` FOREIGN KEY (`cycle_id_`) REFERENCES `ProjectAutonomyCycles` (`id_`) ON DELETE CASCADE,
+  CONSTRAINT `fk_project_autonomy_reservation_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_project_autonomy_reservation_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+-- Fase 11C: propuestas Next-Work durables, approval propio y lineage auditable.
+CREATE TABLE IF NOT EXISTS `NextWorkProposals` (
+  `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+  `public_id` char(36) NOT NULL,
+  `user_id_` int NOT NULL,
+  `project_id_` int NOT NULL,
+  `source_task_id_` bigint UNSIGNED NOT NULL,
+  `autonomy_cycle_id_` bigint UNSIGNED NOT NULL,
+  `reservation_id_` bigint UNSIGNED DEFAULT NULL,
+  `spawned_task_id_` bigint UNSIGNED DEFAULT NULL,
+  `status` enum('pending_approval','authorized','spawning','spawned','rejected','failed') NOT NULL,
+  `dedupe_key` char(64) NOT NULL,
+  `payload_hash` char(64) NOT NULL,
+  `public_reason` varchar(800) NOT NULL,
+  `proposed_title` varchar(255) DEFAULT NULL,
+  `proposed_objective` text NOT NULL,
+  `evidence_json` json NOT NULL,
+  `authorization_reason` varchar(80) NOT NULL,
+  `decision_accounted` tinyint(1) NOT NULL DEFAULT 0,
+  `lock_version` int UNSIGNED NOT NULL DEFAULT 0,
+  `approved_at` datetime(6) DEFAULT NULL,
+  `rejected_at` datetime(6) DEFAULT NULL,
+  `spawned_at` datetime(6) DEFAULT NULL,
+  `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id_`),
+  UNIQUE KEY `uq_next_work_proposal_public` (`public_id`),
+  UNIQUE KEY `uq_next_work_proposal_dedupe` (`autonomy_cycle_id_`,`dedupe_key`),
+  UNIQUE KEY `uq_next_work_proposal_reservation` (`reservation_id_`),
+  UNIQUE KEY `uq_next_work_proposal_spawned_task` (`spawned_task_id_`),
+  KEY `idx_next_work_proposal_owner_status` (`user_id_`,`project_id_`,`status`,`updated_at`),
+  KEY `idx_next_work_proposal_source` (`source_task_id_`,`created_at`),
+  CONSTRAINT `fk_next_work_proposal_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_next_work_proposal_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE CASCADE,
+  CONSTRAINT `fk_next_work_proposal_source` FOREIGN KEY (`source_task_id_`) REFERENCES `Tasks` (`id_`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_next_work_proposal_cycle` FOREIGN KEY (`autonomy_cycle_id_`) REFERENCES `ProjectAutonomyCycles` (`id_`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_next_work_proposal_reservation` FOREIGN KEY (`reservation_id_`) REFERENCES `ProjectAutonomyReservations` (`id_`) ON DELETE SET NULL,
+  CONSTRAINT `fk_next_work_proposal_spawned_task` FOREIGN KEY (`spawned_task_id_`) REFERENCES `Tasks` (`id_`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+-- Fase 11D: asociación explícita root/cycle y oportunidades post-terminal reclamables.
+CREATE TABLE IF NOT EXISTS `ProjectAutonomyCycleTasks` (
+ `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT, `cycle_id_` bigint UNSIGNED NOT NULL, `user_id_` int NOT NULL, `project_id_` int NOT NULL, `task_id_` bigint UNSIGNED NOT NULL, `depth` int UNSIGNED NOT NULL DEFAULT 0, `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+ PRIMARY KEY (`id_`), UNIQUE KEY `uq_autonomy_cycle_task` (`cycle_id_`,`task_id_`), UNIQUE KEY `uq_autonomy_task_cycle` (`task_id_`), KEY `idx_autonomy_cycle_task_owner` (`user_id_`,`project_id_`),
+ CONSTRAINT `fk_autonomy_cycle_task_cycle` FOREIGN KEY (`cycle_id_`) REFERENCES `ProjectAutonomyCycles` (`id_`) ON DELETE CASCADE, CONSTRAINT `fk_autonomy_cycle_task_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE RESTRICT, CONSTRAINT `fk_autonomy_cycle_task_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE CASCADE, CONSTRAINT `fk_autonomy_cycle_task_task` FOREIGN KEY (`task_id_`) REFERENCES `Tasks` (`id_`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS `PostTaskContinuations` (
+ `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT, `public_id` char(36) NOT NULL, `user_id_` int NOT NULL, `project_id_` int NOT NULL, `source_task_id_` bigint UNSIGNED NOT NULL, `autonomy_cycle_id_` bigint UNSIGNED NOT NULL, `proposal_id_` bigint UNSIGNED DEFAULT NULL, `spawned_task_id_` bigint UNSIGNED DEFAULT NULL,
+ `status` enum('pending','processing','completed','waiting_user','waiting_approval','failed') NOT NULL DEFAULT 'pending', `terminal_status` enum('completed','failed','cancelled') NOT NULL, `depth` int UNSIGNED NOT NULL, `decision_type` enum('stop','ask_user','propose_task') DEFAULT NULL, `decision_json` json DEFAULT NULL, `usage_json` json DEFAULT NULL, `reason_code` varchar(80) DEFAULT NULL, `public_reason` varchar(800) DEFAULT NULL, `question` varchar(800) DEFAULT NULL,
+ `attempt_count` tinyint UNSIGNED NOT NULL DEFAULT 0, `next_attempt_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), `worker_id` varchar(128) DEFAULT NULL, `lease_token` char(36) DEFAULT NULL, `lease_expires_at` datetime(6) DEFAULT NULL, `started_at` datetime(6) DEFAULT NULL, `finished_at` datetime(6) DEFAULT NULL, `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), `updated_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+ PRIMARY KEY (`id_`), UNIQUE KEY `uq_post_task_continuation_public` (`public_id`), UNIQUE KEY `uq_post_task_continuation_logical` (`autonomy_cycle_id_`,`source_task_id_`), KEY `idx_post_task_continuation_claim` (`status`,`next_attempt_at`,`lease_expires_at`), KEY `idx_post_task_continuation_owner` (`user_id_`,`project_id_`,`status`),
+ CONSTRAINT `fk_post_task_continuation_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE RESTRICT, CONSTRAINT `fk_post_task_continuation_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE CASCADE, CONSTRAINT `fk_post_task_continuation_source` FOREIGN KEY (`source_task_id_`) REFERENCES `Tasks` (`id_`) ON DELETE CASCADE, CONSTRAINT `fk_post_task_continuation_cycle` FOREIGN KEY (`autonomy_cycle_id_`) REFERENCES `ProjectAutonomyCycles` (`id_`) ON DELETE CASCADE, CONSTRAINT `fk_post_task_continuation_proposal` FOREIGN KEY (`proposal_id_`) REFERENCES `NextWorkProposals` (`id_`) ON DELETE SET NULL, CONSTRAINT `fk_post_task_continuation_spawned` FOREIGN KEY (`spawned_task_id_`) REFERENCES `Tasks` (`id_`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+-- Fase 11E.0: disposición tipada y checkpoint durable; no genera ni aplica planes.
+CREATE TABLE IF NOT EXISTS `TaskReplanRequests` (
+ `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+ `public_id` char(36) NOT NULL,
+ `user_id_` int NOT NULL,
+ `project_id_` int NOT NULL,
+ `task_id_` bigint UNSIGNED NOT NULL,
+ `autonomy_cycle_id_` bigint UNSIGNED NOT NULL,
+ `source_step_id_` bigint UNSIGNED NOT NULL,
+ `revision_id_` bigint UNSIGNED DEFAULT NULL,
+ `reservation_id_` bigint UNSIGNED DEFAULT NULL,
+ `trigger_code` enum('validation_failed','dependency_invalidated','plan_no_longer_executable','explicit_replan_request') NOT NULL,
+ `failure_disposition` enum('logical_replan_candidate') NOT NULL DEFAULT 'logical_replan_candidate',
+ `status` enum('checkpointed','processing','proposed','pending_approval','approved','applied','rejected','failed') NOT NULL DEFAULT 'checkpointed',
+ `source_task_lock_version` int UNSIGNED NOT NULL,
+ `public_reason` varchar(500) NOT NULL,
+ `attempt_count` tinyint UNSIGNED NOT NULL DEFAULT 0,
+ `next_attempt_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+ `failure_reason` varchar(80) DEFAULT NULL,
+ `worker_id` varchar(128) DEFAULT NULL,
+ `lease_token` char(36) DEFAULT NULL,
+ `lease_expires_at` datetime(6) DEFAULT NULL,
+ `lock_version` int UNSIGNED NOT NULL DEFAULT 0,
+ `approved_at` datetime(6) DEFAULT NULL,
+ `applied_at` datetime(6) DEFAULT NULL,
+ `rejected_at` datetime(6) DEFAULT NULL,
+ `failed_at` datetime(6) DEFAULT NULL,
+ `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+ `updated_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+ PRIMARY KEY (`id_`),
+ UNIQUE KEY `uq_task_replan_public` (`public_id`),
+ UNIQUE KEY `uq_task_replan_logical` (`task_id_`,`source_step_id_`,`trigger_code`,`source_task_lock_version`),
+ KEY `idx_task_replan_active` (`task_id_`,`status`,`updated_at`),
+ KEY `idx_task_replan_owner` (`user_id_`,`project_id_`,`status`),
+ CONSTRAINT `fk_task_replan_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE RESTRICT,
+ CONSTRAINT `fk_task_replan_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE CASCADE,
+ CONSTRAINT `fk_task_replan_task` FOREIGN KEY (`task_id_`) REFERENCES `Tasks` (`id_`) ON DELETE CASCADE,
+ CONSTRAINT `fk_task_replan_cycle` FOREIGN KEY (`autonomy_cycle_id_`) REFERENCES `ProjectAutonomyCycles` (`id_`) ON DELETE CASCADE,
+ CONSTRAINT `fk_task_replan_step` FOREIGN KEY (`source_step_id_`) REFERENCES `TaskSteps` (`id_`) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+-- Fase 11E.1: revisiones versionadas y membresía histórica de Steps.
+CREATE TABLE IF NOT EXISTS `TaskPlanRevisions` (
+ `id_` bigint UNSIGNED NOT NULL AUTO_INCREMENT, `public_id` char(36) NOT NULL, `user_id_` int NOT NULL, `project_id_` int NOT NULL, `task_id_` bigint UNSIGNED NOT NULL, `replan_request_id_` bigint UNSIGNED DEFAULT NULL, `revision_number` int UNSIGNED NOT NULL, `source_revision` int UNSIGNED NOT NULL DEFAULT 0, `status` enum('historical','proposed','pending_approval','approved','applied','rejected','failed') NOT NULL, `proposed_plan_json` json NOT NULL, `planner_model` varchar(255) DEFAULT NULL, `usage_json` json DEFAULT NULL, `public_reason` varchar(500) NOT NULL, `lock_version` int UNSIGNED NOT NULL DEFAULT 0, `approved_at` datetime(6) DEFAULT NULL, `rejected_at` datetime(6) DEFAULT NULL, `applied_at` datetime(6) DEFAULT NULL, `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), `updated_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+ PRIMARY KEY (`id_`), UNIQUE KEY `uq_task_plan_revision_public` (`public_id`), UNIQUE KEY `uq_task_plan_revision_number` (`task_id_`,`revision_number`), UNIQUE KEY `uq_task_plan_revision_request` (`replan_request_id_`), KEY `idx_task_plan_revision_owner` (`user_id_`,`project_id_`,`task_id_`), CONSTRAINT `fk_task_plan_revision_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE RESTRICT, CONSTRAINT `fk_task_plan_revision_project` FOREIGN KEY (`project_id_`) REFERENCES `Projects` (`id_`) ON DELETE CASCADE, CONSTRAINT `fk_task_plan_revision_task` FOREIGN KEY (`task_id_`) REFERENCES `Tasks` (`id_`) ON DELETE CASCADE, CONSTRAINT `fk_task_plan_revision_request` FOREIGN KEY (`replan_request_id_`) REFERENCES `TaskReplanRequests` (`id_`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE IF NOT EXISTS `TaskPlanRevisionSteps` (
+ `revision_id_` bigint UNSIGNED NOT NULL, `step_id_` bigint UNSIGNED NOT NULL, `logical_key` varchar(80) NOT NULL, `position_in_revision` smallint UNSIGNED NOT NULL, `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), PRIMARY KEY (`revision_id_`,`step_id_`), UNIQUE KEY `uq_task_plan_revision_position` (`revision_id_`,`position_in_revision`), UNIQUE KEY `uq_task_plan_revision_logical` (`revision_id_`,`logical_key`), KEY `idx_task_plan_revision_step` (`step_id_`), CONSTRAINT `fk_task_plan_revision_steps_revision` FOREIGN KEY (`revision_id_`) REFERENCES `TaskPlanRevisions` (`id_`) ON DELETE CASCADE, CONSTRAINT `fk_task_plan_revision_steps_step` FOREIGN KEY (`step_id_`) REFERENCES `TaskSteps` (`id_`) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+ALTER TABLE `TaskReplanRequests` ADD KEY `idx_task_replan_claim` (`status`,`next_attempt_at`,`lease_expires_at`), ADD KEY `idx_task_replan_revision` (`revision_id_`), ADD KEY `idx_task_replan_reservation` (`reservation_id_`), ADD CONSTRAINT `fk_task_replan_revision` FOREIGN KEY (`revision_id_`) REFERENCES `TaskPlanRevisions` (`id_`) ON DELETE SET NULL, ADD CONSTRAINT `fk_task_replan_reservation` FOREIGN KEY (`reservation_id_`) REFERENCES `ProjectAutonomyReservations` (`id_`) ON DELETE SET NULL;
+
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

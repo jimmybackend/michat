@@ -258,7 +258,33 @@ La auditoría final PRE-MERGE confirmó 10A–10F, scheduling one-shot, reschedu
 
 Fase 11 continúa únicamente **PLANIFICADA** como siguiente bloque. Triggers event-driven genéricos, condition watchers, Rules abiertas, IA creando reglas, agent loops, self-healing estratégico y autonomía no fueron implementados en Fase 10.
 
-### Fase 11 — PLANIFICADA: Autonomía operativa de MiChat
+### Fase 11 — ABIERTA: Autonomía operativa de MiChat
+
+**11A.0 — Safe single-turn inference boundary: COMPLETADA.** La integración Bedrock dispone de una primitiva compartida que realiza exactamente una llamada `converse` y normaliza texto, mensaje de salida, Tool Use, stop reason y usage sin persistencia. `BedrockChatRuntime` consume ahora esa misma primitiva y conserva su loop, Tools, gates, cancellation, heartbeat y budgets. Una frontera separada de single-turn valida parámetros, nunca envía Tools ni `toolConfig`, no reintenta y falla cerrada si Bedrock devuelve `toolUse` o `stopReason=tool_use`.
+
+11A.0 no añadió DB, configuración de agentes, Tasks, Steps, Executions, Artifacts, memoria, telemetría, Worker, Queue, Orchestrator ni Planner. Al cierre de esa micro-subfase todavía no existían `NextWorkDecision`, snapshot ni evaluator; 11A.1 incorpora ahora el dry-run descrito a continuación.
+
+**11A.1 — Next-work dry-run: COMPLETADA.** Existe un contrato transitorio estricto `stop|ask_user|propose_task`, un snapshot owned/read-only con límites de colecciones, texto y payload, y un evaluator single-turn sin Tools. La configuración se resuelve desde `UserAIAgentConfigs` mediante `ai_agent_runtime.php`, prefiriendo `next_work_evaluator` si existe y usando `chat_main` como fallback configurable; no hay modelo hardcodeado. El prompt separa policy de `UNTRUSTED PROJECT DATA`, la respuesta se valida en PHP y los fallos cierran en `ask_user`.
+
+11A.1 no persiste decisiones, no crea Tasks/Steps/Executions, no escribe memoria o telemetría, no se conecta al Worker ni a finalization y no modifica UI. `chat.php` sigue siendo la superficie conversacional y `task_center.php` la superficie operativa oficial; todavía no existe UI NextWork, Task spawning, continuidad automática ni autonomous loop. Fase 11 continúa **ABIERTA**.
+
+**11B — Policy y presupuesto persistente: COMPLETADA.** Cada Project puede tener una policy owned con modo `disabled|supervised|automatic`, estado `active|paused|stopped`, optimistic locking y límites efectivos sujetos a defaults/ceilings server-side. Ciclos con UUID público conservan contadores durables y una identidad activa única por Project; reservas con idempotency key se realizan bajo transacción y `FOR UPDATE`, se pueden consumir o liberar y no cobran dos veces un retry lógico.
+
+La autorización tipada devuelve `allowed|denied|requires_approval`: solo `propose_task` puede reservar; supervised y Tasks canceladas exigen aprobación, mientras automatic requiere policy activa y budget disponible. Esto no crea Tasks ni reduce HITL de Tools. Cost USD queda **NOT YET ENFORCEABLE** porque el coste disponible es estimado y usa pricing/fallbacks no suficientemente autoritativos para un límite de seguridad.
+
+**11C — Proposal persistente y spawning idempotente: COMPLETADA (MySQL real SKIP sin `TASK_TEST_DB_*`).** `NextWorkProposals` conserva provenance owned y bounded entre source Task, ciclo, autorización/reserva y una única Task resultante. Supervised queda `pending_approval` y requiere approve/reject propio; automatic solo materializa con policy activa y budget reservado. La creación usa el pipeline autoritativo de `TaskApplicationService`, Planner/fallback, Steps y Orchestrator con `origin_type=system`, lineage `parent_task_id_`, modo restrictivo, priority normal, sin scheduling y una idempotency key derivada de la Proposal. Estados durables y reconciliación cubren retries y ventanas de crash sin duplicar Tasks ni cobros.
+
+11C no modifica NextWorkEvaluator, Worker, chat o Task Center; no añade endpoint, Tool, hook post-Task, replanning ni autonomous loop. La Proposal puede producir una Task real solo cuando el servicio interno es invocado explícitamente. Fase 11 continúa **ABIERTA**.
+
+**11D — Continuidad post-Task acotada y recuperable: COMPLETADA (MySQL real SKIP sin `TASK_TEST_DB_*`).** El único TaskWorker descubre Tasks terminales asociadas explícitamente a un ciclo y crea una oportunidad durable única por cycle/source Task. Las continuations usan claim/lease, tres intentos máximos y batch bounded; reservan decision budget antes de inferencia, contabilizan usage real sin TokenUsage conversacional y delegan exclusivamente en NextWorkEvaluator y Proposal service. Stop cierra ciclo, ask_user queda durable, supervised espera approval y automatic crea una child Task que será reclamada posteriormente por el Worker normal.
+
+11D no introduce loop in-memory, recursión, segundo Worker/Queue/Orchestrator, replanning, UI o ChatMessages. Fase 11 continúa **ABIERTA**.
+
+**11E.0 — Typed failure disposition + durable replan checkpoint: COMPLETADA (MySQL real SKIP sin `TASK_TEST_DB_*`).** Los fallos técnicos conservan retry/continuidad normal; triggers lógicos server-side crean atómicamente, junto con Execution/Step/Task failed, una `TaskReplanRequest` owned e idempotente. El checkpoint demuestra ausencia de Execution/Step running y bloquea el discovery de 11D mientras permanezca activo.
+
+11E.0 no llama Planner/modelo, no genera ni aplica planes, no cambia Steps futuros, no reabre Tasks y no implementa approval. La deuda del Planner nullable queda para 11E.1, que deberá reutilizar `task_planner`/`UserAIAgentConfigs`. Fase 11 continúa **ABIERTA**.
+
+11B añade únicamente `ProjectAutonomyPolicies`, `ProjectAutonomyCycles` y `ProjectAutonomyReservations`, junto con `michat/sql/fase11b_project_autonomy.sql`; no modifica Tasks, Worker, Queue, Orchestrator, chat o Task Center. Todavía no existe spawning, continuidad automática, UI NextWork, replanning ni operational autonomous loop. Fase 11 continúa **ABIERTA**.
 
 Partirá de Planner, Model Steps, Tool Steps, Worker, memoria/RAG, HITL, límites y recovery ya existentes. Antes de implementar deberán auditarse y diseñarse posibles subtareas, replanning, objetivos persistentes, delegación interna, roles o ejecutores, políticas de autonomía, presupuestos globales y continuidad entre sesiones.
 
@@ -286,3 +312,7 @@ Antes de declararla cerrada se debe revisar, según aplique:
 La documentación debe describir lo que existe en `main`, distinguiendo claramente entre IMPLEMENTADO, VALIDACIÓN E2E PENDIENTE y PLANIFICADO.
 
 Cada fase o subfase que cambie una capacidad pública debe actualizar, cuando corresponda, este archivo, la documentación arquitectónica relevante y `README.md` cuando cambie la instalación o una capacidad pública. El código y la documentación no deben divergir.
+
+**11E.1 — replanning remaining-plan versionado: COMPLETADA.** El mismo Worker reclama `TaskReplanRequests` con lease y batch bounded, reserva una unidad idempotente de replan, reutiliza `TaskPlanningService` + `AiTaskPlanner` configurado por `UserAIAgentConfigs.task_planner`, contabiliza usage real y persiste revisiones/membresía durable. Supervised espera aprobación específica; automatic exige Project y Task automatic. El apply transaccional conserva Steps terminales, cancela solo futuro `pending|ready`, agrega Steps con keys/positions server-side y realiza `failed → ready` sin ejecución inline.
+
+11D permanece inhibido durante estados activos y se habilita únicamente tras `rejected|failed`; un apply exitoso vuelve no terminal a la Task. No se crean Tasks, Proposals, Tools, mensajes de chat ni escrituras de memoria durante replanning; no hay DELETE histórico, segundo Planner/Worker, loop ni replanning ilimitado. No hay UI de autonomía en Task Center todavía. MySQL real sigue **SKIP** sin `TASK_TEST_DB_*`. Fase 11 continúa **ABIERTA**; 11F y 11G están pendientes.
