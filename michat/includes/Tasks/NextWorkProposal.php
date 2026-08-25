@@ -10,6 +10,7 @@ interface NextWorkProposalStoreInterface{
  public function resolveScope(int$userId,int$projectId,string$sourceTaskPublicId,string$cyclePublicId):array;
  public function createOrGet(array$scope,string$publicId,string$dedupeKey,string$payloadHash,NextWorkDecision$decision,string$status,string$reason,bool$decisionAccounted=false):array;
  public function findOwned(int$userId,string$publicId,bool$lock=false):?array;
+ public function listApproved(int$limit):array;
  public function transition(int$userId,string$publicId,int$lockVersion,array$from,string$to,array$fields=[]):array;
  public function reservationId(int$userId,int$projectId,string$publicId):int;
  public function taskId(int$userId,int$projectId,string$publicId):int;

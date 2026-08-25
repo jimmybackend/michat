@@ -6,6 +6,7 @@ final class PostTaskContinuation{
 }
 interface PostTaskContinuationStoreInterface{
  public function enrollRoot(int$userId,int$projectId,string$taskPublicId,string$cyclePublicId):array;
+ public function answer(int$userId,int$projectId,string$taskPublicId,string$continuationPublicId,string$answer):array;
  public function discover(int$limit):int;
  public function claim(string$workerId,int$leaseSeconds,int$maxAttempts):?array;
  public function recordEvaluation(array$claim,NextWorkEvaluationResult$result):void;

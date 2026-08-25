@@ -84,4 +84,9 @@ El checkpoint tipado de 11E.0 ahora es reclamado con lease por el mismo `TaskWor
 
 Los estados activos del replan siguen inhibiendo 11D. `rejected|failed` liberan la Task para NextWork; `applied` deja de ser terminal. Un apply aprobado interrumpido se recupera por el mismo Worker sin repetir Planner, budget o Steps. No hay segundo Planner, Worker, Orchestrator, Task, Proposal, ToolCall, ChatMessage, DELETE de Steps ni loop recursivo.
 
-No se modificó Task Center ni chat. MySQL real continúa en **SKIP** sin `TASK_TEST_DB_*`; la migración no se ejecutó contra producción. Fase 11 continúa **ABIERTA**: 11F/11G siguen pendientes.
+En el corte 11E.1 todavía no se modificaban Task Center ni chat. 11F completó después la superficie operativa y 11G el hardening/closure audit; `chat.php` permanece conversacional. MySQL real continúa documentado como SKIP cuando falta `TASK_TEST_DB_*`.
+
+
+## Estado final de Fase 11
+
+11A–11G.2 están implementadas. Task Center observa y controla policy, budgets, cycles, roots, continuations, ASK_USER, Proposals, Replans, lineage e historial; el Worker único procesa trabajo bounded y la seguridad de Tools permanece separada. **FASE 11 — PRE-MERGE PASS / READY TO MERGE**, no merged.
