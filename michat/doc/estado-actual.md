@@ -266,7 +266,7 @@ Fase 11 continúa únicamente **PLANIFICADA** como siguiente bloque. Triggers ev
 
 **11A.1 — Next-work dry-run: COMPLETADA.** Existe un contrato transitorio estricto `stop|ask_user|propose_task`, un snapshot owned/read-only con límites de colecciones, texto y payload, y un evaluator single-turn sin Tools. La configuración se resuelve desde `UserAIAgentConfigs` mediante `ai_agent_runtime.php`, prefiriendo `next_work_evaluator` si existe y usando `chat_main` como fallback configurable; no hay modelo hardcodeado. El prompt separa policy de `UNTRUSTED PROJECT DATA`, la respuesta se valida en PHP y los fallos cierran en `ask_user`.
 
-11A.1 no persiste decisiones, no crea Tasks/Steps/Executions, no escribe memoria o telemetría, no se conecta al Worker ni a finalization y no modifica UI. `chat.php` sigue siendo la superficie conversacional y `task_center.php` la superficie operativa oficial; todavía no existe UI NextWork, Task spawning, continuidad automática ni autonomous loop. Fase 11 continúa **ABIERTA**.
+Al cierre aislado de 11A.1 todavía no se persistían decisiones ni existía integración con Worker/UI; 11B–11F incorporaron después policy, continuidad, replanning y Task Center sin modificar `chat.php`.
 
 **11B — Policy y presupuesto persistente: COMPLETADA.** Cada Project puede tener una policy owned con modo `disabled|supervised|automatic`, estado `active|paused|stopped`, optimistic locking y límites efectivos sujetos a defaults/ceilings server-side. Ciclos con UUID público conservan contadores durables y una identidad activa única por Project; reservas con idempotency key se realizan bajo transacción y `FOR UPDATE`, se pueden consumir o liberar y no cobran dos veces un retry lógico.
 
@@ -315,4 +315,27 @@ Cada fase o subfase que cambie una capacidad pública debe actualizar, cuando co
 
 **11E.1 — replanning remaining-plan versionado: COMPLETADA.** El mismo Worker reclama `TaskReplanRequests` con lease y batch bounded, reserva una unidad idempotente de replan, reutiliza `TaskPlanningService` + `AiTaskPlanner` configurado por `UserAIAgentConfigs.task_planner`, contabiliza usage real y persiste revisiones/membresía durable. Supervised espera aprobación específica; automatic exige Project y Task automatic. El apply transaccional conserva Steps terminales, cancela solo futuro `pending|ready`, agrega Steps con keys/positions server-side y realiza `failed → ready` sin ejecución inline.
 
-11D permanece inhibido durante estados activos y se habilita únicamente tras `rejected|failed`; un apply exitoso vuelve no terminal a la Task. No se crean Tasks, Proposals, Tools, mensajes de chat ni escrituras de memoria durante replanning; no hay DELETE histórico, segundo Planner/Worker, loop ni replanning ilimitado. No hay UI de autonomía en Task Center todavía. MySQL real sigue **SKIP** sin `TASK_TEST_DB_*`. Fase 11 continúa **ABIERTA**; 11F y 11G están pendientes.
+11D permanece inhibido durante estados activos y se habilita únicamente tras `rejected|failed`; un apply exitoso vuelve no terminal a la Task. Replanning no crea Tasks, Proposals, Tools, ChatMessages o memoria, no borra historia y no introduce Planner/Worker paralelo. La UI y el hardening fueron completados posteriormente por 11F/11G.
+
+**11F.1 — Task Center autonomy observability read-only: COMPLETADA (browser/MySQL real pendientes cuando no hay entorno aislado).** `task_center.php` conserva Lista, Board, filtros, búsqueda, paginación, detalle, Steps, scheduling, recurrence, approvals preexistentes, executions, Events, Artifacts y traces. El detalle owned compone ahora el resumen de policy/ciclo/budgets del Project, lineage, continuations, decisiones NextWork persistidas, ask_user, Proposals, replans y revisiones con membership explícita de Steps. La UI limita colecciones/textos, escapa contenido no confiable, distingue plan actual del historial y muestra solo UUIDs públicos de autonomía.
+
+Al cierre de 11F.1 no se creaban datos ni existían acciones de autonomía; esas operaciones fueron incorporadas posteriormente por 11F.2A/11F.2B y endurecidas/cerradas técnicamente por 11G. Estado histórico: 11A PASS, 11B PASS, 11C PASS, 11D PASS, 11E PASS y 11F.1 PASS, sujeto a la deuda externa de E2E MySQL/browser indicada.
+
+**11F.2A — controles de policy/status/budgets: COMPLETADA (MySQL/browser real pendientes según entorno).** Task Center permite guardar explícitamente mode y nueve límites, pause/resume/stop, iniciar o resolver idempotentemente el ciclo activo y asociar la Task owned actual como root. Los comandos reutilizan servicios 11B/11D, CSRF, UUID público de Task, ownership derivado, ceilings server-side y optimistic locking; rechazan límites bajo consumo activo y nunca editan contadores/coste.
+
+11F.1 permanece PASS. Al cierre de 11F.2A no se ejecutaba Worker/Planner/NextWork/Replan y el HITL de ask_user/Proposal/Replan quedaba reservado para 11F.2B, ahora completada. **11G.1/11G.2 completadas; Fase 11 lista para PRE-MERGE**.
+
+**11F.2B — HITL operativo ASK_USER/Proposals/Replans: COMPLETADA (MySQL/browser real pendientes según entorno).** Task Center responde continuations con answer/actor/fecha durables, aprueba/rechaza Proposals y aprueba/rechaza Replans mediante servicios autoritativos. HTTP no ejecuta Worker, Planner, Steps o continuidad: Proposal autorizada se materializa por mantenimiento posterior del Worker y Replan aprobado se aplica por el Worker existente. Rechazos son idempotentes, ownership/CSRF/locks permanecen activos y las aprobaciones de Tools no se transfieren.
+
+Estado: **11F.1 PASS, 11F.2A PASS, 11F.2B PASS**. Task Center ya observa y controla policy, budgets, status, cycle/root y HITL de autonomía. **11G.1/11G.2 completadas; Fase 11 lista para PRE-MERGE**.
+
+**11G.1 — HARDENING COMPLETE (MySQL/browser real SKIP cuando el entorno no los ofrece).** La auditoría cross-user/cross-project, races, budgets, leases, cancellation, prompt injection, XSS/CSRF, bounds, Tool gates y Worker fairness corrigió scope exacto de ASK_USER, cancellation posterior a Proposal approval y atomicidad de Replan reject. No se añadió feature, Worker, Planner, Orchestrator, Tool o UI.
+
+11A–11F permanecen PASS. **11G.1 HARDENING COMPLETE; 11G.2 CLOSURE AUDIT COMPLETE; Fase 11 PRE-MERGE PASS / READY TO MERGE**.
+
+
+### FASE 11 — PRE-MERGE PASS / READY TO MERGE
+
+11A, 11B, 11C, 11D, 11E.0, 11E.1, 11F.1, 11F.2A, 11F.2B, 11G.1 y **11G.2 closure audit** están implementadas y las suites disponibles pasan. La arquitectura conserva un TaskWorker, un TaskOrchestrator, una arquitectura de Planning/Planner, la inferencia compartida y un único Task Center. No hay blocker conocido.
+
+La Fase 11 no se declara merged ni releaseada: queda **READY TO MERGE**. La auditoría del diff completo desde `708816f` y las 74 suites PHP/JS disponibles no detectaron blockers. MySQL real y Browser E2E siguen SKIP por ausencia de entorno, como deuda externa no bloqueante; cost USD continúa NOT ENFORCEABLE.

@@ -1,0 +1,30 @@
+<?php
+declare(strict_types=1);
+$root=dirname(__DIR__);$control=file_get_contents($root.'/includes/Tasks/TaskCenterAutonomyControlService.php');$controller=file_get_contents($root.'/includes/Tasks/TaskApiController.php');$js=file_get_contents($root.'/js/task-center.js');$read=file_get_contents($root.'/includes/Tasks/TaskCenterAutonomyReadService.php');$css=file_get_contents($root.'/css/task-center.css');
+$checks=[
+ 'task public scope'=>str_contains($control,"findOwnedByPublicId(\$public,\$userId)"),
+ 'no client project authority'=>!str_contains($control,"input['project_id'")&&!str_contains($control,'policy_public_id'),
+ 'authoritative policy service'=>str_contains($control,'$this->policies->update')&&str_contains($control,'$this->policies->pause')&&str_contains($control,'$this->policies->resume')&&str_contains($control,'$this->policies->stop'),
+ 'authoritative cycle service'=>str_contains($control,'$this->budgets->startCycle'),
+ 'authoritative enrollment service'=>str_contains($control,'$this->continuations->enrollRoot'),
+ 'server enum remains authoritative'=>str_contains(file_get_contents($root.'/includes/Tasks/AutonomyPolicyService.php'),'AutonomyPolicy::MODES'),
+ 'optimistic lock'=>str_contains($control,"lock_version")&&str_contains($controller,'TaskConcurrencyException'),
+ 'complete limits only'=>str_contains($control,'autonomy_limits_incomplete'),
+ 'negative and ceiling rejected'=>str_contains($control,'$value<1')&&str_contains($control,'AutonomyPolicy::CEILINGS'),
+ 'below active usage rejected'=>str_contains($control,'autonomy_limit_below_usage')&&str_contains($control,"status='active'"),
+  'consumed counters immutable'=>!str_contains($control,"input['tasks_consumed']")&&!str_contains($control,"input['decisions_consumed']"),
+ 'no cost write'=>!str_contains($control,'cost_budget')&&!str_contains($js,'name="cost'),
+ 'csrf gate precedes actions'=>strpos($controller,'CsrfGuard::assertSessionToken')<strpos($controller,"\$action==='autonomy_policy_update'"),
+ 'all API actions'=>array_reduce(['autonomy_policy_update','autonomy_pause','autonomy_resume','autonomy_stop','autonomy_cycle_start','autonomy_root_enroll'],fn($ok,$x)=>$ok&&str_contains($controller,$x),true),
+ 'mode controls'=>str_contains($js,'Disabled</option>')&&str_contains($js,'Supervised</option>')&&str_contains($js,'Automatic</option>'),
+ 'explicit budget save'=>str_contains($js,'Guardar modo y límites'),
+ 'status controls'=>str_contains($js,'>Pause</button>')&&str_contains($js,'>Resume</button>')&&str_contains($js,'>Stop</button>'),
+ 'cycle and root controls'=>str_contains($js,'Iniciar ciclo')&&str_contains($js,'Asociar esta Task como raíz'),
+ 'csrf client wrapper reused'=>str_contains($js,"'X-CSRF-Token':csrf"),
+ 'sensitive confirmations'=>str_contains($js,"mode==='automatic'&&!confirm")&&str_contains($js,"action==='autonomy_stop'&&!confirm"),
+ '11F2B excluded'=>!str_contains($js,'approve_proposal')&&!str_contains($js,'answer_ask_user')&&!str_contains($js,'approve_replan'),
+ 'xss escape retained'=>str_contains($js,'${esc(value)}')&&str_contains($js,'${esc(p.status)}'),
+ 'read state retained'=>str_contains($read,"'budgets'=>\$budgets")&&str_contains($read,"'lock_version'"),
+ 'responsive controls'=>str_contains($css,'.budget-editor')&&str_contains($css,'.autonomy-controls button{width:100%'),
+ 'no worker execution'=>!preg_match('/->(?:processTick|evaluate|createTask|apply)\s*\(/',$control),
+];foreach($checks as$name=>$ok){if(!$ok){fwrite(STDERR,"FAIL: $name\n");exit(1);}}echo'task_phase11f2a_controls_test: PASS ('.count($checks)." checks)\n";
