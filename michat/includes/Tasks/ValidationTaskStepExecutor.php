@@ -7,7 +7,7 @@ final class ValidationTaskStepExecutor implements TaskStepExecutorInterface
     {
         $input=$context['input']??[];$check=$input['check']??'';$path=$input['path']??'';
         if ($isCancelled()) throw new TaskTransitionException('cancel_requested');
-        if ($check !== 'file_exists' || !is_string($path) || $path === '' || str_contains($path, '..') || str_starts_with($path, '/') || !is_file($path)) throw new RuntimeException('validation_failed');
+        if ($check !== 'file_exists' || !is_string($path) || $path === '' || str_contains($path, '..') || str_starts_with($path, '/') || !is_file($path)) throw new TaskClassifiedFailureException(TaskFailureDisposition::replan('validation_failed','La validación indicó que el plan restante debe revisarse.'),'validation_failed');
         return TaskStepExecutionResult::completed('Validated file existence.', [], ['last_completed_operation'=>'file_exists']);
     }
 }

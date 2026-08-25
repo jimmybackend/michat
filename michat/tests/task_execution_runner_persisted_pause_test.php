@@ -7,7 +7,7 @@ final class RunnerTestProgression implements TaskStepProgressionInterface
 {
     public int$applied=0,$failed=0,$cancelled=0;
     public function apply(array$context,TaskStepExecutionResult$result):bool{$this->applied++;return true;}
-    public function fail(array$context,string$error):bool{$this->failed++;return true;}
+    public function fail(array$context,string$error,?TaskFailureDisposition$disposition=null):bool{$this->failed++;return true;}
     public function cancel(array$context):bool{$this->cancelled++;return true;}
 }
 final class RunnerTestLeases implements TaskLeaseInterface

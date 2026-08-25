@@ -13,9 +13,10 @@ final class TaskExecutionRunner
             if($result->isDurablePauseAlreadyPersisted())return true;
             $heartbeat();
             return $this->progression->apply($context,$result);
+        } catch (TaskClassifiedFailureException $e) {$safe=ChatTaskBridge::sanitizeError($e);$this->progression->fail($context,$safe,$e->disposition);error_log('Task execution classified failure: '.$safe);return false;
         } catch (TaskTransitionException $e) {
             if($e->getMessage()==='cancel_requested')return $this->progression->cancel($context);throw $e;
         } catch (TaskConcurrencyException $e) { error_log('Task worker lost lease for execution '.$context['execution_id']);return false;
-        } catch (Throwable $e) {$safe=ChatTaskBridge::sanitizeError($e);$this->progression->fail($context,$safe);error_log('Task execution failed: '.$safe);return false;}
+        } catch (Throwable $e) {$safe=ChatTaskBridge::sanitizeError($e);$this->progression->fail($context,$safe,TaskFailureDisposition::technical());error_log('Task execution failed: '.$safe);return false;}
     }
 }
