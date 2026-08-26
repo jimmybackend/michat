@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 final class MigrationRunner
 {
-    public const VERSION='fase12b3-v1';
+    public const VERSION='fase12b4-v1';
 
     public function __construct(
         private MigrationCatalog $catalog,
@@ -57,7 +57,7 @@ final class MigrationRunner
     public function baseline(string $profile): void
     {
         if($profile!=='current-dump')throw new InvalidArgumentException('Unknown baseline profile');
-        $this->recordProfile($profile,11,'clean_baseline');
+        $this->recordProfile($profile,12,'clean_baseline');
     }
 
     private function recordProfile(string $profile,int $count,string $mode):void
@@ -112,6 +112,8 @@ final class MigrationRunner
         foreach(['ProjectAutonomyPolicies','ProjectAutonomyCycles','ProjectAutonomyReservations','NextWorkProposals','ProjectAutonomyCycleTasks','PostTaskContinuations','TaskReplanRequests','TaskPlanRevisions','TaskPlanRevisionSteps','UserAIAgentConfigs'] as $table)$this->requireTable($table,true);
         foreach([['NextWorkProposals','decision_accounted'],['PostTaskContinuations','answer'],['PostTaskContinuations','answered_at'],['PostTaskContinuations','answered_by_user_id_'],['TaskReplanRequests','revision_id_'],['Tasks','mode']] as [$table,$column])$this->requireColumnContains($table,$column,'');
         $this->requireColumnContains('UserAIAgentConfigs','scope',"enum('global','user')");
+        $this->requireNullable('UserAIAgentConfigs','scope',false);
+        $this->requireColumnDefaultAbsent('UserAIAgentConfigs','scope');
         $this->requireColumnContains('UserAIAgentConfigs','scope_owner_key','stored generated');
         $this->requireNullable('UserAIAgentConfigs','user_id_',true);
         $this->requireIndex('UserAIAgentConfigs','uq_uac_scope_owner_agent',['scope','scope_owner_key','agent_key'],true);
@@ -134,6 +136,8 @@ final class MigrationRunner
     {$s=$this->repository->db()->prepare('SELECT COLUMN_TYPE,EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?');$s->bind_param('ss',$table,$column);$s->execute();$row=$s->get_result()->fetch_assoc();$s->close();$text=strtolower(implode(' ',array_values($row?:[])));if(!$row||($needle!==''&&!str_contains($text,strtolower($needle))))throw new RuntimeException("PROFILE MISMATCH: column {$table}.{$column}");}
     private function requireNullable(string $table,string $column,bool $nullable):void
     {$s=$this->repository->db()->prepare('SELECT IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?');$s->bind_param('ss',$table,$column);$s->execute();$row=$s->get_result()->fetch_assoc();$s->close();if(!$row||(($row['IS_NULLABLE']==='YES')!==$nullable))throw new RuntimeException("PROFILE MISMATCH: nullability {$table}.{$column}");}
+    private function requireColumnDefaultAbsent(string $table,string $column):void
+    {$s=$this->repository->db()->prepare('SELECT COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?');$s->bind_param('ss',$table,$column);$s->execute();$row=$s->get_result()->fetch_assoc();$s->close();if(!$row||$row['COLUMN_DEFAULT']!==null)throw new RuntimeException("PROFILE MISMATCH: default {$table}.{$column}");}
     private function requireIndex(string $table,string $name,array $columns,bool $unique):void
     {$s=$this->repository->db()->prepare('SELECT NON_UNIQUE,COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND INDEX_NAME=? ORDER BY SEQ_IN_INDEX');$s->bind_param('ss',$table,$name);$s->execute();$r=$s->get_result();$actual=[];$nonUnique=null;while($row=$r->fetch_assoc()){$actual[]=$row['COLUMN_NAME'];$nonUnique=(int)$row['NON_UNIQUE'];}$s->close();if($actual!==$columns||($unique&&$nonUnique!==0))throw new RuntimeException("PROFILE MISMATCH: index {$table}.{$name}");}
     private function requireForeignKey(string $table,string $column,string $refTable,string $refColumn,string $deleteRule):void
@@ -155,6 +159,7 @@ final class MigrationRunner
             'fase11e1_versioned_replanning'=>$this->columnExists('Tasks','mode')||$this->columnExists('TaskReplanRequests','revision_id_')||$this->tableExists('TaskPlanRevisions')||$this->tableExists('TaskPlanRevisionSteps'),
             'fase11f2_hitl_controls'=>$this->columnExists('PostTaskContinuations','answer')||$this->columnExists('PostTaskContinuations','answered_by_user_id_'),
             'fase12b_2c_global_ai_configuration_scope'=>$this->columnExists('UserAIAgentConfigs','scope')||$this->columnExists('UserAIAgentConfigs','scope_owner_key'),
+            'fase12b_4_ai_scope_default_reconciliation'=>false,
             default=>true,
         };
         if($postStatePresent)throw new RuntimeException('PARTIAL/UNKNOWN STATE: pending migration has target structures; OPERATOR RECONCILIATION REQUIRED for '.$id);

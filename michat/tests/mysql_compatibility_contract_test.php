@@ -42,6 +42,9 @@ if ($missing !== []) {
     echo "Result: {$passed} passed, {$failed} failed\n";
     exit($failed === 0 ? 0 : 1);
 }
+require_once __DIR__.'/support/ExternalMysqlTestSafety.php';
+try { requireExternalMysqlDestructiveAuthorization(); }
+catch (RuntimeException $error) { fwrite(STDERR, $error->getMessage()."\n"); exit(1); }
 
 $host = (string)getenv('TASK_TEST_DB_HOST');
 $port = filter_var(getenv('TASK_TEST_DB_PORT'), FILTER_VALIDATE_INT);
@@ -54,7 +57,8 @@ if ($port === false || $port < 1 || $port > 65535) {
 }
 
 $db = null;
-$temporaryDb = 'michat_mysql_contract_' . bin2hex(random_bytes(6));
+$temporaryDb = externalMysqlTemporaryDatabaseName('compatibility');
+$created = [];
 $identifier = static fn(string $value): string => '`' . str_replace('`', '``', $value) . '`';
 $runMigration = static function (string $database) use ($host, $port, $user, $password, $migrationPath): array {
     $command = ['mysql', '--protocol=TCP', '--host=' . $host, '--port=' . $port, '--user=' . $user, '--database=' . $database, '--batch', '--raw'];
@@ -73,6 +77,7 @@ try {
     $db = new mysqli($host, $user, $password, '', (int)$port);
     $db->set_charset('utf8mb4');
     $db->query('CREATE DATABASE ' . $identifier($temporaryDb) . ' CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci');
+    $created[] = $temporaryDb;
     $db->select_db($temporaryDb);
     foreach ([
         'CREATE TABLE Users (id int NOT NULL PRIMARY KEY) ENGINE=InnoDB',
@@ -93,7 +98,7 @@ try {
     $check(false, 'isolated MySQL compatibility harness: ' . $error->getMessage());
 } finally {
     if ($db instanceof mysqli) {
-        try { $db->query('DROP DATABASE IF EXISTS ' . $identifier($temporaryDb)); }
+        try { assertExternalMysqlDatabaseOwned($temporaryDb, $created); $db->query('DROP DATABASE IF EXISTS ' . $identifier($temporaryDb)); }
         catch (Throwable $cleanupError) { $check(false, 'cleanup temporary MySQL compatibility database'); }
         $db->close();
     }

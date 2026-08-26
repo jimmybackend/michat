@@ -77,6 +77,7 @@ $usersSeeded = preg_match('/INSERT\s+INTO\s+`Users`/i', $dump)===1;
 $check(!$usersSeeded, 'dump does not invent or seed Users during preflight');
 
 $check(preg_match('/INSERT\s+INTO\s+`UserAIAgentConfigs`[\s\S]*?VALUES\s*\(\'global\',\s*NULL,/i', $dump)===1, 'AI catalog seeds ownerless GLOBAL rows');
+$check(preg_match('/`scope`\s+enum\(\'global\',\'user\'\)\s+NOT NULL(?!\s+DEFAULT)/i', $dump)===1, 'AI scope is the exact NOT NULL enum with no default');
 $check(preg_match('/INSERT\s+INTO\s+`(?:UserPipelineFeatures|UserPreferences)`/i', $dump)!==1, 'dump omits historical user-scoped defaults');
 
 echo $issues===[] ? "STATIC PREFLIGHT PASS\n" : 'STATIC PREFLIGHT ISSUES FOUND ('.count($issues).")\n";
@@ -92,6 +93,9 @@ if ($missing !== []) {
     echo "Result: {$passed} passed, {$failed} failed\n";
     exit($failed===0 ? 0 : 1);
 }
+require_once __DIR__.'/support/ExternalMysqlTestSafety.php';
+try { requireExternalMysqlDestructiveAuthorization(); }
+catch (RuntimeException $error) { fwrite(STDERR, $error->getMessage()."\n"); exit(1); }
 
 $host = (string)getenv('TASK_TEST_DB_HOST');
 $portRaw = (string)getenv('TASK_TEST_DB_PORT');
@@ -104,7 +108,7 @@ if ($port===false) {
     exit(1);
 }
 
-$temporaryDb = 'michat_clean_'.bin2hex(random_bytes(6));
+$temporaryDb = externalMysqlTemporaryDatabaseName('clean');
 $created = [];
 $db = null;
 $runtime = sys_get_temp_dir().'/michat-schema-import-'.bin2hex(random_bytes(6));
@@ -199,7 +203,7 @@ PHP);
 } finally {
     if ($db instanceof mysqli) {
         foreach (array_reverse(array_unique($created)) as $database) {
-            try { $db->query('DROP DATABASE IF EXISTS '.$identifier($database)); }
+            try { assertExternalMysqlDatabaseOwned($database, $created); $db->query('DROP DATABASE IF EXISTS '.$identifier($database)); }
             catch (Throwable $cleanupError) { $check(false, 'cleanup temporary database '.$database); }
         }
         $db->close();
