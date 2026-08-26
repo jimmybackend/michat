@@ -61,8 +61,11 @@ try {
     traceMetricsExit(['ok'=>false,'api_version'=>'7.7','error'=>$e->getMessage()], 400);
 } catch (RuntimeException $e) {
     $msg = $e->getMessage();
-    $status = (str_contains($msg, 'permis') || str_contains($msg, 'pertenece')) ? 403 : 500;
-    traceMetricsExit(['ok'=>false,'api_version'=>'7.7','error'=>$msg], $status);
+    if (str_contains($msg, 'permis') || str_contains($msg, 'pertenece')) {
+        traceMetricsExit(['ok'=>false,'api_version'=>'7.7','error'=>$msg], 403);
+    }
+    error_log('TRACE_METRICS_7_7: ' . $msg);
+    traceMetricsExit(['ok'=>false,'api_version'=>'7.7','error'=>'Error interno construyendo métricas.'], 500);
 } catch (Throwable $e) {
     error_log('TRACE_METRICS_7_7: ' . $e->getMessage());
     traceMetricsExit(['ok'=>false,'api_version'=>'7.7','error'=>'Error interno construyendo métricas.'], 500);

@@ -30,4 +30,12 @@ final class ChatIdentity
         $role = mb_strtolower(trim($role), 'UTF-8');
         return in_array($role, ['administración','soporte','admin','administrator','support'], true);
     }
+
+    /** Global AI configuration is narrower than general admin-like access. */
+    public static function canManageGlobalAiConfiguration(): bool
+    {
+        $role = (string)($_SESSION['role'] ?? $_SESSION['rol'] ?? '');
+        $role = mb_strtolower(trim($role), 'UTF-8');
+        return in_array($role, ['administración', 'admin', 'administrator'], true);
+    }
 }

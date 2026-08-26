@@ -17,12 +17,6 @@ SET time_zone = "+00:00";
 /*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
 /*!40101 SET NAMES utf8mb4 */;
 
---
--- Base de datos: `adbbmis1_Cloud`
---
-CREATE DATABASE IF NOT EXISTS `adbbmis1_Cloud` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
-USE `adbbmis1_Cloud`;
-
 -- --------------------------------------------------------
 
 --
