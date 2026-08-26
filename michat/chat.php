@@ -629,10 +629,14 @@ $mostrarTruncate = isset($_SESSION['user_id']) && (( $_SESSION['user_id'] ?? '')
          title="Ver estadísticas completas">
         <i class="fas fa-chart-line"></i>
       </a>
-      <a href="task_center.php" class="chat-stats-mini-link" title="Abrir Task Center">
-        <i class="fas fa-list-check"></i>
-      </a>
     </div>
+    <a href="task_center.php"
+       class="btn btn-sm btn-outline-info"
+       title="Abrir Task Center"
+       aria-label="Abrir Task Center de agentes">
+      <i class="fas fa-robot mr-1"></i>
+      <span class="d-none d-md-inline">Agentes</span>
+    </a>
     <!-- ============================================= -->
 
 

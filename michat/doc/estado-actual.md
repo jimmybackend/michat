@@ -256,9 +256,11 @@ Fallos de materialización quedan durables y sanitizados; occurrences `failed` o
 
 La auditoría final PRE-MERGE confirmó 10A–10F, scheduling one-shot, reschedule, creación manual ejecutable, recurrence daily/weekly, misfires, occurrence identity, materialización en el Worker existente, API/UI owned, locking, seguridad y ausencia de un segundo motor. Todas las suites PHP/JS disponibles pasan. **MySQL real permanece SKIP**, no PASS, porque `TASK_TEST_DB_*` no estaba configurado; esta validación E2E aislada queda como deuda externa no bloqueante y no autoriza usar producción.
 
-Fase 11 continúa únicamente **PLANIFICADA** como siguiente bloque. Triggers event-driven genéricos, condition watchers, Rules abiertas, IA creando reglas, agent loops, self-healing estratégico y autonomía no fueron implementados en Fase 10.
+Fase 11 fue implementada después de este cierre histórico de Fase 10 y quedó **CLOSED / MERGED** mediante el PR #69. Triggers event-driven genéricos, condition watchers, Rules abiertas, IA creando reglas y self-healing estratégico permanecen fuera de su alcance.
 
-### Fase 11 — ABIERTA: Autonomía operativa de MiChat
+### Fase 11 — CLOSED / MERGED: Autonomía operativa de MiChat
+
+Las notas de apertura/cierre intermedio que siguen conservan la secuencia histórica de cada subfase; el estado autoritativo consolidado está al final de esta sección.
 
 **11A.0 — Safe single-turn inference boundary: COMPLETADA.** La integración Bedrock dispone de una primitiva compartida que realiza exactamente una llamada `converse` y normaliza texto, mensaje de salida, Tool Use, stop reason y usage sin persistencia. `BedrockChatRuntime` consume ahora esa misma primitiva y conserva su loop, Tools, gates, cancellation, heartbeat y budgets. Una frontera separada de single-turn valida parámetros, nunca envía Tools ni `toolConfig`, no reintenta y falla cerrada si Bedrock devuelve `toolUse` o `stopReason=tool_use`.
 
@@ -288,9 +290,11 @@ La autorización tipada devuelve `allowed|denied|requires_approval`: solo `propo
 
 Partirá de Planner, Model Steps, Tool Steps, Worker, memoria/RAG, HITL, límites y recovery ya existentes. Antes de implementar deberán auditarse y diseñarse posibles subtareas, replanning, objetivos persistentes, delegación interna, roles o ejecutores, políticas de autonomía, presupuestos globales y continuidad entre sesiones.
 
-### Fase 12 — PLANIFICADA: Industrialización y release estable
+### Fase 12 — CURRENT: Industrialización y release estable
 
-Comprenderá PSR-4 progresivo, reducción de `require` manuales, endpoints delgados, migraciones y versionado de esquema, instalación reproducible, abstracciones de proveedores IA o storage cuando aporten portabilidad real, E2E MySQL/AWS, revisión final de seguridad, packaging y release estable.
+La auditoría inicial post-PR #69 descartó imponer un orden histórico de PSR-4, endpoints o migraciones y abrió como primer bloque real **12A — Public HTTP error safety**. **12A Trace Metrics hardening: PASS**: `trace_metrics_api.php` conserva success, auth, ownership, parámetros y errores públicos conocidos, pero ya no refleja detalles internos de `RuntimeException`; los registra server-side y devuelve un 500 genérico estable. Esto no declara una release estable. Versionado/upgrade de schema, E2E MySQL/AWS/browser y operación/packaging de release permanecen pendientes de bloques auditados posteriores.
+
+**12B.0 schema/upgrade audit: COMPLETE. 12B.1 clean-install contract: PARTIAL / SEED CONTRACT BLOCKED.** El dump consolidado ya no crea ni selecciona una base hardcodeada: el deployment elige `DB_NAME`, crea esa base, importa allí el schema y la aplicación reutiliza el mismo valor mediante `app_bootstrap.php`/`db-s3.php`. El preflight estático de target, tablas y FKs pasa, pero los seeds históricos permanecen sin cambios: el runtime global de `UserAIAgentConfigs` depende explícitamente de filas `user_id_=1` y este repo no contiene provisioning de `Users`, mientras Pipeline flags y Preferences sí tienen defaults/lazy writes. Sin `TASK_TEST_DB_*`, el import MySQL real continúa **SKIP / NOT CERTIFIED**; no se declara clean-install E2E PASS ni se inicia todavía un migration runner.
 
 ## Regla de cierre para nuevas fases
 
@@ -334,8 +338,8 @@ Estado: **11F.1 PASS, 11F.2A PASS, 11F.2B PASS**. Task Center ya observa y contr
 11A–11F permanecen PASS. **11G.1 HARDENING COMPLETE; 11G.2 CLOSURE AUDIT COMPLETE; Fase 11 PRE-MERGE PASS / READY TO MERGE**.
 
 
-### FASE 11 — PRE-MERGE PASS / READY TO MERGE
+### FASE 11 — CLOSED / MERGED
 
 11A, 11B, 11C, 11D, 11E.0, 11E.1, 11F.1, 11F.2A, 11F.2B, 11G.1 y **11G.2 closure audit** están implementadas y las suites disponibles pasan. La arquitectura conserva un TaskWorker, un TaskOrchestrator, una arquitectura de Planning/Planner, la inferencia compartida y un único Task Center. No hay blocker conocido.
 
-La Fase 11 no se declara merged ni releaseada: queda **READY TO MERGE**. La auditoría del diff completo desde `708816f` y las 74 suites PHP/JS disponibles no detectaron blockers. MySQL real y Browser E2E siguen SKIP por ausencia de entorno, como deuda externa no bloqueante; cost USD continúa NOT ENFORCEABLE.
+La Fase 11 fue fusionada mediante el PR #69. La auditoría del diff completo desde `708816f` y las suites PHP/JS disponibles no detectó blockers de implementación. MySQL real y Browser E2E siguen SKIP por ausencia de entorno, como deuda externa no bloqueante; cost USD continúa NOT ENFORCEABLE.

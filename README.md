@@ -594,8 +594,8 @@ sin modificar el código fuente.
 
 - [x] **Phase 9 — Closed:** Task Center 2.0 provides navigation, search, combined filters, pagination, operational List/Board views, visible priority and dates, waits, HITL actions, direct/inverse dependency management, owned history, executions, artifacts, and chat/trace navigation. Phase 9F completed accessibility, loading/error feedback, responsive and security hardening without database changes.
 - [x] **Phase 10 — Closed:** 10A–10F deliver UTC one-shot scheduling, owned rescheduling, executable manual Tasks, durable daily/weekly recurrence, bounded materialization in the existing Worker, and owned recurrence administration in Task Center. The final pre-merge audit passed all available PHP/JS suites; isolated MySQL E2E remains explicitly pending because `TASK_TEST_DB_*` was unavailable. Event triggers, generic Automation Rules and autonomy remain outside Phase 10.
-- [ ] **Phase 11 — Planned:** operational autonomy inside MiChat, building on the Planner, Model/Tool Steps, Worker, Memory/RAG, HITL, limits and recovery. Subtasks, replanning, persistent goals, internal delegation, executor roles, autonomy policies, global budgets and cross-session continuity require design and audit before implementation.
-- [ ] **Phase 12 — Planned:** progressive PSR-4 adoption, fewer manual requires, thin endpoints, schema migrations/versioning, reproducible installation, portability-driven AI/storage abstractions, MySQL/AWS E2E coverage, final security review, packaging and stable release.
+- [x] **Phase 11 — Closed / merged in PR #69:** operational autonomy reuses the existing Planner, Model/Tool Steps, Worker, shared inference runtime, Memory/RAG and HITL boundaries. It includes Project policies and budgets, bounded cycles and continuations, NextWork/Proposals, ASK_USER, versioned replanning, Task Center observability and HITL controls, and final hardening.
+- [ ] **Phase 12 — Current:** release industrialization now starts with public HTTP error safety. **12A PASS** hardens Trace Metrics so known permission/ownership errors preserve their public contract while internal RuntimeException/SQL details are logged server-side and return a stable generic 500 response. This does not declare a stable release; schema upgrades, external E2E and release operations remain future audited work.
 
 ---
 
@@ -662,7 +662,7 @@ Open `michat/task_center.php` to inspect owned Tasks, Steps, pending approvals, 
 The current implementation is based on approximately:
 
 - PHP 8.1 or newer
-- MySQL 8.0 or newer (JSON, generated columns and `SKIP LOCKED` are used)
+- MySQL 8.0.16 or newer (JSON, generated columns, enforced `CHECK` constraints and `SKIP LOCKED` are used). This is the supported contract; real MySQL E2E remains environment-dependent and must not be inferred from static checks.
 - JavaScript
 - Composer
 - AWS SDK for PHP
@@ -680,12 +680,20 @@ The current implementation is based on approximately:
 git clone https://github.com/jimmybackend/michat.git
 cd michat
 
+cp .env.example .env
+
+# Choose a deployment-specific name. "michat" is only an example.
+DB_NAME=michat
+# Set the same DB_NAME in .env, together with DB_HOST/PORT/USER/PASSWORD.
+
 composer install --no-dev --prefer-dist --optimize-autoloader
 
-cp .env.example .env
-mysql -u root -p -e 'CREATE DATABASE michat CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci'
-mysql -u root -p michat < adbbmis1_Cloud.sql
+mysql -u root -p -e "CREATE DATABASE \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
+mysql -u root -p "$DB_NAME" < adbbmis1_Cloud.sql
+test "$?" -eq 0
 ```
+
+`DB_NAME` is selected by each deployment. The schema dump does not create or select a database; it imports into the database already selected by the MySQL client. Configure the application with that same `DB_NAME` before opening the web UI or starting the Worker. A zero import exit code is required. The static clean-install contract is covered in-repo, while a real clean import remains `SKIP`/not certified until isolated `TASK_TEST_DB_*` credentials are provided.
 
 MiChat carga el archivo `.env` de la raíz cuando existe. Las variables ya
 inyectadas por el proceso, PHP-FPM, Apache, EC2 o systemd tienen prioridad y no

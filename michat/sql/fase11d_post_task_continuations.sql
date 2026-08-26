@@ -1,4 +1,21 @@
-ALTER TABLE `NextWorkProposals` ADD COLUMN IF NOT EXISTS `decision_accounted` tinyint(1) NOT NULL DEFAULT 0 AFTER `authorization_reason`;
+-- PRE-RUNNER MYSQL COMPATIBILITY CORRECTION:
+-- MySQL 8.0 does not support conditional ADD COLUMN syntax. Keep this historical
+-- migration re-runnable without changing the resulting column definition.
+SET @michat_has_decision_accounted := (
+ SELECT COUNT(*)
+ FROM information_schema.COLUMNS
+ WHERE TABLE_SCHEMA = DATABASE()
+   AND TABLE_NAME = 'NextWorkProposals'
+   AND COLUMN_NAME = 'decision_accounted'
+);
+SET @michat_add_decision_accounted := IF(
+ @michat_has_decision_accounted = 0,
+ 'ALTER TABLE `NextWorkProposals` ADD COLUMN `decision_accounted` tinyint(1) NOT NULL DEFAULT 0 AFTER `authorization_reason`',
+ 'SELECT 1'
+);
+PREPARE michat_fase11d_stmt FROM @michat_add_decision_accounted;
+EXECUTE michat_fase11d_stmt;
+DEALLOCATE PREPARE michat_fase11d_stmt;
 
 -- Fase 11D: asociación explícita root/cycle y oportunidades post-terminal reclamables.
 CREATE TABLE IF NOT EXISTS `ProjectAutonomyCycleTasks` (
