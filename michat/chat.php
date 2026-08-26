@@ -5,6 +5,10 @@ ini_set('display_errors', 1);
 error_reporting(E_ALL);
 require_once '../vendor/autoload.php';
 require_once __DIR__ . '/app_bootstrap.php';
+require_once __DIR__ . '/includes/ai_agent_runtime.php';
+require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
+require_once __DIR__ . '/includes/AI/AIAgentConfigRepository.php';
+require_once __DIR__ . '/includes/AI/AIAgentConfigService.php';
 
 if (!isset($_SESSION['usuario']) || empty($_SESSION['usuario'])) {
     header("Location: ../index.php");
@@ -199,120 +203,14 @@ if (
     }
 
     try {
-        /**
-         * Crea/actualiza un override por usuario copiando TODOS los campos
-         * del registro global (user_id_=1). Así no se pierden instrucciones,
-         * JSON ni parámetros del agente.
-         */
-        $sql = "
-            INSERT INTO UserAIAgentConfigs (
-                user_id_, agent_key, agent_group, display_name, description,
-                model_id, fallback_model_id, model_ladder_json,
-                system_instruction, user_prompt_template,
-                temperature, max_tokens_prompt, max_tokens_output,
-                top_p, seed, max_attempts, extra_config,
-                token_usage_phase, is_active, sort_order,
-                created_at, updated_at
-            )
-            SELECT
-                ?, agent_key, agent_group, display_name, description,
-                ?, fallback_model_id, model_ladder_json,
-                system_instruction, user_prompt_template,
-                temperature, max_tokens_prompt, max_tokens_output,
-                top_p, seed, max_attempts, extra_config,
-                token_usage_phase, ?, sort_order,
-                NOW(), NOW()
-            FROM UserAIAgentConfigs
-            WHERE user_id_ = 1
-              AND agent_key = ?
-            LIMIT 1
-            ON DUPLICATE KEY UPDATE
-                model_id = ?,
-                is_active = ?,
-                updated_at = NOW()
-        ";
-
-        $stmt = $db_connection->prepare($sql);
-        if (!$stmt) {
-            throw new RuntimeException('No se pudo preparar UPDATE de configuración: ' . $db_connection->error);
-        }
-
-        $stmt->bind_param(
-            'isissi',
+        $service = new AIAgentConfigService(new AIAgentConfigRepository($db_connection));
+        $service->upsertUserOverride(
             $aiRuntimeUserId,
-            $modelId,
-            $isActive,
             $agentKey,
             $modelId,
-            $isActive
+            $isActive,
+            $agentKey === 'embedding_main' && is_array($embeddingProfile) ? $embeddingProfile : null
         );
-
-        if (!$stmt->execute()) {
-            throw new RuntimeException($stmt->error);
-        }
-
-        $affected = $stmt->affected_rows;
-        $stmt->close();
-
-        if ($affected === 0) {
-            // Un UPDATE sin cambios también devuelve 0 filas afectadas.
-            // Verificamos que la configuración global exista antes de considerarlo error.
-            $check = $db_connection->prepare(
-                "SELECT id_ FROM UserAIAgentConfigs WHERE user_id_ = 1 AND agent_key = ? LIMIT 1"
-            );
-            if (!$check) {
-                throw new RuntimeException('No se pudo verificar la configuración global.');
-            }
-            $check->bind_param('s', $agentKey);
-            $check->execute();
-            $existsResult = $check->get_result();
-            $globalExists = $existsResult && $existsResult->num_rows > 0;
-            $check->close();
-
-            if (!$globalExists) {
-                throw new RuntimeException(
-                    "No existe la configuración global '{$agentKey}'. Ejecuta primero el SQL de agentes dinámicos."
-                );
-            }
-        }
-
-        if ($agentKey === 'embedding_main' && is_array($embeddingProfile)) {
-            $cfgStmt = $db_connection->prepare(
-                "SELECT extra_config FROM UserAIAgentConfigs WHERE user_id_ = ? AND agent_key = 'embedding_main' LIMIT 1"
-            );
-            if (!$cfgStmt) {
-                throw new RuntimeException('No se pudo leer extra_config de embedding_main.');
-            }
-            $cfgStmt->bind_param('i', $aiRuntimeUserId);
-            $cfgStmt->execute();
-            $cfgRow = $cfgStmt->get_result()->fetch_assoc();
-            $cfgStmt->close();
-
-            $extra = json_decode((string)($cfgRow['extra_config'] ?? ''), true);
-            if (!is_array($extra)) $extra = [];
-            foreach ($embeddingProfile as $profileKey => $profileValue) {
-                $extra[$profileKey] = $profileValue;
-            }
-            $extraJson = json_encode($extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            if ($extraJson === false) {
-                throw new RuntimeException('No se pudo serializar extra_config de embedding_main.');
-            }
-
-            $updExtra = $db_connection->prepare(
-                "UPDATE UserAIAgentConfigs SET extra_config = ?, updated_at = NOW() WHERE user_id_ = ? AND agent_key = 'embedding_main'"
-            );
-            if (!$updExtra) {
-                throw new RuntimeException('No se pudo preparar extra_config de embedding_main.');
-            }
-            $updExtra->bind_param('si', $extraJson, $aiRuntimeUserId);
-            if (!$updExtra->execute()) {
-                $err = $updExtra->error;
-                $updExtra->close();
-                throw new RuntimeException('No se pudo actualizar extra_config de embedding_main: ' . $err);
-            }
-            $updExtra->close();
-        }
-
         echo json_encode([
             'ok' => true,
             'agent_key' => $agentKey,
@@ -321,56 +219,18 @@ if (
             'user_id_' => $aiRuntimeUserId,
         ], JSON_UNESCAPED_UNICODE);
         exit;
-
     } catch (Throwable $e) {
         error_log('INDEX_AI_RUNTIME_UPDATE: ' . $e->getMessage());
         http_response_code(500);
-        echo json_encode([
-            'ok' => false,
-            'error' => $e->getMessage()
-        ], JSON_UNESCAPED_UNICODE);
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
         exit;
     }
 }
 
-/**
- * Cargar configuración efectiva:
- * 1) registro del usuario actual;
- * 2) si no existe, registro global user_id_=1.
- */
+/** Cargar configuración efectiva mediante el único runtime central. */
 $aiRuntimeConfigs = [];
 try {
-    $keys = array_keys($aiRuntimeAllowedAgents);
-    $quotedKeys = "'" . implode("','", array_map(
-        static fn($v) => $db_connection->real_escape_string($v),
-        $keys
-    )) . "'";
-
-    $sqlLoad = "
-        SELECT
-            user_id_, agent_key, model_id, is_active,
-            temperature, max_tokens_prompt, max_tokens_output,
-            top_p, seed, extra_config
-        FROM UserAIAgentConfigs
-        WHERE agent_key IN ({$quotedKeys})
-          AND user_id_ IN (1, ?)
-        ORDER BY (user_id_ = ?) DESC, user_id_ ASC
-    ";
-
-    $stmtLoad = $db_connection->prepare($sqlLoad);
-    if ($stmtLoad) {
-        $stmtLoad->bind_param('ii', $aiRuntimeUserId, $aiRuntimeUserId);
-        $stmtLoad->execute();
-        $resLoad = $stmtLoad->get_result();
-
-        while ($row = $resLoad->fetch_assoc()) {
-            $key = (string)$row['agent_key'];
-            if (!isset($aiRuntimeConfigs[$key])) {
-                $aiRuntimeConfigs[$key] = $row;
-            }
-        }
-        $stmtLoad->close();
-    }
+    $aiRuntimeConfigs = aiRuntimeLoad($db_connection, $aiRuntimeUserId);
 } catch (Throwable $e) {
     error_log('INDEX_AI_RUNTIME_LOAD: ' . $e->getMessage());
 }

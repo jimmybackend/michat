@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 /**
  * delete_ai_agent.php
- * DELETE de configuraciones globales (user_id_ = 1).
+ * Adapter HTTP para DELETE de configuraciones GLOBAL.
  */
 
 session_start();
@@ -13,6 +13,9 @@ error_reporting(E_ALL);
 
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/app_bootstrap.php';
+require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
+require_once __DIR__ . '/includes/AI/AIAgentConfigRepository.php';
+require_once __DIR__ . '/includes/AI/AIAgentConfigService.php';
 
 function respond(array $payload, int $status = 200): never
 {
@@ -25,13 +28,9 @@ if (empty($_SESSION['usuario'])) {
     respond(['success' => false, 'message' => 'No autorizado. Debes iniciar sesión.'], 401);
 }
 
-$userId = (int)($_SESSION['user_id'] ?? 0);
-if ($userId !== 1) {
-    respond([
-        'success' => false,
-        'message' => 'Acceso denegado. Solo administradores pueden eliminar configuraciones globales.'
-    ], 403);
-}
+$userId = ChatIdentity::resolveUserId($db_connection);
+if ($userId <= 0) respond(['success'=>false,'message'=>'Sesión inválida.'],401);
+if (!ChatIdentity::canManageGlobalAiConfiguration()) respond(['success'=>false,'message'=>'Acceso denegado.'],403);
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     respond(['success' => false, 'message' => 'Método no permitido. Use POST.'], 405);
@@ -55,45 +54,13 @@ if ($agentId === false || $agentId <= 0) {
 }
 
 try {
-    $checkStmt = $db_connection->prepare(
-        'SELECT id_, agent_key, display_name FROM UserAIAgentConfigs WHERE id_ = ? AND user_id_ = 1 LIMIT 1'
-    );
-    $checkStmt->bind_param('i', $agentId);
-    $checkStmt->execute();
-    $result = $checkStmt->get_result();
-
-    if ($result->num_rows === 0) {
-        $checkStmt->close();
-        respond(['success' => false, 'message' => 'El agente no existe.'], 404);
-    }
-
-    $agent = $result->fetch_assoc();
-    $checkStmt->close();
-
-    $deleteStmt = $db_connection->prepare(
-        'DELETE FROM UserAIAgentConfigs WHERE id_ = ? AND user_id_ = 1'
-    );
-    $deleteStmt->bind_param('i', $agentId);
-
-    if (!$deleteStmt->execute()) {
-        throw new RuntimeException('Error al eliminar: ' . $deleteStmt->error);
-    }
-
-    if ($deleteStmt->affected_rows !== 1) {
-        $deleteStmt->close();
-        throw new RuntimeException('La eliminación no afectó exactamente un registro.');
-    }
-    $deleteStmt->close();
-
+    $agent=(new AIAgentConfigService(new AIAgentConfigRepository($db_connection)))->deleteGlobal((int)$agentId);
     respond([
-        'success' => true,
-        'message' => 'Agente eliminado correctamente.',
-        'action' => 'deleted',
-        'id_' => (int)$agentId,
-        'agent_key' => (string)$agent['agent_key'],
-        'display_name' => (string)$agent['display_name']
+        'success'=>true,'message'=>'Agente eliminado correctamente.','action'=>'deleted',
+        'id_'=>(int)$agentId,'agent_key'=>(string)$agent['agent_key'],'display_name'=>(string)$agent['display_name'],
     ]);
-
+} catch (OutOfBoundsException $e) {
+    respond(['success'=>false,'message'=>'El agente GLOBAL no existe.'],404);
 } catch (Throwable $e) {
     error_log('DELETE_AI_AGENT: ' . $e->getMessage());
     respond(['success' => false, 'message' => 'Error interno al eliminar la configuración.'], 500);

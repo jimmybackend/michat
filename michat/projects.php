@@ -66,6 +66,7 @@ try {
         throw new RuntimeException('app_bootstrap.php no encontrado.');
     }
     require_once $bootstrap;
+    require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
 } catch (Throwable $e) {
     jexit(['ok' => false, 'error' => 'bootstrap: ' . $e->getMessage()], 500);
 }
@@ -75,19 +76,15 @@ if (!isset($db_connection) || !($db_connection instanceof mysqli)) {
 }
 
 /* ============================
-User ID
+Authenticated identity; request user_id is compatibility assertion only.
 ============================ */
-$user_id = 0;
-if (isset($_SESSION['user_id']) && is_numeric($_SESSION['user_id'])) {
-    $user_id = (int)$_SESSION['user_id'];
+$user_id = ChatIdentity::resolveUserId($db_connection);
+if ($user_id <= 0) jexit(['ok'=>false,'error'=>'Sesión de usuario no válida'], 401);
+foreach ([$_POST['user_id'] ?? null, $_GET['user_id'] ?? null] as $requestedUserId) {
+    if ($requestedUserId !== null && is_numeric($requestedUserId) && (int)$requestedUserId !== $user_id) {
+        jexit(['ok'=>false,'error'=>'user_id no coincide con la sesión autenticada'], 403);
+    }
 }
-if (!$user_id && isset($_POST['user_id']) && is_numeric($_POST['user_id'])) {
-    $user_id = (int)$_POST['user_id'];
-}
-if (!$user_id && isset($_GET['user_id']) && is_numeric($_GET['user_id'])) {
-    $user_id = (int)$_GET['user_id'];
-}
-if (!$user_id) $user_id = 1;
 
 /* ============================
 Acción
@@ -244,8 +241,9 @@ if ($action === 'update') {
         $e = $stmt->error; $stmt->close();
         jexit(['ok'=>false,'error'=>'Error actualizando: '.$e], 500);
     }
+    $affected=$stmt->affected_rows;
     $stmt->close();
-    
+    if ($affected > 1) jexit(['ok'=>false,'error'=>'Actualización inválida'],500);
     jexit(['ok' => true, 'message' => 'Proyecto actualizado']);
 }
 
@@ -264,8 +262,9 @@ if ($action === 'delete') {
         $e = $stmt->error; $stmt->close();
         jexit(['ok'=>false,'error'=>'Error eliminando: '.$e], 500);
     }
+    $affected=$stmt->affected_rows;
     $stmt->close();
-    
+    if ($affected !== 1) jexit(['ok'=>false,'error'=>'Proyecto no encontrado'],404);
     jexit(['ok' => true, 'message' => 'Proyecto eliminado']);
 }
 

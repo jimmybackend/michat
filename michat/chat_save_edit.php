@@ -24,6 +24,7 @@ $userId = (int)$_SESSION['user_id'];
 if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
 
 require_once __DIR__ . '/app_bootstrap.php';
+require_once __DIR__ . '/includes/ai_agent_runtime.php';
 if (!isset($db_connection) || !($db_connection instanceof mysqli)) {
     jexit_save(['ok' => false, 'error' => 'DB no disponible'], 500);
 }
@@ -100,14 +101,10 @@ try {
 
     $embeddingModel = null;
     $embeddingJobId = null;
-    $cfg = $db_connection->prepare("SELECT model_id, is_active FROM UserAIAgentConfigs WHERE agent_key='embedding_main' AND user_id_ IN (1, ?) ORDER BY (user_id_ = ?) DESC, user_id_ DESC LIMIT 1");
-    if ($cfg) {
-        $cfg->bind_param('ii', $userId, $userId);
-        $cfg->execute();
-        $cfgRow = $cfg->get_result()->fetch_assoc();
-        $cfg->close();
-        if ($cfgRow && (int)$cfgRow['is_active'] === 1 && trim((string)$cfgRow['model_id']) !== '') {
-            $embeddingModel = trim((string)$cfgRow['model_id']);
+    aiRuntimeLoad($db_connection, $userId);
+    if (aiAgentActive('embedding_main', false)) {
+        $embeddingModel = aiAgentModel('embedding_main');
+        if ($embeddingModel !== '') {
             $job = $db_connection->prepare("INSERT INTO EmbeddingJobs (target_type, target_id, model_id, status, attempts) VALUES ('session_block', ?, ?, 'pending', 0)");
             if ($job) {
                 $job->bind_param('is', $blockId, $embeddingModel);

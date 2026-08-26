@@ -88,6 +88,21 @@ final class SessionLifecycleService
         return $deleted;
     }
 
+    /** @return array<string,mixed> */
+    public function rename(int $userId,int $sessionId,string $title):array
+    {
+        $title=trim($title);if($title==='')$title='Conversación';$title=mb_substr($title,0,255);
+        $stmt=$this->db->prepare('UPDATE ChatSessions SET title=? WHERE id_=? AND user_id_=?');
+        if(!$stmt)throw new RuntimeException('database_error');$stmt->bind_param('sii',$title,$sessionId,$userId);if(!$stmt->execute())throw new RuntimeException('database_error');$affected=$stmt->affected_rows;$stmt->close();
+        $row=$this->loadSession($userId,$sessionId);if(!$row)throw new OutOfBoundsException('session_not_found');
+        if($affected>1)throw new RuntimeException('session_update_invalid');return$this->publicSession($row);
+    }
+
+    /** @return array<string,mixed> */
+    public function archive(int$userId,int$sessionId):array{return$this->setStatus($userId,$sessionId,'archived');}
+    /** @return array<string,mixed> */
+    public function restore(int$userId,int$sessionId):array{return$this->setStatus($userId,$sessionId,'open');}
+
     public function isEmpty(int $userId, int $sessionId): bool
     {
         $stmt=$this->db->prepare("SELECT cs.id_,
@@ -134,6 +149,19 @@ final class SessionLifecycleService
         $stmt=$this->db->prepare("SELECT id_,project_id_,title,model_id,provider,status,meta,created_at,updated_at FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1");
         if(!$stmt)return null;$stmt->bind_param('ii',$sessionId,$userId);$stmt->execute();$row=$stmt->get_result()->fetch_assoc();$stmt->close();return $row?:null;
     }
+
+    /** @return array<string,mixed> */
+    private function setStatus(int$userId,int$sessionId,string$status):array
+    {
+        if(!in_array($status,['open','archived'],true))throw new InvalidArgumentException('session_status_invalid');
+        $stmt=$this->db->prepare('UPDATE ChatSessions SET status=? WHERE id_=? AND user_id_=?');if(!$stmt)throw new RuntimeException('database_error');
+        $stmt->bind_param('sii',$status,$sessionId,$userId);if(!$stmt->execute())throw new RuntimeException('database_error');$affected=$stmt->affected_rows;$stmt->close();
+        $row=$this->loadSession($userId,$sessionId);if(!$row)throw new OutOfBoundsException('session_not_found');
+        if($affected>1)throw new RuntimeException('session_update_invalid');return$this->publicSession($row);
+    }
+
+    /** @return array<string,mixed> */
+    private function publicSession(array$row):array{return['id'=>(int)$row['id_'],'title'=>(string)$row['title'],'status'=>(string)$row['status'],'model_id'=>(string)$row['model_id'],'provider'=>$row['provider']!==null?(string)$row['provider']:null,'updated_at'=>(string)$row['updated_at']];}
 
     private function resolveRootSessionId(int $userId,int $sessionId):int
     {

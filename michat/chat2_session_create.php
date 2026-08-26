@@ -11,50 +11,19 @@ function resolveSessionModel(mysqli $db, int $userId, string $postedModel): stri
     $postedModel = trim($postedModel);
     if ($postedModel !== '') return $postedModel;
 
-    // 1) Configuración chat_main específica del usuario.
-    $stmt = $db->prepare("SELECT model_id FROM UserAIAgentConfigs WHERE user_id_=? AND agent_key='chat_main' AND is_active=1 ORDER BY id_ DESC LIMIT 1");
-    if ($stmt) {
-        $stmt->bind_param('i', $userId);
-        if ($stmt->execute()) {
-            $row = $stmt->get_result()->fetch_assoc();
-            $model = trim((string)($row['model_id'] ?? ''));
-            $stmt->close();
-            if ($model !== '') return $model;
-        } else {
-            $stmt->close();
-        }
-    }
+    aiRuntimeLoad($db, $userId);
+    $effective = aiAgentActive('chat_main', true) ? aiAgentModel('chat_main') : '';
+    if ($effective !== '') return $effective;
 
-    // 2) Preferencia persistida del usuario.
     $stmt = $db->prepare("SELECT model_id FROM UserPreferences WHERE user_id_=? ORDER BY id_ DESC LIMIT 1");
     if ($stmt) {
         $stmt->bind_param('i', $userId);
         if ($stmt->execute()) {
-            $row = $stmt->get_result()->fetch_assoc();
-            $model = trim((string)($row['model_id'] ?? ''));
+            $model = trim((string)($stmt->get_result()->fetch_assoc()['model_id'] ?? ''));
             $stmt->close();
             if ($model !== '') return $model;
-        } else {
-            $stmt->close();
-        }
+        } else $stmt->close();
     }
-
-    // 3) Configuración global existente (usuario 1) como fallback de aplicación.
-    $globalUserId = 1;
-    $stmt = $db->prepare("SELECT model_id FROM UserAIAgentConfigs WHERE user_id_=? AND agent_key='chat_main' AND is_active=1 ORDER BY id_ DESC LIMIT 1");
-    if ($stmt) {
-        $stmt->bind_param('i', $globalUserId);
-        if ($stmt->execute()) {
-            $row = $stmt->get_result()->fetch_assoc();
-            $model = trim((string)($row['model_id'] ?? ''));
-            $stmt->close();
-            if ($model !== '') return $model;
-        } else {
-            $stmt->close();
-        }
-    }
-
-    // Coincide con el DEFAULT de UserPreferences y evita romper clientes antiguos.
     return 'amazon.nova-micro-v1:0';
 }
 
@@ -62,6 +31,7 @@ try{
     require_once __DIR__.'/includes/Chat/ChatEndpointBootstrap.php';
     require_once __DIR__.'/includes/Chat/ChatIdentity.php';
     require_once __DIR__.'/includes/Chat/SessionLifecycleService.php';
+    require_once __DIR__.'/includes/ai_agent_runtime.php';
     $db_connection=ChatEndpointBootstrap::mysqli(__DIR__);
     $userId=ChatIdentity::resolveUserId($db_connection);
     if($userId<=0) jexit(['ok'=>false,'error'=>'Sesión de usuario no válida'],401);

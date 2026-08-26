@@ -47,10 +47,6 @@ function find_file_in_candidates(string $filename, array $bases, array $subfolde
   }
   return null;
 }
-function is_admin_like($role){
-  $r = strtolower((string)$role);
-  return in_array($r, ['administración','soporte','admin','administrator','support'], true);
-}
 
 /* ============================
    Cargar bootstrap (vendor + Config + db)
@@ -66,6 +62,8 @@ try {
 
   if (!$bootstrap || !is_file($bootstrap)) throw new RuntimeException('app_bootstrap.php no encontrado.');
   require_once $bootstrap;
+  require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
+  require_once __DIR__ . '/includes/Chat/AuthenticatedMediaScope.php';
 } catch (Throwable $e) {
   jexit(['ok'=>false,'error'=>'bootstrap: '.$e->getMessage()], 500);
 }
@@ -111,53 +109,18 @@ $message_id = isset($_GET['message_id']) ? (int)$_GET['message_id'] : 0;
 $wait_secs  = isset($_GET['wait_secs']) ? max(0, (int)$_GET['wait_secs']) : 0;
 if ($message_id <= 0) jexit(['ok'=>false,'error'=>'message_id inválido'],400);
 
-/* ============================
-   Cargar mensaje
-   ============================ */
-$stmt = $db_connection->prepare("SELECT id_, session_id_, user_id_, role, content_type, s3_key, mime_type, size_bytes, duration_ms, model_id, meta FROM ChatMessages WHERE id_=? LIMIT 1");
-if (!$stmt) jexit(['ok'=>false,'error'=>'Error preparando SELECT mensaje: '.$db_connection->error],500);
-$stmt->bind_param('i',$message_id);
-$stmt->execute();
-$res=$stmt->get_result(); $row=$res?$res->fetch_assoc():null; $stmt->close();
-if(!$row) jexit(['ok'=>false,'error'=>'Mensaje no encontrado'],404);
+/* Authenticate, assert compatibility user_id, and resolve message through its owned session before AWS/S3. */
+$mediaScope = new AuthenticatedMediaScope($db_connection);
+try {
+  $user_id = $mediaScope->authenticatedUserId($_GET['user_id'] ?? null);
+  $row = $mediaScope->resolveOwnedMessage($user_id, $message_id);
+} catch (MediaAuthenticationException $e) { jexit(['ok'=>false,'error'=>$e->getMessage()],401); }
+catch (MediaIdentityMismatchException $e) { jexit(['ok'=>false,'error'=>$e->getMessage()],403); }
+catch (MediaScopeNotFoundException $e) { jexit(['ok'=>false,'error'=>'Mensaje no encontrado'],404); }
 
-$session_id  = (int)$row['session_id_'];
-$owner_id    = (int)$row['user_id_']; // dueño del mensaje (se usa para permisos básicos)
-$s3_key      = $row['s3_key'];
-$mime        = $row['mime_type'];
-$size_bytes  = $row['size_bytes'];
-$duration_ms = $row['duration_ms'];
-$model_id    = $row['model_id'];
-$meta        = json_decode($row['meta'] ?: '{}', true); if (!is_array($meta)) $meta=[];
-$status      = (string)($meta['status'] ?? 'queued');
-$prefix      = (string)($meta['output_prefix'] ?? '');
-
-/* ============================
-   Permisos: dueño sesión o admin
-   ============================ */
-$user_id = 0;
-if (isset($_SESSION['user_id']) && is_numeric($_SESSION['user_id'])) $user_id = (int)$_SESSION['user_id'];
-if (!$user_id && isset($_GET['user_id']) && is_numeric($_GET['user_id'])) $user_id = (int)$_GET['user_id'];
-if (!$user_id) $user_id = 1;
-
-$role = isset($_SESSION['role']) ? (string)$_SESSION['role'] : '';
-
-$stmtS = $db_connection->prepare("SELECT user_id_ FROM ChatSessions WHERE id_=? LIMIT 1");
-if ($stmtS) {
-  $stmtS->bind_param('i', $session_id);
-  if ($stmtS->execute()) {
-    $rsS = $stmtS->get_result();
-    $sRow = $rsS ? $rsS->fetch_assoc() : null;
-    if ($sRow) {
-      $session_owner = (int)$sRow['user_id_'];
-      if (!($session_owner === $user_id || is_admin_like($role))) {
-        $stmtS->close();
-        jexit(['ok'=>false,'error'=>'Sin permisos para esta sesión'],403);
-      }
-    }
-  }
-  $stmtS->close();
-}
+$session_id=(int)$row['session_id_'];$s3_key=$row['s3_key'];$mime=$row['mime_type'];$size_bytes=$row['size_bytes'];
+$duration_ms=$row['duration_ms'];$model_id=$row['model_id'];$meta=json_decode($row['meta']?:'{}',true);if(!is_array($meta))$meta=[];
+$status=(string)($meta['status']??'queued');$prefix=(string)($meta['output_prefix']??'');
 
 /* ============================
    Reconstruir prefijo si no estaba

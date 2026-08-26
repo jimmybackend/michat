@@ -19,10 +19,6 @@ function next_id(mysqli $db, $t, $c){
   $row = $rs->fetch_assoc();
   return (int)($row['nxt'] ?? 1);
 }
-function is_admin_like($r){
-  $r = strtolower((string)$r);
-  return in_array($r, ['administración','soporte','admin','administrator','support'], true);
-}
 function clamp_dim($n){
   $n = max(128, min(2048, (int)$n));
   $n = (int)(round($n / 8) * 8);
@@ -78,6 +74,8 @@ try {
   }
 
   require_once $bootstrap;
+  require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
+  require_once __DIR__ . '/includes/Chat/AuthenticatedMediaScope.php';
 
 } catch (Throwable $e) {
   jexit(['ok'=>false,'error'=>'bootstrap: '.$e->getMessage()], 500);
@@ -125,12 +123,13 @@ $prompt     = isset($_POST['prompt']) ? trim((string)$_POST['prompt']) : '';
 if ($session_id <= 0) jexit(['ok'=>false,'error'=>'session_id inválido'], 400);
 if ($prompt === '')   jexit(['ok'=>false,'error'=>'prompt vacío'], 400);
 
-$user_id = 0;
-if (isset($_SESSION['user_id']) && is_numeric($_SESSION['user_id'])) $user_id = (int)$_SESSION['user_id'];
-if (!$user_id && isset($_POST['user_id']) && is_numeric($_POST['user_id'])) $user_id = (int)$_POST['user_id'];
-if (!$user_id && class_exists('Config') && defined('Config::DEFAULT_USER_ID')) $user_id = (int)Config::DEFAULT_USER_ID;
-if (!$user_id) $user_id = 1;
-$role = isset($_SESSION['role']) ? (string)$_SESSION['role'] : '';
+$mediaScope = new AuthenticatedMediaScope($db_connection);
+try {
+  $user_id = $mediaScope->authenticatedUserId($_POST['user_id'] ?? null);
+  $sessionRow = $mediaScope->resolveOwnedSession($user_id, $session_id);
+} catch (MediaAuthenticationException $e) { jexit(['ok'=>false,'error'=>$e->getMessage()],401); }
+catch (MediaIdentityMismatchException $e) { jexit(['ok'=>false,'error'=>$e->getMessage()],403); }
+catch (MediaScopeNotFoundException $e) { jexit(['ok'=>false,'error'=>'Sesión no encontrada'],404); }
 
 // ✅ Modelo OBLIGATORIO (lo envías desde el <select>)
 $model_id = isset($_POST['model']) ? trim((string)$_POST['model']) : '';
@@ -150,21 +149,7 @@ $height  = clamp_dim(isset($_POST['height']) ? (int)$_POST['height'] : 1024);
 $cfgScale= isset($_POST['cfg_scale']) ? (float)$_POST['cfg_scale'] : 8.0;
 $seed    = (isset($_POST['seed']) && $_POST['seed'] !== '') ? (int)$_POST['seed'] : null;
 
-/* ============================
-   Permisos sesión
-   ============================ */
-$sqlS = "SELECT id_, user_id_, status FROM ChatSessions WHERE id_=?";
-$stmtS = $db_connection->prepare($sqlS);
-if (!$stmtS) jexit(['ok'=>false,'error'=>'Error preparando SELECT sesión: '.$db_connection->error], 500);
-$stmtS->bind_param('i', $session_id);
-if (!$stmtS->execute()) { $e=$stmtS->error; $stmtS->close(); jexit(['ok'=>false,'error'=>'Error ejecutando SELECT sesión: '.$e], 500); }
-$resS = $stmtS->get_result();
-if (!$resS || !$resS->num_rows) { $stmtS->close(); jexit(['ok'=>false,'error'=>'Sesión no encontrada'], 404); }
-$sessionRow = $resS->fetch_assoc();
-$stmtS->close();
-
-$owner_id = (int)$sessionRow['user_id_'];
-if (!($owner_id === $user_id || is_admin_like($role))) jexit(['ok'=>false,'error'=>'Sin permisos para esta sesión'], 403);
+/* Ownership was verified before any AWS/S3/DB generation side effect. */
 
 /* ============================
    Invocar modelo de imagen
