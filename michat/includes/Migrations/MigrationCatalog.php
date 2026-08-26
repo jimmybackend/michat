@@ -15,6 +15,7 @@ final class MigrationCatalog
         'fase11e1_versioned_replanning.sql',
         'fase11f2_hitl_controls.sql',
         'fase12b_2c_global_ai_configuration_scope.sql',
+        'fase12b_4_ai_scope_default_reconciliation.sql',
     ];
 
     private string $sqlDirectory;

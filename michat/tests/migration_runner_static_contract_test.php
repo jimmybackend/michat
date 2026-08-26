@@ -4,18 +4,24 @@ $root=dirname(__DIR__,2);
 require_once $root.'/michat/includes/Migrations/MigrationCatalog.php';
 $files=[
  'catalog'=>$root.'/michat/includes/Migrations/MigrationCatalog.php','repository'=>$root.'/michat/includes/Migrations/SchemaMigrationRepository.php',
- 'executor'=>$root.'/michat/includes/Migrations/SqlMigrationExecutor.php','runner'=>$root.'/michat/includes/Migrations/MigrationRunner.php','cli'=>$root.'/michat/bin/migrations.php'];
+ 'executor'=>$root.'/michat/includes/Migrations/SqlMigrationExecutor.php','runner'=>$root.'/michat/includes/Migrations/MigrationRunner.php','cli'=>$root.'/michat/bin/migrations.php',
+ 'historical'=>$root.'/michat/sql/fase12b_2c_global_ai_configuration_scope.sql','reconciliation'=>$root.'/michat/sql/fase12b_4_ai_scope_default_reconciliation.sql'];
 $source=[];foreach($files as$key=>$file)$source[$key]=(string)file_get_contents($file);
 $passed=0;$failed=0;$check=function(bool $ok,string $label)use(&$passed,&$failed){echo($ok?'PASS ':'FAIL ').$label."\n";$ok?$passed++:$failed++;};
 $catalog=(new MigrationCatalog())->all();
-$expected=['fase8_1_task_orchestrator','fase8_6d_3d_toolcalls_code_edit','fase8_7b_task_artifacts','fase10d_task_recurrence','fase11b_project_autonomy','fase11c_next_work_proposals','fase11d_post_task_continuations','fase11e0_replan_checkpoint','fase11e1_versioned_replanning','fase11f2_hitl_controls','fase12b_2c_global_ai_configuration_scope'];
+$expected=['fase8_1_task_orchestrator','fase8_6d_3d_toolcalls_code_edit','fase8_7b_task_artifacts','fase10d_task_recurrence','fase11b_project_autonomy','fase11c_next_work_proposals','fase11d_post_task_continuations','fase11e0_replan_checkpoint','fase11e1_versioned_replanning','fase11f2_hitl_controls','fase12b_2c_global_ai_configuration_scope','fase12b_4_ai_scope_default_reconciliation'];
 $ids=array_column($catalog,'migration_id');$names=array_column($catalog,'filename');
-$check($ids===$expected&&count($catalog)===11,'closed catalog has approved 11-migration order');
-$check(count(array_unique($ids))===11&&count(array_unique($names))===11,'migration IDs and filenames are unique');
+$check($ids===$expected&&count($catalog)===12,'closed catalog has approved 12-migration order');
+$check(count(array_unique($ids))===12&&count(array_unique($names))===12,'migration IDs and filenames are unique');
 $check(array_reduce($catalog,fn($ok,$m)=>$ok&&$m['migration_id']===basename($m['filename'],'.sql'),true),'migration IDs follow basename contract');
 $sqlRoot=realpath($root.'/michat/sql').DIRECTORY_SEPARATOR;
 $check(array_reduce($catalog,fn($ok,$m)=>$ok&&str_starts_with($m['path'],$sqlRoot)&&is_file($m['path'])&&!is_link($m['path']),true),'catalog paths remain regular files under SQL root');
 $check(array_reduce($catalog,fn($ok,$m)=>$ok&&$m['checksum_sha256']===hash('sha256',(string)file_get_contents($m['path']))&&preg_match('/^[0-9a-f]{64}$/',$m['checksum_sha256']),true),'checksums hash exact file bytes as lowercase SHA-256');
+$check(hash('sha256',$source['historical'])==='7df5c57f22ba34169f45ab7b7dee9ecbb94ede8f6f0aa45cc8dcb5e670f53975','published 12B.2C bytes and checksum remain immutable');
+$check(str_contains($source['historical'],"DEFAULT 'user'")&&str_contains($source['reconciliation'],'ALTER COLUMN scope DROP DEFAULT'),'forward-only reconciliation preserves historical default then removes it minimally');
+$check(str_contains($source['reconciliation'],"v_default = 'user'")&&str_contains($source['reconciliation'],'v_default IS NOT NULL')&&str_contains($source['reconciliation'],"SIGNAL SQLSTATE '45000'"),'reconciliation permits old and final defaults and fails closed otherwise');
+$check(str_contains($source['runner'],"recordProfile(\$profile,12,'clean_baseline')")&&str_contains($source['runner'],"requireColumnDefaultAbsent('UserAIAgentConfigs','scope')"),'current-dump baseline records 12 migrations only after no-default fingerprint');
+$check(str_contains($source['runner'],"recordProfile(\$profile,4,'adopted')"),'post-Fase10D adopts four migrations and leaves eight pending');
 $check(str_contains($source['catalog'],'glob(')&&!str_contains($source['catalog'],'sort(self::FILES'),'glob detects uncataloged SQL but does not determine execution order');
 $check(str_contains($source['repository'],'SchemaMigrations')&&str_contains($source['repository'],'ascii_bin')&&str_contains($source['repository'],"enum('applied','adopted','clean_baseline')")&&!str_contains($source['repository'],'AUTO_INCREMENT'),'history table follows approved functional identity schema');
 $check(str_contains($source['repository'],'GET_LOCK(?,?)')&&str_contains($source['repository'],'RELEASE_LOCK(?)')&&str_contains($source['repository'],"substr(hash('sha256', \$this->databaseName), 0, 40)"),'repository implements scoped advisory lock contract');
