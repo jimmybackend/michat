@@ -69,15 +69,15 @@ foreach ($criticalTables as $table) {
     $check(preg_match('/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`'.preg_quote($table, '/').'`/i', $dump)===1, 'dump declares critical table '.$table);
 }
 
-$seedTables = ['UserAIAgentConfigs','UserPipelineFeatures','UserPreferences'];
+$seedTables = ['UserAIAgentConfigs'];
 foreach ($seedTables as $table) {
     $check(preg_match('/INSERT\s+INTO\s+`'.preg_quote($table, '/').'`/i', $dump)===1, 'dump contains seed block '.$table);
 }
 $usersSeeded = preg_match('/INSERT\s+INTO\s+`Users`/i', $dump)===1;
 $check(!$usersSeeded, 'dump does not invent or seed Users during preflight');
 
-$seedsReferenceUserOne = preg_match('/INSERT\s+INTO\s+`(?:UserAIAgentConfigs|UserPipelineFeatures|UserPreferences)`[\s\S]*?VALUES\s*[\s\r\n]*\([^,]+,\s*1\s*,/i', $dump)===1;
-$issue($seedsReferenceUserOne&&!$usersSeeded, 'SEED CONTRACT BLOCKED: global AI runtime rows and user-scoped defaults reference user 1 while user provisioning is external to this repo');
+$check(preg_match('/INSERT\s+INTO\s+`UserAIAgentConfigs`[\s\S]*?VALUES\s*\(\'global\',\s*NULL,/i', $dump)===1, 'AI catalog seeds ownerless GLOBAL rows');
+$check(preg_match('/INSERT\s+INTO\s+`(?:UserPipelineFeatures|UserPreferences)`/i', $dump)!==1, 'dump omits historical user-scoped defaults');
 
 echo $issues===[] ? "STATIC PREFLIGHT PASS\n" : 'STATIC PREFLIGHT ISSUES FOUND ('.count($issues).")\n";
 

@@ -2,13 +2,15 @@
 declare(strict_types=1);
 
 /**
- * Pre-fix characterization for the approved GLOBAL/USER AI configuration scope.
- * KNOWN GAP / PRE-FIX lines are expected debt, never implementation/security PASS.
+ * Contract for the implemented schema, clean catalog and central runtime layer.
+ * CRUD/UI callers remain explicitly inventoried debt for Parte 2B.
  */
 
 $root = dirname(__DIR__, 2);
 $dumpPath = $root . '/adbbmis1_Cloud.sql';
 $dump = (string)file_get_contents($dumpPath);
+$migrationPath = $root . '/michat/sql/fase12b_2c_global_ai_configuration_scope.sql';
+$migration = (string)file_get_contents($migrationPath);
 $passed = 0;
 $failed = 0;
 $gaps = [];
@@ -26,6 +28,10 @@ $tableStart = strpos($dump, 'CREATE TABLE IF NOT EXISTS `UserAIAgentConfigs`');
 $tableEnd = $tableStart === false ? false : strpos($dump, ';', $tableStart);
 $table = ($tableStart !== false && $tableEnd !== false) ? substr($dump, $tableStart, $tableEnd - $tableStart + 1) : '';
 $pass($table !== '', 'current UserAIAgentConfigs definition is present');
+$pass($migration !== '' && str_contains($migration, "SIGNAL SQLSTATE '45000'"), 'forward migration is present and fail-closed');
+$pass(str_contains($migration, 'information_schema.STATISTICS') && str_contains($migration, 'information_schema.KEY_COLUMN_USAGE'), 'migration audits real legacy index and FK names');
+$pass(str_contains($migration, "user_id_ = IF(user_id_ = 1, NULL, user_id_)"), 'migration adopts legacy owner 1 as ownerless GLOBAL');
+$pass(str_contains($migration, 'incompatible partially migrated schema') && str_contains($migration, 'LEAVE main'), 'migration rejects partial state and no-ops on complete state');
 
 $targetSchema = [
     'scope enum' => preg_match('/`scope`\s+enum\(\'global\',\'user\'\)/i', $table) === 1,
@@ -34,8 +40,8 @@ $targetSchema = [
     'scope/user CHECK' => str_contains($table, 'scope') && str_contains(strtoupper($table), 'CHECK'),
     'scope owner agent UNIQUE' => preg_match('/UNIQUE\s+KEY[^\n]*`scope`[^\n]*`scope_owner_key`[^\n]*`agent_key`/i', $table) === 1,
 ];
-foreach ($targetSchema as $label => $implemented) $gap(!$implemented, 'schema missing ' . $label);
-$gap(str_contains($table, '`user_id_` int NOT NULL'), 'global rows still require a Users owner');
+foreach ($targetSchema as $label => $implemented) $pass($implemented, 'schema implements ' . $label);
+$pass(!str_contains($table, '`user_id_` int NOT NULL'), 'global rows do not require a Users owner');
 $pass(str_contains($dump, 'CONSTRAINT `fk_uac_user` FOREIGN KEY (`user_id_`) REFERENCES `Users` (`id`) ON DELETE CASCADE'), 'current nullable-compatible FK intent is identifiable');
 
 $files = [
@@ -61,8 +67,11 @@ foreach ($files as $relative) {
         if (preg_match($pattern, $source) === 1) { $magicCallers[] = $relative; break; }
     }
 }
-$pass($magicCallers === $files, 'exact eight pre-fix production callers are inventoried');
-foreach ($magicCallers as $relative) echo "PRE-FIX MAGIC GLOBAL OWNER: {$relative}\n";
+$pass($magicCallers === [], 'all seven Parte 2B callers and central runtime are free of magic global owner semantics');
+$runtime = (string)file_get_contents($root . '/michat/includes/ai_agent_runtime.php');
+$pass(str_contains($runtime, "scope = 'global'") && str_contains($runtime, "scope = 'user'"), 'central runtime selects GLOBAL plus current USER scope');
+$pass(!preg_match('/user_id_\s+IN\s*\(1|user_id_\s*=\s*1/i', $runtime), 'central runtime has no magic global owner');
+$pass(str_contains($runtime, "(scope = 'user' AND user_id_ = ?) DESC"), 'central runtime orders USER before GLOBAL per agent_key');
 
 $writeAuth = [
     'michat/ai_agent_configurator.php',
@@ -71,11 +80,16 @@ $writeAuth = [
 ];
 foreach ($writeAuth as $relative) {
     $source = (string)file_get_contents($root . '/' . $relative);
-    $gap(!str_contains($source, 'ChatIdentity::canManageGlobalAiConfiguration()'), basename($relative) . ' not migrated to global-AI write authorization');
+    $pass(str_contains($source, 'ChatIdentity::canManageGlobalAiConfiguration()'), basename($relative) . ' uses approved global-AI write authorization');
 }
 $reader = (string)file_get_contents($root . '/michat/get_ai_agents.php');
-$pass(str_contains($reader, 'UserAIAgentConfigs') && str_contains($reader, '$userId'), 'get_ai_agents remains an effective-config read surface');
-$pass(!str_contains($reader, 'canManageGlobalAiConfiguration()'), 'read access is not coupled to the future write-global guard');
+$pass(str_contains($reader, 'aiRuntimeLoad(') && str_contains($reader, 'AIAgentConfigRepository'), 'get_ai_agents separates effective runtime read from administrative GLOBAL listing');
+$pass(str_contains($reader, 'canManageGlobalAiConfiguration()'), 'administrative GLOBAL listing uses the approved policy');
+$repository=(string)file_get_contents($root.'/michat/includes/AI/AIAgentConfigRepository.php');
+$service=(string)file_get_contents($root.'/michat/includes/AI/AIAgentConfigService.php');
+$pass(str_contains($repository, "scope='global' AND user_id_ IS NULL") && str_contains($repository, "scope='user' AND user_id_=?"), 'repository persistence is explicitly GLOBAL/USER scope-aware');
+$pass(str_contains($service, 'ChatIdentity::canManageGlobalAiConfiguration()'), 'service owns global-write policy coordination');
+$pass(!str_contains((string)file_get_contents($root.'/michat/save_ai_agent.php'),'UserAIAgentConfigs') && !str_contains((string)file_get_contents($root.'/michat/delete_ai_agent.php'),'UserAIAgentConfigs'), 'save/delete adapters contain no AI business SQL');
 
 $resolve = static function (array $rows, int $userId): array {
     usort($rows, static fn(array $a, array $b): int => (($b['scope'] === 'user' && $b['user_id_'] === $userId) <=> ($a['scope'] === 'user' && $a['user_id_'] === $userId)));
@@ -103,7 +117,7 @@ $baseChat = [
     'chat_main_primordial_rule_item_template', 'chat_main_rag_context_template',
 ];
 foreach ($baseChat as $key) $pass(preg_match("/'" . preg_quote($key, '/') . "'/", $dump) === 1, 'mandatory base catalog contains ' . $key);
-$pass(preg_match("/\(\d+,\s*1,\s*'chat_main'[\s\S]*?'[^']+'[\s\S]*?,\s*1,\s*\d+,/", $dump) === 1, 'chat_main has an active deployment model default without certifying Bedrock access');
+$pass(preg_match("/\('global',\s*NULL,\s*'chat_main'[\s\S]*?'[^']+'[\s\S]*?,\s*1,\s*\d+\)/", $dump) === 1, 'chat_main has an active GLOBAL deployment model default without certifying Bedrock access');
 
 $conditional = ['prompt_compiler','embedding_main','smart_memory_general','smart_memory_code'];
 foreach ($conditional as $key) $pass(str_contains($dump, "'{$key}'"), 'conditional catalog contains ' . $key);
@@ -117,9 +131,9 @@ $pass(str_contains($nextWork, "AGENT_KEY='next_work_evaluator'") && str_contains
 $aiHistorical = preg_match('/INSERT\s+INTO\s+`UserAIAgentConfigs`\s*\(`id_`,\s*`user_id_`[\s\S]*?VALUES\s*\(\d+,\s*1,/i', $dump) === 1;
 $pipelineHistorical = preg_match('/INSERT\s+INTO\s+`UserPipelineFeatures`[\s\S]*?VALUES\s*\(\d+,\s*1,/i', $dump) === 1;
 $preferencesHistorical = preg_match('/INSERT\s+INTO\s+`UserPreferences`[\s\S]*?VALUES\s*\(\d+,\s*1,/i', $dump) === 1;
-$gap($aiHistorical, 'AI catalog still carries historical id_, user_id_=1 and timestamps');
-$gap($pipelineHistorical, 'UserPipelineFeatures still seeds historical user 1 rows');
-$gap($preferencesHistorical, 'UserPreferences still seeds a historical user 1 row');
+$pass(!$aiHistorical && str_contains($dump, "('global', NULL, 'chat_main'"), 'AI catalog uses functional GLOBAL rows without historical owner/id/timestamps');
+$pass(!$pipelineHistorical && preg_match('/INSERT\s+INTO\s+`UserPipelineFeatures`/i', $dump) !== 1, 'UserPipelineFeatures historical seed is absent');
+$pass(!$preferencesHistorical && preg_match('/INSERT\s+INTO\s+`UserPreferences`/i', $dump) !== 1, 'UserPreferences historical seed is absent');
 
 $legacyBefore = [
     ['user_id_'=>1,'agent_key'=>'chat_main','model_id'=>'legacy-global'],
@@ -158,6 +172,6 @@ if ($missingDb !== []) {
 
 echo "Static characterization: " . ($failed === 0 ? 'PASS' : 'FAIL') . "\n";
 echo 'Pre-fix gaps detected: ' . count($gaps) . "\n";
-echo "GLOBAL/USER IMPLEMENTATION: NOT IMPLEMENTED / PRE-FIX\n";
+echo "GLOBAL/USER SCHEMA + CENTRAL RUNTIME + CRUD/UI: IMPLEMENTED\n";
 echo "Result: {$passed} characterization checks passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);

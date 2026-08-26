@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 /**
  * save_ai_agent.php
- * CREATE / UPDATE de configuraciones globales (user_id_ = 1).
+ * Adapter HTTP para CREATE / UPDATE de configuraciones GLOBAL.
  */
 
 session_start();
@@ -13,6 +13,9 @@ error_reporting(E_ALL);
 
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/app_bootstrap.php';
+require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
+require_once __DIR__ . '/includes/AI/AIAgentConfigRepository.php';
+require_once __DIR__ . '/includes/AI/AIAgentConfigService.php';
 
 function respond(array $payload, int $status = 200): never
 {
@@ -56,13 +59,9 @@ if (empty($_SESSION['usuario'])) {
     respond(['success' => false, 'message' => 'No autorizado. Debes iniciar sesión.'], 401);
 }
 
-$userId = (int)($_SESSION['user_id'] ?? 0);
-if ($userId !== 1) {
-    respond([
-        'success' => false,
-        'message' => 'Acceso denegado. Solo administradores pueden modificar configuraciones globales.'
-    ], 403);
-}
+$userId = ChatIdentity::resolveUserId($db_connection);
+if ($userId <= 0) respond(['success'=>false,'message'=>'Sesión inválida.'],401);
+if (!ChatIdentity::canManageGlobalAiConfiguration()) respond(['success'=>false,'message'=>'Acceso denegado.'],403);
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     respond(['success' => false, 'message' => 'Método no permitido. Use POST.'], 405);
@@ -146,130 +145,20 @@ try {
         }
     }
 
-    // Verifica duplicidad por la llave única real (user_id_, agent_key).
-    if ($id !== null) {
-        $existsStmt = $db_connection->prepare(
-            'SELECT id_ FROM UserAIAgentConfigs WHERE id_ = ? AND user_id_ = 1 LIMIT 1'
-        );
-        $existsStmt->bind_param('i', $id);
-        $existsStmt->execute();
-        $existsResult = $existsStmt->get_result();
-        if ($existsResult->num_rows === 0) {
-            $existsStmt->close();
-            respond(['success' => false, 'message' => 'El registro a actualizar no existe.'], 404);
-        }
-        $existsStmt->close();
-
-        $duplicateStmt = $db_connection->prepare(
-            'SELECT id_ FROM UserAIAgentConfigs WHERE user_id_ = 1 AND agent_key = ? AND id_ <> ? LIMIT 1'
-        );
-        $duplicateStmt->bind_param('si', $agentKey, $id);
-        $duplicateStmt->execute();
-        if ($duplicateStmt->get_result()->num_rows > 0) {
-            $duplicateStmt->close();
-            respond(['success' => false, 'message' => 'Ya existe otro registro con ese agent_key.'], 409);
-        }
-        $duplicateStmt->close();
-
-        $sql = "UPDATE UserAIAgentConfigs SET
-                    agent_key = ?, agent_group = ?, display_name = ?, description = ?,
-                    model_id = ?, fallback_model_id = ?, model_ladder_json = ?,
-                    system_instruction = ?, user_prompt_template = ?,
-                    temperature = ?, max_tokens_prompt = ?, max_tokens_output = ?, top_p = ?, seed = ?,
-                    max_attempts = ?, extra_config = ?, token_usage_phase = ?,
-                    is_active = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id_ = ? AND user_id_ = 1";
-
-        $stmt = $db_connection->prepare($sql);
-        $stmt->bind_param(
-            'sssssssssdiidiissiii',
-            $agentKey,
-            $agentGroup,
-            $displayName,
-            $description,
-            $modelId,
-            $fallbackModelId,
-            $modelLadderJson,
-            $systemInstruction,
-            $userPromptTemplate,
-            $temperature,
-            $maxTokensPrompt,
-            $maxTokensOutput,
-            $topP,
-            $seed,
-            $maxAttempts,
-            $extraConfig,
-            $tokenUsagePhase,
-            $isActive,
-            $sortOrder,
-            $id
-        );
-        $action = 'updated';
-        $affectedId = $id;
-    } else {
-        $duplicateStmt = $db_connection->prepare(
-            'SELECT id_ FROM UserAIAgentConfigs WHERE user_id_ = 1 AND agent_key = ? LIMIT 1'
-        );
-        $duplicateStmt->bind_param('s', $agentKey);
-        $duplicateStmt->execute();
-        if ($duplicateStmt->get_result()->num_rows > 0) {
-            $duplicateStmt->close();
-            respond(['success' => false, 'message' => 'Ya existe un registro con ese agent_key.'], 409);
-        }
-        $duplicateStmt->close();
-
-        $sql = "INSERT INTO UserAIAgentConfigs (
-                    user_id_, agent_key, agent_group, display_name, description,
-                    model_id, fallback_model_id, model_ladder_json,
-                    system_instruction, user_prompt_template,
-                    temperature, max_tokens_prompt, max_tokens_output, top_p, seed,
-                    max_attempts, extra_config, token_usage_phase,
-                    is_active, sort_order
-                ) VALUES (
-                    1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                )";
-
-        $stmt = $db_connection->prepare($sql);
-        $stmt->bind_param(
-            'sssssssssdiidiissii',
-            $agentKey,
-            $agentGroup,
-            $displayName,
-            $description,
-            $modelId,
-            $fallbackModelId,
-            $modelLadderJson,
-            $systemInstruction,
-            $userPromptTemplate,
-            $temperature,
-            $maxTokensPrompt,
-            $maxTokensOutput,
-            $topP,
-            $seed,
-            $maxAttempts,
-            $extraConfig,
-            $tokenUsagePhase,
-            $isActive,
-            $sortOrder
-        );
-        $action = 'created';
-    }
-
-    if (!$stmt->execute()) {
-        throw new RuntimeException('Error al guardar en BD: ' . $stmt->error);
-    }
-
-    if ($id === null) {
-        $affectedId = (int)$db_connection->insert_id;
-    }
-    $stmt->close();
-
+    $config = [
+        'agent_key'=>$agentKey,'agent_group'=>$agentGroup,'display_name'=>$displayName,
+        'description'=>$description,'model_id'=>$modelId,'fallback_model_id'=>$fallbackModelId,
+        'model_ladder_json'=>$modelLadderJson,'system_instruction'=>$systemInstruction,
+        'user_prompt_template'=>$userPromptTemplate,'temperature'=>$temperature,
+        'max_tokens_prompt'=>$maxTokensPrompt,'max_tokens_output'=>$maxTokensOutput,'top_p'=>$topP,
+        'seed'=>$seed,'max_attempts'=>$maxAttempts,'extra_config'=>$extraConfig,
+        'token_usage_phase'=>$tokenUsagePhase,'is_active'=>$isActive,'sort_order'=>$sortOrder,
+    ];
+    $saved=(new AIAgentConfigService(new AIAgentConfigRepository($db_connection)))->saveGlobal($id,$config);
     respond([
-        'success' => true,
-        'message' => $action === 'created' ? 'Agente creado correctamente.' : 'Agente actualizado correctamente.',
-        'action' => $action,
-        'id_' => $affectedId,
-        'agent_key' => $agentKey
+        'success'=>true,
+        'message'=>$saved['action']==='created'?'Agente creado correctamente.':'Agente actualizado correctamente.',
+        'action'=>$saved['action'],'id_'=>$saved['id_'],'agent_key'=>$agentKey,
     ]);
 
 } catch (JsonException $e) {
@@ -277,6 +166,10 @@ try {
         'success' => false,
         'message' => 'Uno de los campos JSON no contiene JSON válido: ' . $e->getMessage()
     ], 422);
+} catch (DomainException $e) {
+    respond(['success'=>false,'message'=>'Ya existe un registro GLOBAL con ese agent_key.'],409);
+} catch (OutOfBoundsException $e) {
+    respond(['success'=>false,'message'=>'El registro GLOBAL no existe.'],404);
 } catch (InvalidArgumentException $e) {
     respond(['success' => false, 'message' => $e->getMessage()], 422);
 } catch (Throwable $e) {

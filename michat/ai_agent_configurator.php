@@ -8,6 +8,7 @@ error_reporting(E_ALL);
 
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/app_bootstrap.php';
+require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
 
 if (empty($_SESSION['usuario'])) {
     header('Location: ../index.php');
@@ -18,8 +19,9 @@ if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-$userId = (int)($_SESSION['user_id'] ?? 0);
-$isAdmin = ($userId === 1);
+$userId = ChatIdentity::resolveUserId($db_connection);
+if ($userId <= 0) { header('Location: ../index.php'); exit; }
+$isAdmin = ChatIdentity::canManageGlobalAiConfiguration();
 ?>
 <!DOCTYPE html>
 <html lang="es">

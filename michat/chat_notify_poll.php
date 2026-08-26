@@ -52,6 +52,8 @@ try {
 
   if (!$bootstrap || !is_file($bootstrap)) throw new RuntimeException('app_bootstrap.php no encontrado.');
   require_once $bootstrap;
+  require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
+  require_once __DIR__ . '/includes/Chat/AuthenticatedMediaScope.php';
 
 } catch (Throwable $e) {
   jexit(['ok'=>false,'error'=>'bootstrap: '.$e->getMessage()], 500);
@@ -62,19 +64,11 @@ if (!isset($db_connection) || !($db_connection instanceof mysqli)) {
   jexit(['ok'=>false,'error'=>'DB no disponible (bootstrap)'], 500);
 }
 
-/* ============================
-   user_id
-   ============================ */
-$user_id = 0;
-if (isset($_SESSION['user_id']) && is_numeric($_SESSION['user_id'])) $user_id = (int)$_SESSION['user_id'];
-
-// (Opcional) permitir override por GET si tu app lo usa
-if (!$user_id && isset($_GET['user_id']) && is_numeric($_GET['user_id'])) $user_id = (int)$_GET['user_id'];
-
-if (!$user_id) {
-  // En vez de usar "1" silencioso, devolvemos 401 (más seguro y evita notificar a otro usuario)
-  jexit(['ok'=>false,'error'=>'No hay sesión (user_id)'], 401);
-}
+/* Authenticated identity; GET user_id is a compatibility assertion only. */
+$mediaScope=new AuthenticatedMediaScope($db_connection);
+try{$user_id=$mediaScope->authenticatedUserId($_GET['user_id']??null);}
+catch(MediaAuthenticationException $e){jexit(['ok'=>false,'error'=>$e->getMessage()],401);}
+catch(MediaIdentityMismatchException $e){jexit(['ok'=>false,'error'=>$e->getMessage()],403);}
 
 $last_id = isset($_GET['last_id']) ? (int)$_GET['last_id'] : 0;
 
@@ -83,7 +77,7 @@ if ($last_id > 0) {
   $sql = "SELECT m.id_ AS id, m.session_id_ AS session_id, m.content AS content, m.s3_key, m.mime_type, m.meta, s.title
           FROM ChatMessages m
           JOIN ChatSessions s ON s.id_ = m.session_id_
-          WHERE m.user_id_ = ? AND m.role='assistant' AND m.content_type='video'
+          WHERE m.user_id_ = ? AND s.user_id_ = m.user_id_ AND m.role='assistant' AND m.content_type='video'
             AND m.s3_key IS NOT NULL
             AND (m.meta LIKE '%\"status\":\"completed\"%')
             AND m.id_ > ?
@@ -96,7 +90,7 @@ if ($last_id > 0) {
   $sql = "SELECT m.id_ AS id, m.session_id_ AS session_id, m.content AS content, m.s3_key, m.mime_type, m.meta, s.title
           FROM ChatMessages m
           JOIN ChatSessions s ON s.id_ = m.session_id_
-          WHERE m.user_id_ = ? AND m.role='assistant' AND m.content_type='video'
+          WHERE m.user_id_ = ? AND s.user_id_ = m.user_id_ AND m.role='assistant' AND m.content_type='video'
             AND m.s3_key IS NOT NULL
             AND (m.meta LIKE '%\"status\":\"completed\"%')
           ORDER BY m.id_ DESC

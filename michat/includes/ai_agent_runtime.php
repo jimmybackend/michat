@@ -5,8 +5,8 @@
  * Capa compartida para leer UserAIAgentConfigs desde cualquier proceso.
  *
  * Precedencia efectiva:
- *   1. configuración del usuario actual (user_id_ = usuario)
- *   2. configuración global (user_id_ = 1)
+ *   1. configuración scope=user del usuario actual
+ *   2. configuración scope=global, sin propietario Users
  *
  * No inicia sesión, no carga bootstrap y no abre conexiones.
  * El archivo que lo incluya debe proporcionar un mysqli válido y user_id.
@@ -24,15 +24,15 @@ if (!function_exists('loadDynamicAIAgentConfigs')) {
         $configs = [];
 
         $sql = "SELECT
-                    id_, user_id_, agent_key, agent_group, display_name, description,
+                    id_, scope, user_id_, agent_key, agent_group, display_name, description,
                     model_id, fallback_model_id, model_ladder_json,
                     system_instruction, user_prompt_template,
                     temperature, max_tokens_prompt, max_tokens_output,
                     top_p, seed, max_attempts, extra_config,
                     token_usage_phase, is_active, sort_order
                 FROM UserAIAgentConfigs
-                WHERE user_id_ IN (1, ?)
-                ORDER BY agent_key ASC, (user_id_ = ?) DESC, user_id_ ASC, id_ ASC";
+                WHERE scope = 'global' OR (scope = 'user' AND user_id_ = ?)
+                ORDER BY agent_key ASC, (scope = 'user' AND user_id_ = ?) DESC, id_ ASC";
 
         $stmt = $db->prepare($sql);
         if (!$stmt) {
