@@ -8,9 +8,11 @@ $taskMachine=new TaskStateMachine();$stepMachine=new TaskStepStateMachine();
 $taskMachine->assertTransition('failed','ready');$stepMachine->assertTransition('failed','ready');$ok(true,'retry manual permite transiciones failed a ready de Task y Step');
 foreach(['completed','cancelled']as$status){try{$taskMachine->assertTransition($status,'ready');$ok(false,$status.' no debe usar retry');}catch(TaskTransitionException){$ok(true,'retry Task '.$status.' continúa fail closed');}}
 $orchestrator=file_get_contents(__DIR__.'/../includes/Tasks/TaskOrchestrator.php');$taskRepo=file_get_contents(__DIR__.'/../includes/Tasks/TaskRepository.php');$stepRepo=file_get_contents(__DIR__.'/../includes/Tasks/TaskStepRepository.php');
-$ok(str_contains($orchestrator,'lockOwnedForRetry')&&str_contains($orchestrator,'lockForRetry')&&strpos($orchestrator,'updateStatus($stepId,\'ready\'')<strpos($orchestrator,'$this->tasks->retry'),'retry bloquea y reactiva Step/Task dentro de una transacción única');
+$ok(str_contains($orchestrator,'lockOwnedForRetry')&&str_contains($orchestrator,'lockForRetry')&&strpos($orchestrator,'authorizeRetry($stepId')<strpos($orchestrator,'$this->tasks->retry'),'retry bloquea y autoriza Step/Task dentro de una transacción única');
 $ok(str_contains($orchestrator,"status']!=='failed'")&&str_contains($orchestrator,"retry_task_invalid")&&str_contains($orchestrator,"retry_step_invalid"),'retry exige Task failed y current Step failed, sin reutilizar waiting/approval');
 $ok(str_contains($taskRepo,'FOR UPDATE')&&str_contains($stepRepo,'LIMIT 1 FOR UPDATE'),'retry bloquea filas Task y current Step');
+$ok(str_contains($stepRepo,'authorizeRetry')&&str_contains($stepRepo,'GREATEST(max_attempts,?)')&&str_contains($stepRepo,"status='failed'"),'retry amplía sólo el ordinal autorizado del Step fallido');
+$ok(str_contains($orchestrator,"$nextAttempt=(int)$t['attempt_count']+1")&&str_contains($orchestrator,"$nextAttempt>(int)$t['max_attempts']"),'budget global de Task sigue siendo autoridad para el siguiente intento');
 $retry=substr($orchestrator,strpos($orchestrator,'public function retryTask'),strpos($orchestrator,'public function prepareChatTurn')-strpos($orchestrator,'public function retryTask'));
 $ok(!str_contains($retry,'TaskExecutions SET')&&!str_contains($retry,'checkpoint_json'),'retry no revive Executions ni modifica checkpoint/approval');
 $ok(str_contains($orchestrator,'\'step_id\'=>$stepId')&&str_contains($orchestrator,"'event_key'=>'task_ready'"),'evento histórico task_ready referencia el Step reactivado');
