@@ -26,7 +26,7 @@ final class ChatMemoryFinalizationService
         }
 
         [$question, $answer] = $this->loadTurn($userId, $sessionId, $questionMessageId, $answerMessageId);
-        $lockName = 'chat_memory:' . hash('sha256', $questionMessageId . ':' . $answerMessageId);
+        $lockName = 'chat_memory:' . substr(hash('sha256', $questionMessageId . ':' . $answerMessageId), 0, 52);
         if (!$this->acquireLock($lockName)) throw new RuntimeException('chat_memory_finalization_lock_failed');
 
         try {

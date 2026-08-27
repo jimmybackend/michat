@@ -31,7 +31,7 @@ require_once __DIR__ . '/includes/Config/EnvironmentLoader.php';
 // ✅ GUARD: Evitar doble carga del autoloader de Composer
 // Si la clase del autoloader ya existe, no incluirlo de nuevo.
 // =====================================================================
-$autoload = __DIR__ . '/../vendor/autoload.php';
+$autoload = '/var/www/vendor/autoload.php';
 if (!is_file($autoload)) {
     error_log('MiChat bootstrap: falta vendor/autoload.php.');
     http_response_code(500);
@@ -43,8 +43,8 @@ if (!class_exists('ComposerAutoloaderInitbd9357ed7e4e67fe1f5490cbadb5b6f1', fals
 }
 
 // 3) Archivos privados
-$configPath = $APP_ROOT . '/Config-s3.php';
-$dbPath     = $APP_ROOT . '/db-s3.php';
+$configPath = '/var/www/Config-s3.php';
+$dbPath     = '/var/www/db-s3.php';
 
 if (!is_file($configPath) || !is_file($dbPath)) {
     error_log('MiChat bootstrap: faltan archivos privados de configuración.');
