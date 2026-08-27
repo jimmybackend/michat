@@ -12,6 +12,6 @@ final class ModelTaskStepExecutor implements TaskStepExecutorInterface
         $result = $this->chat->execute($request, $heartbeat);
         if($result->isPauseAlreadyPersisted())return TaskStepExecutionResult::persistedWaitingUser($result->controlDecision->safeSummary);
         if ($isCancelled()) throw new TaskTransitionException('cancel_requested');
-        return TaskStepExecutionResult::completed($result->replyText, $result->artifacts, null, $result->assistantMessageId);
+        return TaskStepExecutionResult::completed($result->replyText, $result->artifacts, null, $result->assistantMessageId, $result->modelId);
     }
 }
