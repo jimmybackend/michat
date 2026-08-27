@@ -680,11 +680,14 @@ The current implementation is based on approximately:
 git clone https://github.com/jimmybackend/michat.git
 cd michat
 
+# Optional for local/simple deployments.
+# Production may inject the same variables through PHP-FPM/systemd instead.
 cp .env.example .env
 
 # Choose a deployment-specific name. "michat" is only an example.
 DB_NAME=michat
-# Set the same DB_NAME in .env, together with DB_HOST/PORT/USER/PASSWORD.
+# Set the same DB_NAME in the effective environment together with
+# DB_HOST/PORT/USER/PASSWORD.
 
 composer install --no-dev --prefer-dist --optimize-autoloader
 
@@ -697,9 +700,10 @@ test "$?" -eq 0
 
 MiChat carga el archivo `.env` de la raíz cuando existe. Las variables ya
 inyectadas por el proceso, PHP-FPM, Apache, EC2 o systemd tienen prioridad y no
-son sobrescritas por el archivo.
+son sobrescritas por el archivo. Por tanto, `.env` es una opción de despliegue,
+no un requisito para producción.
 
-Configure your environment:
+Configure the effective environment with the variables required by the deployment:
 
 ```env
 DB_HOST=localhost
@@ -715,6 +719,50 @@ AWS_SESSION_TOKEN=
 AWS_S3_BUCKET=
 MICHAT_MAINTENANCE_SECRET=
 ```
+
+Do not commit a real `.env`, database credentials, AWS credentials or production
+configuration files. If the EC2 instance uses an IAM role, long-lived
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` values should normally be omitted
+and the AWS SDK credential provider chain should resolve the instance role.
+
+### Environment delivery in production
+
+The application supports separating runtime configuration from the source tree.
+The important contract is that the web process and the Task Worker receive the
+same effective DB/AWS configuration; they do not need to receive it through the
+same mechanism.
+
+A production deployment can therefore use:
+
+- a non-versioned `.env` outside public access, when appropriate;
+- PHP-FPM/Apache environment injection for web requests;
+- a systemd `EnvironmentFile` for the Worker;
+- private PHP bootstrap/configuration files stored outside the repository when a
+  legacy deployment still requires them.
+
+Never reuse an environment file belonging to another application merely because
+it is present on the same server.
+
+#### Validated Amazon Linux / EC2 layout
+
+The production layout used to validate the current Fase 12B fixes is:
+
+```text
+/var/www/html/chat          application code served by nginx/PHP-FPM
+/etc/michat.env             private DB + AWS/Bedrock environment for systemd
+/var/www/db-s3.php          private database bootstrap used by the web runtime
+/var/www/Config-s3.php      private S3/application configuration for this deployment
+/var/www/vendor/            Composer dependencies in this EC2 layout
+```
+
+Those absolute paths describe this validated EC2 deployment; they are not secret
+values and are not intended to force every installation to use the same directory
+layout. The private files themselves must remain outside Git and must have
+restrictive filesystem permissions.
+
+The current EC2 Worker is intentionally started with its environment explicitly
+loaded by systemd. Running the PHP command manually as another user does **not**
+guarantee that `/etc/michat.env` will be inherited.
 
 For AWS environments, IAM roles should be preferred over long-lived credentials whenever possible.
 
@@ -743,12 +791,18 @@ For production, supervise the durable loop with systemd or Supervisor rather tha
 
 ```ini
 [Service]
-WorkingDirectory=/var/www/michat
-ExecStart=/usr/bin/php michat/bin/task_worker.php --loop
+WorkingDirectory=/var/www/html/chat
+ExecStart=/usr/bin/php /var/www/html/chat/bin/task_worker.php --loop
 Restart=always
-User=www-data
-EnvironmentFile=/var/www/michat/.env
+User=apache
+Group=apache
+EnvironmentFile=/etc/michat.env
 ```
+
+The service example above matches the validated Amazon Linux/EC2 deployment.
+Other distributions may use a different PHP-FPM/web user, working directory or
+environment-file path; adapt those deployment-specific values without committing
+secrets.
 
 Use a unique `TASK_WORKER_ID` per process. Lease expiry and recovery are handled by the worker; do not run overlapping cron invocations with the same worker identity.
 
