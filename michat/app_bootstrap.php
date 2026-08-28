@@ -2,10 +2,9 @@
 declare(strict_types=1);
 
 /**
- * app_bootstrap.php (dentro de public_html/s3v2)
- * Carga:
- * - vendor/autoload.php (AWS SDK / Composer)
- * - Config-s3.php y db.php desde fuera de public_html (ruta protegida)
+ * Bootstrap único de MiChat.
+ * Resuelve entorno, Composer y configuración privada desde rutas explícitas,
+ * checkout portable o el layout EC2 validado.
  */
 
 // =====================================================================
@@ -57,9 +56,7 @@ if ($autoload === null) {
     exit('Error de configuración del servidor.');
 }
 
-if (!class_exists('ComposerAutoloaderInitbd9357ed7e4e67fe1f5490cbadb5b6f1', false)) {
-    require_once $autoload;
-}
+require_once $autoload;
 
 // 3) Bootstrap/configuración. El checkout portable se intenta primero y el
 // layout EC2 validado queda como fallback, nunca como requisito universal.
