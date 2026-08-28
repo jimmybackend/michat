@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: fase12b-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   static-and-contracts:
     runs-on: ubuntu-latest
