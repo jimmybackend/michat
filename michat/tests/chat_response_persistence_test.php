@@ -15,9 +15,13 @@ $ok(substr_count($service,'INSERT INTO ChatMessages')===1&&str_contains($tasks,'
 $ok(!preg_match('/\b(?:INSERT|UPDATE|DELETE)\s+Tasks\b/i',$service),'servicio no contiene SQL de Tasks');
 $ok(str_contains($chat,'responses->persist')&&str_contains($factory,'ChatResponsePersistenceService'),'HTTP y Worker comparten el mismo servicio POO');
 $ok(str_contains($http,"'persist_final_response'=>true")&&str_contains($queue,"'persist_final_response'=>"),'sync y async marcan únicamente la respuesta final');
-$ok(str_contains($queue,"origin_type']==='chat'")&&str_contains($queue,"step_key']==='respond'"),'Steps internos no crean ChatMessages assistant');
+$ok(str_contains($queue,"['chat','manual']")&&str_contains($queue,"step_type']??'')!=='model'")&&str_contains($queue,"later.step_type='model'"),'solo el último Model Step visible de chat/manual persiste ChatMessages assistant');
 $ok(str_contains($chat,'new ChatExecutionResult($result->replyText,$messageId'),'el runtime devuelve el ID real persistido');
 $ok(!preg_match('/\$_(?:POST|GET|SESSION|COOKIE)\b/',$service),'persistencia Worker no depende de superglobals');
+$manual=file_get_contents(__DIR__.'/../includes/Tasks/TaskManualChatMessageService.php');
+$ok(str_contains($manual,"role='user'")&&str_contains($manual,"'source'=>'task_center'")&&str_contains($manual,'origin_message_id_'),'Task manual crea origen user durable e idempotente');
+$stepResult=file_get_contents(__DIR__.'/../includes/Tasks/TaskStepExecutionResult.php');
+$ok(str_contains($stepResult,'mb_substr($summary, 0, 1000)')&&!str_contains($service,'mb_substr($content'),'summary sigue acotado pero ChatMessages.content conserva salida completa');
 $memory=file_get_contents(__DIR__.'/../includes/Chat/ChatMemoryFinalizationService.php');
 $ok(!str_contains($service,'MemoryWriter')&&str_contains($memory,'MemoryWriter'),'persistencia assistant delega la memoria al finalizador de 8.6D.2C');
 echo"Resultado: $passed passed, $failed failed\n";
