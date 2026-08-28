@@ -24,6 +24,7 @@ $issue = static function (bool $condition, string $message) use (&$issues): void
 };
 
 $check(is_file($dumpPath), 'consolidated schema dump exists');
+$check(!is_file($root.'/adbbmis1_Cloud-final.sql'), 'production database snapshot is absent from release tree');
 $check(is_file($readmePath), 'README installation contract exists');
 $check(is_file($envPath), '.env.example database contract exists');
 $check(is_file($bootstrapPath), 'application bootstrap exists');
