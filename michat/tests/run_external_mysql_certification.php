@@ -24,7 +24,7 @@ if(preg_match('/^(\d+\.\d+\.\d+)/',$version,$match)!==1||version_compare($match[
 echo "MYSQL VERSION = PASS ({$version})\n";
 
 $mysqlTests=['migration_runner_mysql_test.php','supported_upgrade_mysql_test.php','schema_clean_install_test.php','mysql_compatibility_contract_test.php','ai_agent_global_scope_contract_test.php','multiuser_owned_boundaries_test.php'];
-$staticTests=['migration_runner_static_contract_test.php','sql_migration_executor_test.php','supported_upgrade_static_contract_test.php','global_ai_admin_policy_test.php','multiuser_identity_static_contract_test.php','task_phase11g2_closure_audit_test.php'];
+$staticTests=['migration_runner_static_contract_test.php','sql_migration_executor_test.php','supported_upgrade_static_contract_test.php','global_ai_admin_policy_test.php','multiuser_identity_static_contract_test.php','first_user_bootstrap_test.php','task_center_autonomy_schema_contract_test.php','task_retry_recovery_coherence_test.php','task_model_tool_wiring_test.php','chat_response_persistence_test.php','task_phase11g2_closure_audit_test.php'];
 $results=[];
 foreach(array_merge($mysqlTests,$staticTests)as$file){
     $process=proc_open([PHP_BINARY,__DIR__.'/'.$file],[['pipe','r'],['pipe','w'],['pipe','w']],$pipes,__DIR__,null);
