@@ -12,6 +12,7 @@ $ok(str_contains($service,'INSERT INTO ChatMessages')&&str_contains($service,"\$
 $ok(str_contains($service,'$modelId')&&str_contains($service,'prompt_tokens')&&str_contains($service,'completion_tokens'),'persiste modelo efectivo y tokens disponibles');
 $ok(str_contains($service,'lockOwnedForResponse')&&str_contains($service,"\$task['result_message_id_']")&&str_contains($service,'validAssistantMessage'),'finalización repetida devuelve el mensaje válido existente');
 $ok(substr_count($service,'INSERT INTO ChatMessages')===1&&str_contains($tasks,'assignResultIfEmpty'),'un único INSERT actualiza result_message_id_ por Repository');
+$ok(str_contains($service,'$this->db->insert_id')&&!str_contains($service,'MAX(id_)')&&!str_contains($service,'nextMessageId'),'assistant durable usa AUTO_INCREMENT de ChatMessages y evita MAX(id_)+1 concurrente');
 $ok(!preg_match('/\b(?:INSERT|UPDATE|DELETE)\s+Tasks\b/i',$service),'servicio no contiene SQL de Tasks');
 $ok(str_contains($chat,'responses->persist')&&str_contains($factory,'ChatResponsePersistenceService'),'HTTP y Worker comparten el mismo servicio POO');
 $ok(str_contains($http,"'persist_final_response'=>true")&&str_contains($queue,"'persist_final_response'=>"),'sync y async marcan únicamente la respuesta final');
