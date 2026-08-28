@@ -104,7 +104,12 @@ jobs:
             echo "Backup files must not be committed."
             exit 1
           fi
-          if git ls-files | grep -E '(^|/)\.env$'; then
+          if git ls-files | grep -E '(^|/)\.env
+; then
             echo "A real .env must not be committed."
+            exit 1
+          fi
+          if git ls-files --error-unmatch adbbmis1_Cloud-final.sql >/dev/null 2>&1; then
+            echo "Production database snapshots must not be committed."
             exit 1
           fi
