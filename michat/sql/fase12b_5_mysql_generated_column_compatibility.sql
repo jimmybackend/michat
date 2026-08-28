@@ -24,8 +24,11 @@ main: BEGIN
   END IF;
   IF LOWER(v_extra) LIKE '%stored generated%' THEN
     ALTER TABLE ProjectAutonomyCycles
-      MODIFY COLUMN active_project_id_ INT GENERATED ALWAYS AS
-        (IF(status='active',project_id_,NULL)) VIRTUAL;
+      DROP INDEX uq_project_autonomy_cycle_active,
+      DROP COLUMN active_project_id_,
+      ADD COLUMN active_project_id_ INT GENERATED ALWAYS AS
+        (IF(status='active',project_id_,NULL)) VIRTUAL AFTER status,
+      ADD UNIQUE KEY uq_project_autonomy_cycle_active (active_project_id_);
   ELSEIF LOWER(v_extra) NOT LIKE '%virtual generated%' THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='12B.5 PRECONDITION FAILED: unsupported active_project_id_ storage';
   END IF;
@@ -61,14 +64,17 @@ main: BEGIN
 
   IF LOWER(v_extra) LIKE '%stored generated%' THEN
     IF v_check<>1 THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='12B.5 PRECONDITION FAILED: legacy scope CHECK missing'; END IF;
-    ALTER TABLE UserAIAgentConfigs DROP CHECK chk_uac_scope_owner;
     ALTER TABLE UserAIAgentConfigs
-      MODIFY COLUMN scope_owner_key INT GENERATED ALWAYS AS
+      DROP CHECK chk_uac_scope_owner,
+      DROP INDEX uq_uac_scope_owner_agent,
+      DROP COLUMN scope_owner_key,
+      ADD COLUMN scope_owner_key INT GENERATED ALWAYS AS
         (CASE
            WHEN scope='global' AND user_id_ IS NULL THEN 0
            WHEN scope='user' AND user_id_ IS NOT NULL THEN user_id_
            ELSE NULL
-         END) VIRTUAL NOT NULL;
+         END) VIRTUAL NOT NULL AFTER user_id_,
+      ADD UNIQUE KEY uq_uac_scope_owner_agent (scope,scope_owner_key,agent_key);
   ELSEIF LOWER(v_extra) LIKE '%virtual generated%' THEN
     IF v_nullable<>'NO'
        OR LOWER(v_expression) NOT LIKE '%global%'
