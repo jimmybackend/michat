@@ -818,6 +818,25 @@ php michat/bin/create_first_user.php \
 unset MICHAT_NEW_USER_PASSWORD
 ```
 
+For an **existing installation upgraded from a schema that had no
+`Users.system_role`**, the migration deliberately does not guess which legacy
+account should become superadmin. If there are zero superadmins, bootstrap one
+existing active account exactly once by proving that account's password and
+supplying an explicit confirmation token:
+
+```bash
+export MICHAT_ACTOR_PASSWORD='existing-account-secret'
+export MICHAT_BOOTSTRAP_CONFIRM='BOOTSTRAP_SUPERADMIN'
+
+php michat/bin/bootstrap_superadmin.php \
+  --email=existing-admin@example.com
+
+unset MICHAT_ACTOR_PASSWORD MICHAT_BOOTSTRAP_CONFIRM
+```
+
+The command fails closed once any superadmin exists. It never selects or promotes
+a numeric user ID implicitly.
+
 Subsequent users are created by an authenticated active account with
 `system.roles.manage`; both passwords are supplied by environment variables,
 not command-line arguments:
