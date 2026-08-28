@@ -195,6 +195,13 @@ CLI incorporado:
 nuevos usuarios heredan el catálogo AI GLOBAL dinámicamente y no reciben clones
 por usuario.
 
+Para upgrades de instalaciones que ya tenían usuarios antes de
+`Users.system_role`, `michat/bin/bootstrap_superadmin.php` cubre el bootstrap
+sin recurrir a un ID mágico: sólo funciona mientras existan cero superadmins,
+requiere que el target sea un usuario activo que autentique su propia contraseña
+y exige `MICHAT_BOOTSTRAP_CONFIRM=BOOTSTRAP_SUPERADMIN`. Una vez existe un
+superadmin, ese camino queda cerrado.
+
 El perfil mantiene `task_auto_execute=0` por defecto.
 
 ## 7. Reset administrativo
