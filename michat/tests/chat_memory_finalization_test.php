@@ -17,7 +17,7 @@ $ok(str_contains($execution,'$questionId')&&str_contains($execution,'$messageId'
 $ok(substr_count($execution,'memory->finalize')===1&&str_contains($memory,'MemoryWriteEvents unique key'),'MemoryWriter se ejecuta una sola vez por respuesta final idempotente');
 $ok(str_contains($memory,'GET_LOCK')&&str_contains($memory,'WHERE question_msg_id=? AND answer_msg_id=?'),'SessionContextBlocks no se duplica ni bajo reintentos concurrentes');
 $ok(str_contains($memory,'INSERT IGNORE INTO EmbeddingJobs'),'EmbeddingJobs reutiliza su idempotencia existente');
-$ok(str_contains($queue,"origin_type']==='chat'")&&str_contains($queue,"step_key']==='respond'")&&str_contains($execution,"persist_final_response"),'Steps internos no ejecutan la finalización');
+$ok(str_contains($queue,'shouldPersistFinalResponse')&&str_contains($queue,"['chat','manual']")&&str_contains($queue,"later.step_type='model'")&&str_contains($queue,'return!$hasLater')&&str_contains($execution,"persist_final_response"),'sólo el último Model visible de chat/manual cruza la frontera de finalización; Models internos con otro Model posterior no finalizan');
 $ok(str_contains($factory,'ChatMemoryFinalizationService')&&str_contains($bootstrap,"'ChatMemoryFinalizationService'")&&substr_count($execution,'memory->finalize')===1,'HTTP y Worker usan el mismo servicio');
 $ok(!preg_match('/\$_(?:POST|GET|SESSION|COOKIE)\b/',$memory),'finalizador sólo consume datos server-side');
 
