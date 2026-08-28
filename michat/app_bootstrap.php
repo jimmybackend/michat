@@ -25,14 +25,33 @@ if ($APP_ROOT === false) {
 }
 
 require_once __DIR__ . '/includes/Config/EnvironmentLoader.php';
-(new EnvironmentLoader())->loadIfPresent($APP_ROOT . '/.env');
+$environmentLoader = new EnvironmentLoader();
+$explicitEnvFile = trim((string)(getenv('MICHAT_ENV_FILE') ?: ''));
+if ($explicitEnvFile !== '') {
+    $environmentLoader->loadIfPresent($explicitEnvFile);
+}
+$environmentLoader->loadIfPresent($APP_ROOT . '/.env');
 
 // =====================================================================
 // ✅ GUARD: Evitar doble carga del autoloader de Composer
 // Si la clase del autoloader ya existe, no incluirlo de nuevo.
 // =====================================================================
-$autoload = '/var/www/vendor/autoload.php';
-if (!is_file($autoload)) {
+$firstReadableFile = static function (array $candidates): ?string {
+    foreach ($candidates as $candidate) {
+        $candidate = trim((string)$candidate);
+        if ($candidate !== '' && is_file($candidate) && is_readable($candidate)) {
+            return $candidate;
+        }
+    }
+    return null;
+};
+
+$autoload = $firstReadableFile([
+    getenv('MICHAT_VENDOR_AUTOLOAD') ?: '',
+    $APP_ROOT . '/vendor/autoload.php',
+    '/var/www/vendor/autoload.php',
+]);
+if ($autoload === null) {
     error_log('MiChat bootstrap: falta vendor/autoload.php.');
     http_response_code(500);
     exit('Error de configuración del servidor.');
@@ -42,12 +61,21 @@ if (!class_exists('ComposerAutoloaderInitbd9357ed7e4e67fe1f5490cbadb5b6f1', fals
     require_once $autoload;
 }
 
-// 3) Archivos privados
-$configPath = '/var/www/Config-s3.php';
-$dbPath     = '/var/www/db-s3.php';
+// 3) Bootstrap/configuración. El checkout portable se intenta primero y el
+// layout EC2 validado queda como fallback, nunca como requisito universal.
+$configPath = $firstReadableFile([
+    getenv('MICHAT_CONFIG_FILE') ?: '',
+    $APP_ROOT . '/Config-s3.php',
+    '/var/www/Config-s3.php',
+]);
+$dbPath = $firstReadableFile([
+    getenv('MICHAT_DB_BOOTSTRAP') ?: '',
+    $APP_ROOT . '/db-s3.php',
+    '/var/www/db-s3.php',
+]);
 
-if (!is_file($configPath) || !is_file($dbPath)) {
-    error_log('MiChat bootstrap: faltan archivos privados de configuración.');
+if ($configPath === null || $dbPath === null) {
+    error_log('MiChat bootstrap: faltan archivos de configuración requeridos.');
     http_response_code(500);
     exit('Error de configuración del servidor.');
 }
