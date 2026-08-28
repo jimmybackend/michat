@@ -53,6 +53,7 @@ $check(str_contains($readme, 'DB_NAME=michat'), 'README declares a configurable 
 $check($envDb !== '', '.env.example declares a non-empty DB_NAME');
 $check(str_contains($bootstrap, "'/db-s3.php'")&&str_contains($bootstrap, 'require_once $dbPath'), 'application bootstrap loads the existing database configuration');
 $check(str_contains($bootstrap,'MICHAT_ENV_FILE')&&str_contains($bootstrap,'MICHAT_VENDOR_AUTOLOAD')&&str_contains($bootstrap,'MICHAT_CONFIG_FILE')&&str_contains($bootstrap,'MICHAT_DB_BOOTSTRAP'),'bootstrap supports explicit portable deployment paths with EC2 fallbacks');
+$check(str_contains($bootstrap,'require_once $autoload')&&!str_contains($bootstrap,'ComposerAutoloaderInit'),'bootstrap loads Composer idempotently without coupling to a generated autoloader class hash');
 $portableAdapters=[
     'ver_pdf.php','get_ai_agents.php','save_ai_agent.php','delete_ai_agent.php',
     'ver_archivo.php','ai_agent_configurator.php','s3chatstats.php',
