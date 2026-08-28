@@ -40,9 +40,10 @@ final class InitialUserProfile
     private function insertPreferences(int $userId): void
     {
         $stmt=$this->db->prepare(
-            "INSERT IGNORE INTO UserPreferences
+            "INSERT INTO UserPreferences
              (user_id_,model_id,seed,compile_temperature,compile_max_tokens,response_max_tokens,compile_top_p,question_memory_enabled,question_memory_scope,question_memory_max_candidates,question_memory_window_lines,theme_mode)
-             VALUES (?,'amazon.nova-micro-v1:0',42,0.00,200,300,0.100,1,'session',20,5,'theme-light')"
+             VALUES (?,'amazon.nova-micro-v1:0',42,0.00,200,300,0.100,1,'session',20,5,'theme-light')
+             ON DUPLICATE KEY UPDATE user_id_=VALUES(user_id_)"
         );
         if(!$stmt)throw new RuntimeException('initial_profile_preferences_unavailable');
         $stmt->bind_param('i',$userId);
@@ -52,7 +53,7 @@ final class InitialUserProfile
 
     private function insertFeatures(int $userId): void
     {
-        $stmt=$this->db->prepare("INSERT IGNORE INTO UserPipelineFeatures(user_id_,feature_key,is_enabled,config_json) VALUES(?,?,?,NULL)");
+        $stmt=$this->db->prepare("INSERT INTO UserPipelineFeatures(user_id_,feature_key,is_enabled,config_json) VALUES(?,?,?,NULL) ON DUPLICATE KEY UPDATE user_id_=VALUES(user_id_)");
         if(!$stmt)throw new RuntimeException('initial_profile_features_unavailable');
         foreach(self::FEATURES as$key=>$enabled){
             $stmt->bind_param('isi',$userId,$key,$enabled);
