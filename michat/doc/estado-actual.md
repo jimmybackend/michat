@@ -303,7 +303,7 @@ El contrato actual de 12B comprende:
 - reconciliación MySQL de generated columns al contrato final **VIRTUAL**, incluyendo `ProjectAutonomyCycles.active_project_id_` y `UserAIAgentConfigs.scope_owner_key`;
 - configuración AI `GLOBAL/USER` sin propietario mágico `user_id_=1`; los overrides USER prevalecen por `agent_key` y GLOBAL aporta fallback;
 - `Users.system_role ENUM('user','admin','superadmin') DEFAULT 'user'` y `AuthorizationService` DB-backed para operaciones privilegiadas, sin privilegios implícitos por ID de usuario;
-- provisioning CLI con `create_first_user.php` y `create_user.php`, perfil inicial canónico y contraseñas suministradas por variables de entorno, no por argv;
+- provisioning CLI con `create_first_user.php` y `create_user.php`, perfil inicial canónico y contraseñas suministradas por variables de entorno, no por argv; upgrades legacy con usuarios existentes disponen de `bootstrap_superadmin.php`, one-shot, sin ID mágico, sólo mientras existan cero superadmins y autenticando al target activo;
 - `reset_runtime_data.php` únicamente CLI, dry-run por defecto, destructivo solo en development/test con confirmación explícita, permiso `system.reset`, auditoría y sin `TRUNCATE` ni `FOREIGN_KEY_CHECKS=0`; el endpoint legacy `truncate.php` fue eliminado;
 - bootstrap portable mediante `MICHAT_ENV_FILE`, `MICHAT_VENDOR_AUTOLOAD`, `MICHAT_CONFIG_FILE` y `MICHAT_DB_BOOTSTRAP`, manteniendo como fallback el layout EC2 validado;
 - hardening del Worker/Task runtime: heartbeat multi-table robusto, locks MySQL dentro del límite de 64 caracteres, Planner sin nuevo Step ejecutable `plan`, corrección de autonomía/Task Center y eliminación de recursión entre factories;
