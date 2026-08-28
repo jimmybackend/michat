@@ -703,7 +703,7 @@ php michat/bin/migrations.php baseline --profile=current-dump
 
 `DB_NAME` is selected by each deployment. The schema dump does not create or select a database; it imports into the database already selected by the MySQL client. Configure the application with that same `DB_NAME` before opening the web UI or starting the Worker. A zero import exit code is required. The static clean-install contract is covered in-repo, while a real clean import remains `SKIP`/not certified until isolated `TASK_TEST_DB_*` credentials are provided.
 
-`adbbmis1_Cloud.sql` is the canonical clean-install dump. `adbbmis1_Cloud-final.sql` is a production snapshot retained as reconciliation/audit evidence and may contain deployment-specific database metadata or runtime rows; do not use it as the portable installation source.
+`adbbmis1_Cloud.sql` is the only canonical clean-install dump. Production snapshots must not be committed to the public release tree. The temporary `adbbmis1_Cloud-final.sql` snapshot used during rescue/reconciliation was removed after the schema differences were incorporated and audited.
 
 MiChat carga el archivo `.env` de la raíz cuando existe. Las variables ya
 inyectadas por el proceso, PHP-FPM, Apache, EC2 o systemd tienen prioridad y no
