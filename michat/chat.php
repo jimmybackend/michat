@@ -3,7 +3,6 @@ session_start();
 header('Content-Type: text/html; charset=UTF-8');
 ini_set('display_errors', 1);
 error_reporting(E_ALL);
-require_once '../vendor/autoload.php';
 require_once __DIR__ . '/app_bootstrap.php';
 require_once __DIR__ . '/includes/ai_agent_runtime.php';
 require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
@@ -52,7 +51,7 @@ $aiRuntimeAllowedAgents = [
 
 /**
  * Endpoint AJAX de la propia página de chat para cambiar modelo/estado.
- * Para usuarios != 1 crea un override copiando la configuración global.
+ * Cada usuario persiste un override scope=user a partir de la configuración GLOBAL efectiva.
  */
 if (
     $_SERVER['REQUEST_METHOD'] === 'POST'
@@ -306,9 +305,6 @@ function build_file_s3_key(string $ruta, string $encriptado): string {
 }
 function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION)); }
 
-?>
-<?php
-$mostrarTruncate = isset($_SESSION['user_id']) && (( $_SESSION['user_id'] ?? '') === 1);
 ?>
 
 <!DOCTYPE html>

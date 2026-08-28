@@ -18,7 +18,7 @@ try {
     if(count($argv)!==$expectedArguments)throw new InvalidArgumentException('Invalid command arguments');
     if($expectedArguments===3){if(!str_starts_with($argv[2],'--profile='))throw new InvalidArgumentException('A closed profile is required');$profile=substr($argv[2],10);}
 
-    $root=dirname(__DIR__,2);(new EnvironmentLoader())->loadIfPresent($root.'/.env');
+    $root=dirname(__DIR__,2);$loader=new EnvironmentLoader();$explicit=trim((string)(getenv('MICHAT_ENV_FILE')?:''));if($explicit!=='')$loader->loadIfPresent($explicit);$loader->loadIfPresent($root.'/.env');
     foreach(['DB_HOST','DB_USER','DB_PASSWORD','DB_NAME'] as $key)if(getenv($key)===false||trim((string)getenv($key))==='')throw new RuntimeException('Missing required database configuration: '.$key);
     $port=filter_var((string)(getenv('DB_PORT')?:'3306'),FILTER_VALIDATE_INT,['options'=>['min_range'=>1,'max_range'=>65535]]);
     if($port===false)throw new RuntimeException('Invalid DB_PORT');

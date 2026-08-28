@@ -116,7 +116,7 @@ final class CodeEditService
     /** @return array{id:int,version:string} Uses the legacy dotted-version increment policy. */
     private function createFileVersion(int$projectId,int$sessionId,string$filename,string$rootPrefix,string$instruction):array
     {
-        $lock='code_edit_version:'.hash('sha256',$projectId.':'.$filename);$stmt=$this->db->prepare('SELECT GET_LOCK(?,10) acquired');if(!$stmt)throw new RuntimeException('database_error');
+        $lock='code_edit_version:'.substr(hash('sha256',$projectId.':'.$filename),0,46);$stmt=$this->db->prepare('SELECT GET_LOCK(?,10) acquired');if(!$stmt)throw new RuntimeException('database_error');
         $stmt->bind_param('s',$lock);$stmt->execute();$acquired=(int)($stmt->get_result()->fetch_assoc()['acquired']??0)===1;$stmt->close();if(!$acquired)throw new RuntimeException('code_edit_version_lock_failed');
         try{
             $stmt=$this->db->prepare('SELECT version FROM FileVersions WHERE project_id_=? AND original_filename=? ORDER BY id_ DESC LIMIT 1');if(!$stmt)throw new RuntimeException('database_error');

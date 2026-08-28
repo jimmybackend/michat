@@ -24,18 +24,26 @@ final class ChatIdentity
         return $row ? (int)$row['id'] : 0;
     }
 
-    public static function isAdminLike(): bool
+    public static function isAdminLike(?mysqli $db=null,?int $userId=null): bool
     {
-        $role = (string)($_SESSION['role'] ?? $_SESSION['rol'] ?? '');
-        $role = mb_strtolower(trim($role), 'UTF-8');
-        return in_array($role, ['administración','soporte','admin','administrator','support'], true);
+        $db=$db??($GLOBALS['db_connection']??null);
+        if(!$db instanceof mysqli)return false;
+        require_once dirname(__DIR__).'/Auth/AuthorizationService.php';
+        $userId=$userId??self::resolveUserId($db);
+        if($userId<1)return false;
+        try{return (new AuthorizationService($db))->allows($userId,'users.manage');}
+        catch(Throwable){return false;}
     }
 
-    /** Global AI configuration is narrower than general admin-like access. */
-    public static function canManageGlobalAiConfiguration(): bool
+    /** GLOBAL AI administration is granted only by system_role permissions. */
+    public static function canManageGlobalAiConfiguration(?mysqli $db=null,?int $userId=null): bool
     {
-        $role = (string)($_SESSION['role'] ?? $_SESSION['rol'] ?? '');
-        $role = mb_strtolower(trim($role), 'UTF-8');
-        return in_array($role, ['administración', 'admin', 'administrator'], true);
+        $db=$db??($GLOBALS['db_connection']??null);
+        if(!$db instanceof mysqli)return false;
+        require_once dirname(__DIR__).'/Auth/AuthorizationService.php';
+        $userId=$userId??self::resolveUserId($db);
+        if($userId<1)return false;
+        try{return (new AuthorizationService($db))->allows($userId,'ai.global.manage');}
+        catch(Throwable){return false;}
     }
 }

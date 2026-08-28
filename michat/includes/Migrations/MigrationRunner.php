@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 final class MigrationRunner
 {
-    public const VERSION='fase12b4-v1';
+    public const VERSION='fase12b6-v1';
 
     public function __construct(
         private MigrationCatalog $catalog,
@@ -57,7 +57,7 @@ final class MigrationRunner
     public function baseline(string $profile): void
     {
         if($profile!=='current-dump')throw new InvalidArgumentException('Unknown baseline profile');
-        $this->recordProfile($profile,12,'clean_baseline');
+        $this->recordProfile($profile,14,'clean_baseline');
     }
 
     private function recordProfile(string $profile,int $count,string $mode):void
@@ -114,11 +114,17 @@ final class MigrationRunner
         $this->requireColumnContains('UserAIAgentConfigs','scope',"enum('global','user')");
         $this->requireNullable('UserAIAgentConfigs','scope',false);
         $this->requireColumnDefaultAbsent('UserAIAgentConfigs','scope');
-        $this->requireColumnContains('UserAIAgentConfigs','scope_owner_key','stored generated');
+        $this->requireColumnContains('UserAIAgentConfigs','scope_owner_key','virtual generated');
+        $this->requireNullable('UserAIAgentConfigs','scope_owner_key',false);
         $this->requireNullable('UserAIAgentConfigs','user_id_',true);
         $this->requireIndex('UserAIAgentConfigs','uq_uac_scope_owner_agent',['scope','scope_owner_key','agent_key'],true);
         $this->requireForeignKey('UserAIAgentConfigs','user_id_','Users','id','CASCADE');
-        $this->requireConstraint('UserAIAgentConfigs','chk_uac_scope_owner','CHECK');
+        $this->requireConstraintAbsent('UserAIAgentConfigs','chk_uac_scope_owner');
+        $this->requireColumnContains('ProjectAutonomyCycles','active_project_id_','virtual generated');
+        $this->requireColumnContains('Users','system_role',"enum('user','admin','superadmin')");
+        $this->requireNullable('Users','system_role',false);
+        $this->requireColumnDefaultEquals('Users','system_role','user');
+        $this->requireGlobalAgent('task_planner','amazon.nova-pro-v1:0');
         $this->requireIndex('ProjectAutonomyCycles','uq_project_autonomy_cycle_active',['active_project_id_'],true);
         $this->requireIndex('NextWorkProposals','uq_next_work_proposal_dedupe',['autonomy_cycle_id_','dedupe_key'],true);
         $this->requireIndex('PostTaskContinuations','uq_post_task_continuation_logical',['autonomy_cycle_id_','source_task_id_'],true);
@@ -144,6 +150,12 @@ final class MigrationRunner
     {$s=$this->repository->db()->prepare('SELECT COUNT(*) c FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.TABLE_NAME=k.TABLE_NAME AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME WHERE k.CONSTRAINT_SCHEMA=DATABASE() AND k.TABLE_NAME=? AND k.COLUMN_NAME=? AND k.REFERENCED_TABLE_NAME=? AND k.REFERENCED_COLUMN_NAME=? AND r.DELETE_RULE=?');$s->bind_param('sssss',$table,$column,$refTable,$refColumn,$deleteRule);$s->execute();$v=(int)$s->get_result()->fetch_assoc()['c'];$s->close();if($v!==1)throw new RuntimeException("PROFILE MISMATCH: foreign key {$table}.{$column}");}
     private function requireConstraint(string $table,string $name,string $type):void
     {$s=$this->repository->db()->prepare('SELECT COUNT(*) c FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE() AND TABLE_NAME=? AND CONSTRAINT_NAME=? AND CONSTRAINT_TYPE=?');$s->bind_param('sss',$table,$name,$type);$s->execute();$v=(int)$s->get_result()->fetch_assoc()['c'];$s->close();if($v!==1)throw new RuntimeException("PROFILE MISMATCH: constraint {$table}.{$name}");}
+    private function requireConstraintAbsent(string $table,string $name):void
+    {$s=$this->repository->db()->prepare('SELECT COUNT(*) c FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE() AND TABLE_NAME=? AND CONSTRAINT_NAME=?');$s->bind_param('ss',$table,$name);$s->execute();$v=(int)$s->get_result()->fetch_assoc()['c'];$s->close();if($v!==0)throw new RuntimeException("PROFILE MISMATCH: unexpected constraint {$table}.{$name}");}
+    private function requireColumnDefaultEquals(string $table,string $column,string $expected):void
+    {$s=$this->repository->db()->prepare('SELECT COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?');$s->bind_param('ss',$table,$column);$s->execute();$row=$s->get_result()->fetch_assoc();$s->close();if(!$row||(string)$row['COLUMN_DEFAULT']!==$expected)throw new RuntimeException("PROFILE MISMATCH: default {$table}.{$column}");}
+    private function requireGlobalAgent(string $agentKey,string $modelId):void
+    {$s=$this->repository->db()->prepare("SELECT system_instruction FROM UserAIAgentConfigs WHERE scope='global' AND user_id_ IS NULL AND agent_key=? AND model_id=? AND is_active=1 LIMIT 1");$s->bind_param('ss',$agentKey,$modelId);$s->execute();$row=$s->get_result()->fetch_assoc();$s->close();if(!$row||str_contains((string)$row['system_instruction'],'plan, model'))throw new RuntimeException("PROFILE MISMATCH: GLOBAL agent {$agentKey}");}
 
     private function assertPendingPreState(string $id):void
     {
@@ -160,6 +172,8 @@ final class MigrationRunner
             'fase11f2_hitl_controls'=>$this->columnExists('PostTaskContinuations','answer')||$this->columnExists('PostTaskContinuations','answered_by_user_id_'),
             'fase12b_2c_global_ai_configuration_scope'=>$this->columnExists('UserAIAgentConfigs','scope')||$this->columnExists('UserAIAgentConfigs','scope_owner_key'),
             'fase12b_4_ai_scope_default_reconciliation'=>false,
+            'fase12b_5_mysql_generated_column_compatibility'=>false,
+            'fase12b_6_system_role_authorization'=>false,
             default=>true,
         };
         if($postStatePresent)throw new RuntimeException('PARTIAL/UNKNOWN STATE: pending migration has target structures; OPERATOR RECONCILIATION REQUIRED for '.$id);

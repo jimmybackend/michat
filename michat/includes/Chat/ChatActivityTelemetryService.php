@@ -24,7 +24,7 @@ final class ChatActivityTelemetryService
     ): void {
         if (!preg_match('/^[A-Za-z0-9_-]{16,36}$/', $traceId) || $userId < 1 || $sessionId < 1) return;
         if (!in_array($status, self::STATUSES, true)) $status = 'info';
-        $lockName = 'chat_activity:' . hash('sha256', $traceId . ':' . $eventKey);
+        $lockName = 'chat_activity:' . substr(hash('sha256', $traceId . ':' . $eventKey), 0, 50);
 
         try {
             if (!$this->acquireLock($lockName)) return;

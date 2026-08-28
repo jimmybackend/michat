@@ -19,7 +19,7 @@ $ok(str_contains($execution,'$result->modelId')&&str_contains($service,'$modelId
 $ok(str_contains($execution,'$request->sessionId')&&str_contains($service,'$sessionId'),'usa el session_id resuelto');
 $ok(str_contains($factory,'new ChatTokenUsageService')&&str_contains($bootstrap,"'ChatTokenUsageService'")&&substr_count($execution,'tokens?->recordFinal')===1,'HTTP y Worker comparten ChatTokenUsageService');
 $ok(str_contains($service,'GET_LOCK')&&str_contains($service,'alreadyRecorded')&&str_contains($service,'message_id_=? AND phase=?'),'reintentar no duplica TokenUsage');
-$ok(str_contains($queue,"origin_type']==='chat'")&&str_contains($queue,"step_key']==='respond'")&&str_contains($execution,'persist_final_response'),'Steps internos no registran TokenUsage final');
+$ok(str_contains($queue,'shouldPersistFinalResponse')&&str_contains($queue,"['chat','manual']")&&str_contains($queue,"later.step_type='model'")&&str_contains($queue,'return!$hasLater')&&str_contains($execution,'persist_final_response'),'TokenUsage final se registra sólo en la misma frontera visible del último Model de chat/manual, no en Models internos con otro Model posterior');
 $ok(!preg_match('/\$_(?:POST|GET|SESSION|COOKIE)\b/',$service),'Worker no depende de estado HTTP');
 $ok(str_contains($service,"['prompt_tokens'] ?? 0")&&str_contains($service,"['completion_tokens'] ?? 0")&&str_contains($service,'$durationMs ?? 0'),'ausencia de usage conserva la política legacy de cero');
 $ok(ChatTokenUsageService::calculateCost('amazon.nova-pro-v1:0',1000000,1000000)===4.0&&ChatTokenUsageService::calculateCost('unknown',0,0)===0.0,'coste reutiliza exactamente la política legacy');

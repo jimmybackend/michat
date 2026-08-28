@@ -19,6 +19,14 @@ final class TaskStepRepository
     public function deleteUnexecutedPlaceholder(int $taskId):void{$s=$this->prepare("DELETE s FROM TaskSteps s LEFT JOIN TaskExecutions e ON e.step_id_=s.id_ WHERE s.task_id_=? AND s.step_key='respond' AND e.id_ IS NULL");$s->bind_param('i',$taskId);$this->execute($s);$s->close();}
     public function findById(int$id):?array{return $this->one('SELECT * FROM TaskSteps WHERE id_=?','i',[$id]);}
     public function lockForRetry(int$id,int$taskId):?array{$s=$this->prepare('SELECT * FROM TaskSteps WHERE id_=? AND task_id_=? LIMIT 1 FOR UPDATE');$s->bind_param('ii',$id,$taskId);$this->execute($s);$row=$s->get_result()->fetch_assoc();$s->close();return$row?:null;}
+    public function authorizeRetry(int$id,int$taskId,int$lock,int$authorizedOrdinal):array
+    {
+        if($authorizedOrdinal<1)throw new TaskValidationException('retry_attempt_invalid');
+        $s=$this->prepare("UPDATE TaskSteps SET status='ready',max_attempts=GREATEST(max_attempts,?),error_message=NULL,completed_at=NULL,lock_version=lock_version+1 WHERE id_=? AND task_id_=? AND lock_version=? AND status='failed'");
+        $s->bind_param('iiii',$authorizedOrdinal,$id,$taskId,$lock);$this->execute($s);$affected=$s->affected_rows;$s->close();
+        if($affected!==1)throw new TaskConcurrencyException('step_retry_conflict');
+        return$this->findById($id)??throw new RuntimeException('step_not_found');
+    }
     public function lockCurrentWaitingUser(int$id,int$taskId):?array{$s=$this->prepare("SELECT * FROM TaskSteps WHERE id_=? AND task_id_=? AND status='waiting_user' LIMIT 1 FOR UPDATE");$s->bind_param('ii',$id,$taskId);$this->execute($s);$row=$s->get_result()->fetch_assoc();$s->close();return$row?:null;}
     public function findByKey(int$taskId,string$key):?array{return $this->one('SELECT * FROM TaskSteps WHERE task_id_=? AND step_key=?','is',[$taskId,$key]);}
     public function updateStatus(int$id,string$status,int$lock,array$fields=[]):array

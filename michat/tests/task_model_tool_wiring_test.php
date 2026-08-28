@@ -18,4 +18,10 @@ $ok(substr_count($taskSource,'ToolRegistryFactory(')===1&&str_contains($taskSour
 $ok(substr_count($taskSource,'new TaskToolApprovalStateReader(')===1&&substr_count($taskSource,'new TaskToolApprovalPauseService(')===1&&substr_count($taskSource,'new TaskToolApprovalConsumptionService(')===1,'composición Task reutiliza un único conjunto de servicios approval');
 $chatSource=file_get_contents(__DIR__.'/../includes/Chat/ChatExecutionServiceFactory.php');$ok(!str_contains($chatSource,'TaskChatToolExecutionGate')&&!str_contains($chatSource,'TaskToolRiskPolicy'),'Chat genérico acepta contrato opcional sin conocer dominio Task');
 $http=file_get_contents(__DIR__.'/../bedrock_chat2.php');$ok(str_contains($http,"pipelineEffective['task_orchestrator']")&&str_contains($http,'TaskStepExecutionServiceFactory'),'feature flag Task sigue aislando composición HITL de pipeline legacy');
+$modelExecutor=file_get_contents(__DIR__.'/../includes/Tasks/ModelTaskStepExecutor.php');
+$stepResult=file_get_contents(__DIR__.'/../includes/Tasks/TaskStepExecutionResult.php');
+$progression=file_get_contents(__DIR__.'/../includes/Tasks/TaskStepProgressionService.php');
+$queue=file_get_contents(__DIR__.'/../includes/Tasks/TaskQueueRepository.php');
+$ok(str_contains($modelExecutor,'$result->modelId')&&str_contains($stepResult,'public readonly ?string $modelId'),'Model Step conserva el modelo efectivo resuelto por runtime');
+$ok(str_contains($progression,'$r->modelId')&&str_contains($queue,'model_id=COALESCE(NULLIF(?,\'\'),model_id)'),'progresión persiste el modelo efectivo en TaskExecutions sin resolverlo dos veces');
 echo"SKIP — MySQL Worker/HTTP E2E no ejecutado: TASK_TEST_DB_* no configurado en este entorno.\nResultado: $passed PASS, $failed FAIL.\n";exit($failed?1:0);

@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 final class TaskPlanValidator {
- private const TYPES=['plan','model','tool','approval','wait','validation','finalize']; private const FIELDS=['step_key','title','description','step_type','agent_key'];
+ private const TYPES=['model','tool','approval','wait','validation','finalize']; private const FIELDS=['step_key','title','description','step_type','agent_key'];
  /** @param callable(string):bool|null $agentExists */ public function __construct(private $agentExists=null,private string $fallbackAgent='chat_main'){}
  public function validate(array$payload):TaskPlan{
   if(array_keys($payload)!==['steps']||!is_array($payload['steps']))throw new TaskValidationException('plan_structure_invalid');$count=count($payload['steps']);if($count<1||$count>8)throw new TaskValidationException('plan_steps_invalid');$seen=[];$steps=[];

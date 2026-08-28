@@ -595,7 +595,9 @@ sin modificar el código fuente.
 - [x] **Phase 9 — Closed:** Task Center 2.0 provides navigation, search, combined filters, pagination, operational List/Board views, visible priority and dates, waits, HITL actions, direct/inverse dependency management, owned history, executions, artifacts, and chat/trace navigation. Phase 9F completed accessibility, loading/error feedback, responsive and security hardening without database changes.
 - [x] **Phase 10 — Closed:** 10A–10F deliver UTC one-shot scheduling, owned rescheduling, executable manual Tasks, durable daily/weekly recurrence, bounded materialization in the existing Worker, and owned recurrence administration in Task Center. The final pre-merge audit passed all available PHP/JS suites; isolated MySQL E2E remains explicitly pending because `TASK_TEST_DB_*` was unavailable. Event triggers, generic Automation Rules and autonomy remain outside Phase 10.
 - [x] **Phase 11 — Closed / merged in PR #69:** operational autonomy reuses the existing Planner, Model/Tool Steps, Worker, shared inference runtime, Memory/RAG and HITL boundaries. It includes Project policies and budgets, bounded cycles and continuations, NextWork/Proposals, ASK_USER, versioned replanning, Task Center observability and HITL controls, and final hardening.
-- [ ] **Phase 12 — Current:** release industrialization now starts with public HTTP error safety. **12A PASS** hardens Trace Metrics so known permission/ownership errors preserve their public contract while internal RuntimeException/SQL details are logged server-side and return a stable generic 500 response. This does not declare a stable release; schema upgrades, external E2E and release operations remain future audited work.
+- [ ] **Phase 12 — Current:** **12A PASS** hardens public HTTP error safety. **12B closure/hardening is implemented as a merge candidate:** the schema chain is versioned through 14 migrations, generated-column compatibility is reconciled for MySQL 8, GLOBAL/USER AI configuration is clean-installable, privileged operations use DB-backed `system_role`, first/ordinary users are provisioned through CLI, destructive runtime reset is CLI-only and fail-closed, Task retry/heartbeat/model provenance are hardened, and manual Task results are durably linked to Chat history. Production EC2 proved the Worker → Bedrock → completed Task path; isolated destructive MySQL certification still requires `TASK_TEST_DB_*` and must remain reported as SKIP/NOT RUNNABLE when those credentials are absent. Phase 12 remains open for final external certification/release operations.
+
+  Closure evidence and the exact implemented/pending boundary are documented in `michat/doc/fase12b-closure-audit.md`.
 
 ---
 
@@ -680,26 +682,35 @@ The current implementation is based on approximately:
 git clone https://github.com/jimmybackend/michat.git
 cd michat
 
+# Optional for local/simple deployments.
+# Production may inject the same variables through PHP-FPM/systemd instead.
 cp .env.example .env
 
 # Choose a deployment-specific name. "michat" is only an example.
 DB_NAME=michat
-# Set the same DB_NAME in .env, together with DB_HOST/PORT/USER/PASSWORD.
+# Set the same DB_NAME in the effective environment together with
+# DB_HOST/PORT/USER/PASSWORD.
 
 composer install --no-dev --prefer-dist --optimize-autoloader
 
 mysql -u root -p -e "CREATE DATABASE \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
 mysql -u root -p "$DB_NAME" < adbbmis1_Cloud.sql
 test "$?" -eq 0
+
+# Record that this clean dump already represents the complete 14-migration schema.
+php michat/bin/migrations.php baseline --profile=current-dump
 ```
 
 `DB_NAME` is selected by each deployment. The schema dump does not create or select a database; it imports into the database already selected by the MySQL client. Configure the application with that same `DB_NAME` before opening the web UI or starting the Worker. A zero import exit code is required. The static clean-install contract is covered in-repo, while a real clean import remains `SKIP`/not certified until isolated `TASK_TEST_DB_*` credentials are provided.
 
+`adbbmis1_Cloud.sql` is the only canonical clean-install dump. Production snapshots must not be committed to the public release tree. The temporary `adbbmis1_Cloud-final.sql` snapshot used during rescue/reconciliation was removed after the schema differences were incorporated and audited.
+
 MiChat carga el archivo `.env` de la raíz cuando existe. Las variables ya
 inyectadas por el proceso, PHP-FPM, Apache, EC2 o systemd tienen prioridad y no
-son sobrescritas por el archivo.
+son sobrescritas por el archivo. Por tanto, `.env` es una opción de despliegue,
+no un requisito para producción.
 
-Configure your environment:
+Configure the effective environment with the variables required by the deployment:
 
 ```env
 DB_HOST=localhost
@@ -714,7 +725,62 @@ AWS_SECRET_ACCESS_KEY=
 AWS_SESSION_TOKEN=
 AWS_S3_BUCKET=
 MICHAT_MAINTENANCE_SECRET=
+
+# Optional deployment-path overrides
+MICHAT_ENV_FILE=
+MICHAT_VENDOR_AUTOLOAD=
+MICHAT_CONFIG_FILE=
+MICHAT_DB_BOOTSTRAP=
 ```
+
+Do not commit a real `.env`, database credentials, AWS credentials or production
+configuration files. If the EC2 instance uses an IAM role, long-lived
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` values should normally be omitted
+and the AWS SDK credential provider chain should resolve the instance role.
+
+`MICHAT_ENV_FILE` can point CLI/bootstrap loading at a private environment file.
+`MICHAT_VENDOR_AUTOLOAD`, `MICHAT_CONFIG_FILE` and `MICHAT_DB_BOOTSTRAP`
+override deployment paths without editing source. If unset, MiChat tries the
+portable checkout layout first and then the validated EC2 fallbacks.
+
+### Environment delivery in production
+
+The application supports separating runtime configuration from the source tree.
+The important contract is that the web process and the Task Worker receive the
+same effective DB/AWS configuration; they do not need to receive it through the
+same mechanism.
+
+A production deployment can therefore use:
+
+- a non-versioned `.env` outside public access, when appropriate;
+- PHP-FPM/Apache environment injection for web requests;
+- a systemd `EnvironmentFile` for the Worker;
+- private PHP bootstrap/configuration files stored outside the repository when a
+  legacy deployment still requires them.
+
+Never reuse an environment file belonging to another application merely because
+it is present on the same server.
+
+#### Validated Amazon Linux / EC2 layout
+
+The production layout used to validate the current Fase 12B fixes is:
+
+```text
+/var/www/html/chat          application code served by nginx/PHP-FPM
+/etc/michat.env             private DB + AWS/Bedrock environment for systemd
+/var/www/db-s3.php          private database bootstrap used by the web runtime
+/var/www/Config-s3.php      private S3/application configuration for this deployment
+/var/www/vendor/            Composer dependencies in this EC2 layout
+```
+
+Those absolute paths describe this validated EC2 deployment; they are not secret
+values and are not intended to force every installation to use the same directory
+layout. The private files themselves must remain outside Git and must have
+restrictive filesystem permissions.
+
+The current EC2 Worker is intentionally started with its environment explicitly
+loaded by systemd. Running the PHP command manually as another user does **not**
+guarantee that `/etc/michat.env` will be inherited.
 
 For AWS environments, IAM roles should be preferred over long-lived credentials whenever possible.
 
@@ -731,6 +797,83 @@ for test in michat/tests/*_test.php; do php "$test"; done
 
 Database integration tests use the optional `TASK_TEST_DB_*` variables and explicitly report `SKIP` when they are absent.
 
+### Initial user and administrative CLI
+
+A clean database intentionally contains no application user. Create the first
+account only after importing the canonical dump and establishing the migration
+baseline. The first account is created as `superadmin` only when `Users` is
+empty:
+
+```bash
+export MICHAT_NEW_USER_PASSWORD='use-a-secret-value-from-your-secret-store'
+
+php michat/bin/create_first_user.php \
+  --email=admin@example.com \
+  --firstname=Admin \
+  --lastname=User \
+  --curp=AAAAAAAAAAAAAAAAAA \
+  --gender=Otro \
+  --role=Administración
+
+unset MICHAT_NEW_USER_PASSWORD
+```
+
+For an **existing installation upgraded from a schema that had no
+`Users.system_role`**, the migration deliberately does not guess which legacy
+account should become superadmin. If there are zero superadmins, bootstrap one
+existing active account exactly once by proving that account's password and
+supplying an explicit confirmation token:
+
+```bash
+export MICHAT_ACTOR_PASSWORD='existing-account-secret'
+export MICHAT_BOOTSTRAP_CONFIRM='BOOTSTRAP_SUPERADMIN'
+
+php michat/bin/bootstrap_superadmin.php \
+  --email=existing-admin@example.com
+
+unset MICHAT_ACTOR_PASSWORD MICHAT_BOOTSTRAP_CONFIRM
+```
+
+The command fails closed once any superadmin exists. It never selects or promotes
+a numeric user ID implicitly.
+
+Subsequent users are created by an authenticated active account with
+`system.roles.manage`; both passwords are supplied by environment variables,
+not command-line arguments:
+
+```bash
+export MICHAT_ACTOR_PASSWORD='actor-secret'
+export MICHAT_NEW_USER_PASSWORD='new-user-secret'
+
+php michat/bin/create_user.php \
+  --actor-email=admin@example.com \
+  --email=user@example.com \
+  --firstname=Example \
+  --lastname=User \
+  --curp=BBBBBBBBBBBBBBBBBB \
+  --gender=Otro \
+  --role=Otros \
+  --system-role=user
+
+unset MICHAT_ACTOR_PASSWORD MICHAT_NEW_USER_PASSWORD
+```
+
+New users receive the canonical feature/preference profile. GLOBAL AI agent
+configuration is inherited dynamically; provisioning does not clone one copy of
+the GLOBAL catalog per user. In particular, `task_auto_execute` remains
+disabled by default while the Task Orchestrator, asynchronous Worker and Planner
+features are enabled in the canonical new-user profile.
+
+There is no destructive web reset endpoint. Inspect a reset plan with:
+
+```bash
+php michat/bin/reset_runtime_data.php --dry-run
+```
+
+A destructive reset is intentionally restricted to development/test, requires a
+superadmin-equivalent `system.reset` permission, an explicit confirmation token
+and `--hard`. Production reset is refused.
+
 ### Worker
 
 Run one job while validating an installation:
@@ -743,12 +886,18 @@ For production, supervise the durable loop with systemd or Supervisor rather tha
 
 ```ini
 [Service]
-WorkingDirectory=/var/www/michat
-ExecStart=/usr/bin/php michat/bin/task_worker.php --loop
+WorkingDirectory=/var/www/html/chat
+ExecStart=/usr/bin/php /var/www/html/chat/bin/task_worker.php --loop
 Restart=always
-User=www-data
-EnvironmentFile=/var/www/michat/.env
+User=apache
+Group=apache
+EnvironmentFile=/etc/michat.env
 ```
+
+The service example above matches the validated Amazon Linux/EC2 deployment.
+Other distributions may use a different PHP-FPM/web user, working directory or
+environment-file path; adapt those deployment-specific values without committing
+secrets.
 
 Use a unique `TASK_WORKER_ID` per process. Lease expiry and recovery are handled by the worker; do not run overlapping cron invocations with the same worker identity.
 

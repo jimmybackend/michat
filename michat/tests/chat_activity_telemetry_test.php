@@ -20,7 +20,7 @@ $completedAt=strpos($execution,"'trace_completed'");
 $ok($completedAt!==false&&$catchAt!==false&&$completedAt<$catchAt,'trace_completed sólo está en la ruta de éxito');
 $ok(!preg_match('/\$_(?:POST|GET|SESSION|COOKIE)\b/',$activity),'telemetría no depende de estado HTTP');
 $ok(str_contains($activity,'GET_LOCK')&&str_contains($activity,'WHERE trace_id=? AND event_key=?'),'reintentos no duplican eventos equivalentes');
-$ok(str_contains($queue,"origin_type']==='chat'")&&str_contains($execution,'persist_final_response'),'finalize visible conserva la frontera final compartida');
+$ok(str_contains($queue,"['chat','manual']")&&str_contains($queue,'shouldPersistFinalResponse')&&str_contains($execution,'persist_final_response'),'finalize visible conserva una única frontera final compartida para chat/manual');
 $ok(!str_contains($execution,'Config::getBedrockRuntime')&&!str_contains(__FILE__,'BedrockChatRuntime('),'test no usa Bedrock real');
 
 echo"Resultado: $passed passed, $failed failed\n";

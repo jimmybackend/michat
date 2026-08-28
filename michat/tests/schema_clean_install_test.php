@@ -24,6 +24,7 @@ $issue = static function (bool $condition, string $message) use (&$issues): void
 };
 
 $check(is_file($dumpPath), 'consolidated schema dump exists');
+$check(!is_file($root.'/adbbmis1_Cloud-final.sql'), 'production database snapshot is absent from release tree');
 $check(is_file($readmePath), 'README installation contract exists');
 $check(is_file($envPath), '.env.example database contract exists');
 $check(is_file($bootstrapPath), 'application bootstrap exists');
@@ -51,6 +52,17 @@ $check($dumpUseDb === '', 'dump does not select a hardcoded database');
 $check(str_contains($readme, 'DB_NAME=michat'), 'README declares a configurable example DB_NAME');
 $check($envDb !== '', '.env.example declares a non-empty DB_NAME');
 $check(str_contains($bootstrap, "'/db-s3.php'")&&str_contains($bootstrap, 'require_once $dbPath'), 'application bootstrap loads the existing database configuration');
+$check(str_contains($bootstrap,'MICHAT_ENV_FILE')&&str_contains($bootstrap,'MICHAT_VENDOR_AUTOLOAD')&&str_contains($bootstrap,'MICHAT_CONFIG_FILE')&&str_contains($bootstrap,'MICHAT_DB_BOOTSTRAP'),'bootstrap supports explicit portable deployment paths with EC2 fallbacks');
+$check(str_contains($bootstrap,'require_once $autoload')&&!str_contains($bootstrap,'ComposerAutoloaderInit'),'bootstrap loads Composer idempotently without coupling to a generated autoloader class hash');
+$portableAdapters=[
+    'ver_pdf.php','get_ai_agents.php','save_ai_agent.php','delete_ai_agent.php',
+    'ver_archivo.php','ai_agent_configurator.php','s3chatstats.php',
+];
+foreach($portableAdapters as$adapterName){
+    $adapter=(string)file_get_contents($root.'/michat/'.$adapterName);
+    $check(str_contains($adapter,'app_bootstrap.php'),'portable adapter loads app bootstrap: '.$adapterName);
+    $check(preg_match('/\brequire(?:_once)?\s+[^;]*vendor\/autoload\.php/i',$adapter)!==1,'portable adapter does not require michat/vendor before bootstrap: '.$adapterName);
+}
 $check(str_contains($dbConfig, "getenv('DB_NAME')"), 'database connection selects deployment DB_NAME from the environment');
 $check(str_contains($readme, 'DB_NAME=michat')&&str_contains($readme, '"$DB_NAME" < adbbmis1_Cloud.sql'), 'README imports the dump into the deployment-selected DB_NAME');
 $check(str_contains($readme, 'does not create or select a database'), 'README states that the dump inherits the selected deployment database');
@@ -79,6 +91,11 @@ $check(!$usersSeeded, 'dump does not invent or seed Users during preflight');
 $check(preg_match('/INSERT\s+INTO\s+`UserAIAgentConfigs`[\s\S]*?VALUES\s*\(\'global\',\s*NULL,/i', $dump)===1, 'AI catalog seeds ownerless GLOBAL rows');
 $check(preg_match('/`scope`\s+enum\(\'global\',\'user\'\)\s+NOT NULL(?!\s+DEFAULT)/i', $dump)===1, 'AI scope is the exact NOT NULL enum with no default');
 $check(preg_match('/INSERT\s+INTO\s+`(?:UserPipelineFeatures|UserPreferences)`/i', $dump)!==1, 'dump omits historical user-scoped defaults');
+$check(preg_match('/`scope_owner_key`[\s\S]{0,500}?GENERATED\s+ALWAYS[\s\S]{0,500}?VIRTUAL\s+NOT\s+NULL/i',$dump)===1,'AI scope owner uses final VIRTUAL NOT NULL contract');
+$check(!str_contains($dump,'chk_uac_scope_owner'),'clean dump does not retain the historical scope-owner CHECK');
+$check(preg_match('/`active_project_id_`[\s\S]{0,300}?GENERATED\s+ALWAYS[\s\S]{0,300}?VIRTUAL/i',$dump)===1,'Project autonomy active identity uses VIRTUAL generated column');
+$check(preg_match('/`system_role`\s+enum\(\'user\',\'admin\',\'superadmin\'\)[\s\S]{0,120}?NOT NULL DEFAULT \'user\'/i',$dump)===1,'Users has the DB-backed system role contract');
+$check(str_contains($dump,"'task_planner'")&&str_contains($dump,'model, tool, approval, wait, validation, finalize')&&!str_contains($dump,'plan, model, tool, approval, wait, validation, finalize'),'clean dump seeds canonical GLOBAL task_planner without executable plan type');
 
 echo $issues===[] ? "STATIC PREFLIGHT PASS\n" : 'STATIC PREFLIGHT ISSUES FOUND ('.count($issues).")\n";
 
