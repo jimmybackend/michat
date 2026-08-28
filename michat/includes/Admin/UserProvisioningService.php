@@ -33,6 +33,45 @@ final class UserProvisioningService
         }finally{$this->releaseLock($lock);}
     }
 
+    /**
+     * One-time upgrade bootstrap for an existing installation that predates
+     * Users.system_role. It never selects a user by numeric ID: the target must
+     * authenticate as an active account and promotion is allowed only while the
+     * database contains zero superadmins.
+     *
+     * @return array{id:int,email:string,system_role:string}
+     */
+    public function bootstrapExistingSuperadmin(string $email,string $password): array
+    {
+        $lock='michat:superadmin_bootstrap';
+        $this->acquireLock($lock);
+        try{
+            $this->db->begin_transaction();
+            try{
+                $count=(int)$this->db->query("SELECT COUNT(*) c FROM Users WHERE system_role='superadmin'")->fetch_assoc()['c'];
+                if($count!==0)throw new RuntimeException('superadmin_already_exists');
+
+                $actor=$this->authorization->authenticateActiveUser($email,$password);
+                $userId=(int)$actor['id'];
+
+                $stmt=$this->db->prepare("UPDATE Users SET system_role='superadmin' WHERE id=? AND userstatus='Activo' AND system_role IN ('user','admin')");
+                if(!$stmt)throw new RuntimeException('users_system_role_schema_required');
+                $stmt->bind_param('i',$userId);
+                if(!$stmt->execute())throw new RuntimeException('superadmin_bootstrap_failed');
+                $affected=$stmt->affected_rows;$stmt->close();
+                if($affected!==1)throw new RuntimeException('superadmin_bootstrap_failed');
+
+                $this->audit($userId,'existing_superadmin_bootstrapped',[
+                    'target_user_id'=>$userId,
+                    'target_email'=>(string)$actor['email'],
+                    'system_role'=>'superadmin',
+                ]);
+                $this->db->commit();
+                return['id'=>$userId,'email'=>(string)$actor['email'],'system_role'=>'superadmin'];
+            }catch(Throwable$e){$this->db->rollback();throw$e;}
+        }finally{$this->releaseLock($lock);}
+    }
+
     /** @param array<string,mixed> $data */
     public function createUser(int$actorUserId,array$data): array
     {
