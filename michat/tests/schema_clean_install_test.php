@@ -52,6 +52,15 @@ $check(str_contains($readme, 'DB_NAME=michat'), 'README declares a configurable 
 $check($envDb !== '', '.env.example declares a non-empty DB_NAME');
 $check(str_contains($bootstrap, "'/db-s3.php'")&&str_contains($bootstrap, 'require_once $dbPath'), 'application bootstrap loads the existing database configuration');
 $check(str_contains($bootstrap,'MICHAT_ENV_FILE')&&str_contains($bootstrap,'MICHAT_VENDOR_AUTOLOAD')&&str_contains($bootstrap,'MICHAT_CONFIG_FILE')&&str_contains($bootstrap,'MICHAT_DB_BOOTSTRAP'),'bootstrap supports explicit portable deployment paths with EC2 fallbacks');
+$portableAdapters=[
+    'ver_pdf.php','get_ai_agents.php','save_ai_agent.php','delete_ai_agent.php',
+    'ver_archivo.php','ai_agent_configurator.php','s3chatstats.php',
+];
+foreach($portableAdapters as$adapterName){
+    $adapter=(string)file_get_contents($root.'/michat/'.$adapterName);
+    $check(str_contains($adapter,'app_bootstrap.php'),'portable adapter loads app bootstrap: '.$adapterName);
+    $check(preg_match('/\brequire(?:_once)?\s+[^;]*vendor\/autoload\.php/i',$adapter)!==1,'portable adapter does not require michat/vendor before bootstrap: '.$adapterName);
+}
 $check(str_contains($dbConfig, "getenv('DB_NAME')"), 'database connection selects deployment DB_NAME from the environment');
 $check(str_contains($readme, 'DB_NAME=michat')&&str_contains($readme, '"$DB_NAME" < adbbmis1_Cloud.sql'), 'README imports the dump into the deployment-selected DB_NAME');
 $check(str_contains($readme, 'does not create or select a database'), 'README states that the dump inherits the selected deployment database');
