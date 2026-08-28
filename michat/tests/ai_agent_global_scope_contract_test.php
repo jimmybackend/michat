@@ -11,6 +11,7 @@ $dumpPath = $root . '/adbbmis1_Cloud.sql';
 $dump = (string)file_get_contents($dumpPath);
 $migrationPath = $root . '/michat/sql/fase12b_2c_global_ai_configuration_scope.sql';
 $migration = (string)file_get_contents($migrationPath);
+$generatedMigration = (string)file_get_contents($root . '/michat/sql/fase12b_5_mysql_generated_column_compatibility.sql');
 $passed = 0;
 $failed = 0;
 $gaps = [];
@@ -32,12 +33,13 @@ $pass($migration !== '' && str_contains($migration, "SIGNAL SQLSTATE '45000'"), 
 $pass(str_contains($migration, 'information_schema.STATISTICS') && str_contains($migration, 'information_schema.KEY_COLUMN_USAGE'), 'migration audits real legacy index and FK names');
 $pass(str_contains($migration, "user_id_ = IF(user_id_ = 1, NULL, user_id_)"), 'migration adopts legacy owner 1 as ownerless GLOBAL');
 $pass(str_contains($migration, 'incompatible partially migrated schema') && str_contains($migration, 'LEAVE main'), 'migration rejects partial state and no-ops on complete state');
+$pass(str_contains($generatedMigration,'VIRTUAL NOT NULL')&&str_contains($generatedMigration,'DROP CHECK chk_uac_scope_owner'),'12B.5 reconciles historical STORED/CHECK schema to production VIRTUAL contract');
 
 $targetSchema = [
     'scope enum' => preg_match('/`scope`\s+enum\(\'global\',\'user\'\)/i', $table) === 1,
     'nullable user_id_' => preg_match('/`user_id_`\s+int\s+(?:unsigned\s+)?(?:DEFAULT\s+)?NULL/i', $table) === 1,
-    'generated scope_owner_key' => preg_match('/`scope_owner_key`[\s\S]*?GENERATED\s+ALWAYS[\s\S]*?STORED/i', $table) === 1,
-    'scope/user CHECK' => str_contains($table, 'scope') && str_contains(strtoupper($table), 'CHECK'),
+    'generated scope_owner_key' => preg_match('/`scope_owner_key`[\s\S]*?GENERATED\s+ALWAYS[\s\S]*?VIRTUAL\s+NOT\s+NULL/i', $table) === 1,
+    'scope/user coherence via generated NOT NULL' => !str_contains($table, 'chk_uac_scope_owner') && str_contains($table, 'else NULL'),
     'scope owner agent UNIQUE' => preg_match('/UNIQUE\s+KEY[^\n]*`scope`[^\n]*`scope_owner_key`[^\n]*`agent_key`/i', $table) === 1,
 ];
 foreach ($targetSchema as $label => $implemented) $pass($implemented, 'schema implements ' . $label);
@@ -89,6 +91,9 @@ $repository=(string)file_get_contents($root.'/michat/includes/AI/AIAgentConfigRe
 $service=(string)file_get_contents($root.'/michat/includes/AI/AIAgentConfigService.php');
 $pass(str_contains($repository, "scope='global' AND user_id_ IS NULL") && str_contains($repository, "scope='user' AND user_id_=?"), 'repository persistence is explicitly GLOBAL/USER scope-aware');
 $pass(str_contains($service, 'ChatIdentity::canManageGlobalAiConfiguration()'), 'service owns global-write policy coordination');
+$identity=(string)file_get_contents($root.'/michat/includes/Chat/ChatIdentity.php');
+$authorization=(string)file_get_contents($root.'/michat/includes/Auth/AuthorizationService.php');
+$pass(str_contains($identity,"allows(\$userId,'ai.global.manage')")&&str_contains($authorization,"'ai.global.manage'"),'GLOBAL AI write authorization is backed by Users.system_role permissions');
 $pass(!str_contains((string)file_get_contents($root.'/michat/save_ai_agent.php'),'UserAIAgentConfigs') && !str_contains((string)file_get_contents($root.'/michat/delete_ai_agent.php'),'UserAIAgentConfigs'), 'save/delete adapters contain no AI business SQL');
 
 $resolve = static function (array $rows, int $userId): array {
@@ -123,8 +128,8 @@ $conditional = ['prompt_compiler','embedding_main','smart_memory_general','smart
 foreach ($conditional as $key) $pass(str_contains($dump, "'{$key}'"), 'conditional catalog contains ' . $key);
 $plannerFactory = (string)file_get_contents($root . '/michat/includes/Tasks/TaskPlannerFactory.php');
 $flags = (string)file_get_contents($root . '/michat/includes/Pipeline/PipelineFeatureFlags.php');
-$pass(str_contains($plannerFactory, "['task_planner']") && str_contains($flags, "'task_planner' => false"), 'task_planner is required when enabled and OFF by default');
-$pass(!str_contains($dump, "'task_planner'"), 'no speculative task_planner model seed exists');
+$pass(str_contains($plannerFactory, "['task_planner']") && str_contains($flags, "'task_planner' => false"), 'task_planner remains feature-gated in generic runtime defaults');
+$pass(str_contains($dump, "'task_planner'")&&str_contains($dump,'model, tool, approval, wait, validation, finalize')&&!str_contains($dump,'plan, model, tool, approval, wait, validation, finalize'),'clean catalog contains canonical GLOBAL task_planner with executable-only types');
 $nextWork = (string)file_get_contents($root . '/michat/includes/Tasks/NextWorkAgentConfigResolver.php');
 $pass(str_contains($nextWork, "AGENT_KEY='next_work_evaluator'") && str_contains($nextWork, "FALLBACK_KEY='chat_main'"), 'next_work_evaluator is optional with deliberate chat_main fallback');
 
