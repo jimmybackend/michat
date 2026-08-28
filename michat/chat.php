@@ -51,7 +51,7 @@ $aiRuntimeAllowedAgents = [
 
 /**
  * Endpoint AJAX de la propia página de chat para cambiar modelo/estado.
- * Para usuarios != 1 crea un override copiando la configuración global.
+ * Cada usuario persiste un override scope=user a partir de la configuración GLOBAL efectiva.
  */
 if (
     $_SERVER['REQUEST_METHOD'] === 'POST'
