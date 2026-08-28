@@ -42,7 +42,8 @@ final class TaskApplicationServiceFactory
             $planning,
             $plannerEnabled,
             null,
-            null
+            null,
+            new TaskManualChatMessageService($this->db, $tasks)
         );
     }
 
@@ -110,7 +111,8 @@ final class TaskApplicationServiceFactory
             $planning,
             $plannerEnabled,
             new TaskCenterAutonomyReadService($this->db),
-            $controls
+            $controls,
+            new TaskManualChatMessageService($this->db, $tasks)
         );
     }
 }
