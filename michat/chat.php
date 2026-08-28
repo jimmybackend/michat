@@ -306,9 +306,6 @@ function build_file_s3_key(string $ruta, string $encriptado): string {
 function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION)); }
 
 ?>
-<?php
-$mostrarTruncate = isset($_SESSION['user_id']) && (( $_SESSION['user_id'] ?? '') === 1);
-?>
 
 <!DOCTYPE html>
 <html lang="es">
