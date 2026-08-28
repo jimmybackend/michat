@@ -1,0 +1,95 @@
+name: Fase 12B validation
+
+on:
+  push:
+    branches:
+      - rescue/fase12b-ec2
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  static-and-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mysqli, mbstring, curl, openssl, fileinfo
+          tools: composer:v2
+          coverage: none
+
+      - name: Composer
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: PHP syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          find michat -type f -name '*.php' -print0 | sort -z | xargs -0 -n1 php -l
+
+      - name: Critical PHP contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests=(
+            michat/tests/task_retry_recovery_coherence_test.php
+            michat/tests/task_hitl_continuation_attempt_budget_test.php
+            michat/tests/task_worker_test.php
+            michat/tests/task_orchestrator_test.php
+            michat/tests/task_execution_runner_persisted_pause_test.php
+            michat/tests/task_operational_contract_test.php
+            michat/tests/task_center_autonomy_schema_contract_test.php
+            michat/tests/task_planner_test.php
+            michat/tests/task_step_executor_test.php
+            michat/tests/task_model_tool_wiring_test.php
+            michat/tests/model_tool_artifact_persistence_test.php
+            michat/tests/chat_response_persistence_test.php
+            michat/tests/chat_activity_telemetry_test.php
+            michat/tests/task_phase10c_manual_materialization_test.php
+            michat/tests/task_center_ui_test.php
+            michat/tests/first_user_bootstrap_test.php
+            michat/tests/global_ai_admin_policy_test.php
+            michat/tests/ai_agent_global_scope_contract_test.php
+            michat/tests/migration_runner_static_contract_test.php
+            michat/tests/supported_upgrade_static_contract_test.php
+            michat/tests/schema_clean_install_test.php
+            michat/tests/external_mysql_certification_static_contract_test.php
+          )
+          for test in "${tests[@]}"; do
+            echo
+            echo "=== $test ==="
+            php "$test"
+          done
+
+      - name: JavaScript contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for test in michat/tests/*_test.js; do
+            [ -f "$test" ] || continue
+            echo
+            echo "=== $test ==="
+            node "$test"
+          done
+
+      - name: Secret and backup guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find . -type f \( -name '*.bak' -o -name '*.bak-*' -o -name '*.backup' -o -name '*.old' \) -print | grep -q .; then
+            echo "Backup files must not be committed."
+            exit 1
+          fi
+          if git ls-files | grep -E '(^|/)\.env$'; then
+            echo "A real .env must not be committed."
+            exit 1
+          fi
