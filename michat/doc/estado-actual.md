@@ -313,7 +313,7 @@ El contrato actual de 12B comprende:
 
 La evidencia operacional real de EC2 ya demostró el camino **Worker → Bedrock → Task completada** con el Worker ejecutado bajo el usuario `apache` y `EnvironmentFile=/etc/michat.env`. La validación automática de la rama incluye lint de todo PHP, contratos PHP críticos, contratos JavaScript y guard de secretos/backups; el run del commit `e8554116a74ed4b15b7fe54f9e63effd8570a860` terminó **PASS**.
 
-La certificación destructiva MySQL aislada continúa deliberadamente **SKIP / NOT CERTIFIED** cuando faltan `TASK_TEST_DB_*`. No se debe ejecutar contra HostGator/producción ni reinterpretar un SKIP como PASS. `adbbmis1_Cloud-final.sql` es una fotografía de producción útil para reconciliación/auditoría, no el dump canónico que debe distribuirse para una instalación limpia.
+La certificación destructiva MySQL aislada continúa deliberadamente **SKIP / NOT CERTIFIED** cuando faltan `TASK_TEST_DB_*`. No se debe ejecutar contra HostGator/producción ni reinterpretar un SKIP como PASS. La fotografía temporal de producción `adbbmis1_Cloud-final.sql` fue usada para reconciliación y retirada del árbol de release; `adbbmis1_Cloud.sql` es el único dump canónico distribuible para instalación limpia.
 
 El detalle de cierre y las deudas externas está documentado en `michat/doc/fase12b-closure-audit.md`.
 
