@@ -25,6 +25,9 @@ $ok(str_contains($queue,"JSON_UNQUOTE(JSON_EXTRACT(s.input_json,'$.execution_mod
 $ok(str_contains($queue,'scheduled_at,UTC_TIMESTAMP(6)'),'Task manual futura conserva not-before 10A');
 $ok(str_contains($factory,'new TaskPlanningService')&&str_contains($api,"enabled('task_planner')")&&str_contains($api,'TaskApplicationServiceFactory'),'composición productiva incluye PlanningService y feature flag');
 $ok(str_contains($bridge,'prepareChatTurn')&&!str_contains($bridge,'createManualTask'),'ChatTaskBridge permanece aislado del flujo manual');
+$manual=file_get_contents(__DIR__.'/../includes/Tasks/TaskManualChatMessageService.php');
+$ok(str_contains($app,'manualMessages->ensureOrigin')&&str_contains($factory,'new TaskManualChatMessageService'),'Task Center manual persiste origin_message_id_ vía servicio dedicado');
+$ok(str_contains($manual,"origin_type='manual'")&&str_contains($manual,"role='user'")&&str_contains($manual,"'source'=>'task_center'"),'mensaje origen sólo aplica a Tasks manuales humanas');
 $validator=new TaskPlanValidator();$valid=$validator->validate(['steps'=>[['step_key'=>'respond','title'=>'Responder','description'=>'Resolver','step_type'=>'model','agent_key'=>'chat_main']]]);$ok($valid->count()===1,'plan válido se valida');
 try{$validator->validate(['steps'=>[['step_key'=>'bad key','title'=>'X','description'=>'','step_type'=>'model','agent_key'=>'chat_main']]]);$ok(false,'plan inválido se rechaza');}catch(TaskValidationException){$ok(true,'plan inválido se rechaza');}
 $ok(TaskPlan::fallback()->isFallback()&&TaskPlan::fallback()->steps()[0]->stepType==='model','fallback produce Step real no terminal');
