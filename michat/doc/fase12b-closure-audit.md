@@ -151,9 +151,7 @@ No se usa `FOREIGN_KEY_CHECKS=0` para reconciliar estos contratos.
 - sí contiene el catálogo AI GLOBAL funcional;
 - representa el schema final de las 14 migraciones.
 
-`adbbmis1_Cloud-final.sql` **no** es el dump canónico. Es una fotografía de una
-base de producción utilizada como evidencia de reconciliación y puede incluir
-nombre de DB, AUTO_INCREMENT y datos/configuración del deployment.
+Una fotografía de producción llamada `adbbmis1_Cloud-final.sql` se utilizó temporalmente como evidencia de reconciliación. Después de auditarla y trasladar los contratos válidos al dump canónico/migraciones, fue eliminada del árbol de release: los snapshots de producción no se distribuyen en el repositorio público.
 
 ## 5. GLOBAL/USER AI configuration y Planner
 
