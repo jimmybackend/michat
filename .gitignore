@@ -22,3 +22,10 @@ michat/upload/storage/state/*.json
 Thumbs.db
 .idea/
 .vscode/
+
+# Release hygiene
+adbbmis1_Cloud-final.sql
+*.bak
+*.bak-*
+*.backup
+*.old
