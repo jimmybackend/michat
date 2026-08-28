@@ -16,6 +16,8 @@ final class MigrationCatalog
         'fase11f2_hitl_controls.sql',
         'fase12b_2c_global_ai_configuration_scope.sql',
         'fase12b_4_ai_scope_default_reconciliation.sql',
+        'fase12b_5_mysql_generated_column_compatibility.sql',
+        'fase12b_6_system_role_authorization.sql',
     ];
 
     private string $sqlDirectory;
