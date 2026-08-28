@@ -1,6 +1,6 @@
 # Estado actual de MiChat
 
-Actualizado: 2026-08-21.
+Actualizado: 2026-08-27.
 
 Este archivo funciona como referencia de estado real del repositorio. Las decisiones de implementación deben verificarse contra código, esquema SQL, migraciones y tests; una nota histórica de una fase no debe prevalecer sobre el estado actual de `main`.
 
@@ -294,7 +294,28 @@ Partirá de Planner, Model Steps, Tool Steps, Worker, memoria/RAG, HITL, límite
 
 La auditoría inicial post-PR #69 descartó imponer un orden histórico de PSR-4, endpoints o migraciones y abrió como primer bloque real **12A — Public HTTP error safety**. **12A Trace Metrics hardening: PASS**: `trace_metrics_api.php` conserva success, auth, ownership, parámetros y errores públicos conocidos, pero ya no refleja detalles internos de `RuntimeException`; los registra server-side y devuelve un 500 genérico estable. Esto no declara una release estable. Versionado/upgrade de schema, E2E MySQL/AWS/browser y operación/packaging de release permanecen pendientes de bloques auditados posteriores.
 
-**12B.0 schema/upgrade audit: COMPLETE. 12B.1 clean-install contract: PARTIAL / SEED CONTRACT BLOCKED.** El dump consolidado ya no crea ni selecciona una base hardcodeada: el deployment elige `DB_NAME`, crea esa base, importa allí el schema y la aplicación reutiliza el mismo valor mediante `app_bootstrap.php`/`db-s3.php`. El preflight estático de target, tablas y FKs pasa, pero los seeds históricos permanecen sin cambios: el runtime global de `UserAIAgentConfigs` depende explícitamente de filas `user_id_=1` y este repo no contiene provisioning de `Users`, mientras Pipeline flags y Preferences sí tienen defaults/lazy writes. Sin `TASK_TEST_DB_*`, el import MySQL real continúa **SKIP / NOT CERTIFIED**; no se declara clean-install E2E PASS ni se inicia todavía un migration runner.
+**12B — implementación/hardening reconstruidos y listos como merge candidate.** La rama de rescate real `rescue/fase12b-ec2` parte del mismo `main` desplegado y conserva los hotfixes validados en EC2. El cierre no depende ya de un workspace efímero: código, migraciones, tests y documentación están versionados en GitHub.
+
+El contrato actual de 12B comprende:
+
+- cadena cerrada y ordenada de **14 migraciones**, con `MigrationRunner`, historia/checksums, detección fail-closed de DRIFT/UNKNOWN/PARTIAL y perfiles controlados para clean baseline y upgrade soportado;
+- `adbbmis1_Cloud.sql` como dump canónico de instalación limpia: no crea/selecciona una DB hardcodeada, no inventa usuarios, omite defaults históricos por usuario y contiene el catálogo GLOBAL funcional;
+- reconciliación MySQL de generated columns al contrato final **VIRTUAL**, incluyendo `ProjectAutonomyCycles.active_project_id_` y `UserAIAgentConfigs.scope_owner_key`;
+- configuración AI `GLOBAL/USER` sin propietario mágico `user_id_=1`; los overrides USER prevalecen por `agent_key` y GLOBAL aporta fallback;
+- `Users.system_role ENUM('user','admin','superadmin') DEFAULT 'user'` y `AuthorizationService` DB-backed para operaciones privilegiadas, sin privilegios implícitos por ID de usuario;
+- provisioning CLI con `create_first_user.php` y `create_user.php`, perfil inicial canónico y contraseñas suministradas por variables de entorno, no por argv;
+- `reset_runtime_data.php` únicamente CLI, dry-run por defecto, destructivo solo en development/test con confirmación explícita, permiso `system.reset`, auditoría y sin `TRUNCATE` ni `FOREIGN_KEY_CHECKS=0`; el endpoint legacy `truncate.php` fue eliminado;
+- bootstrap portable mediante `MICHAT_ENV_FILE`, `MICHAT_VENDOR_AUTOLOAD`, `MICHAT_CONFIG_FILE` y `MICHAT_DB_BOOTSTRAP`, manteniendo como fallback el layout EC2 validado;
+- hardening del Worker/Task runtime: heartbeat multi-table robusto, locks MySQL dentro del límite de 64 caracteres, Planner sin nuevo Step ejecutable `plan`, corrección de autonomía/Task Center y eliminación de recursión entre factories;
+- retry coherente después de Execution `abandoned`: el budget global de Task sigue siendo autoritativo, el Step fallido autoriza únicamente el siguiente ordinal y el historial de Executions no se revive ni se borra;
+- resultado durable de Tasks manuales: origen humano persistido en Chat cuando hace falta, respuesta completa en `ChatMessages.content`, referencia mediante `Tasks.result_message_id_`, summary acotado por separado y `TaskExecutions.model_id` actualizado con el modelo efectivo;
+- Task Center presenta **Resultado final** separado de **Artifacts**, con preview/modelo y navegación a la conversación completa.
+
+La evidencia operacional real de EC2 ya demostró el camino **Worker → Bedrock → Task completada** con el Worker ejecutado bajo el usuario `apache` y `EnvironmentFile=/etc/michat.env`. La validación automática de la rama incluye lint de todo PHP, contratos PHP críticos, contratos JavaScript y guard de secretos/backups; el run del commit `e8554116a74ed4b15b7fe54f9e63effd8570a860` terminó **PASS**.
+
+La certificación destructiva MySQL aislada continúa deliberadamente **SKIP / NOT CERTIFIED** cuando faltan `TASK_TEST_DB_*`. No se debe ejecutar contra HostGator/producción ni reinterpretar un SKIP como PASS. `adbbmis1_Cloud-final.sql` es una fotografía de producción útil para reconciliación/auditoría, no el dump canónico que debe distribuirse para una instalación limpia.
+
+El detalle de cierre y las deudas externas está documentado en `michat/doc/fase12b-closure-audit.md`.
 
 ## Regla de cierre para nuevas fases
 
