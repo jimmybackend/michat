@@ -597,6 +597,8 @@ sin modificar el código fuente.
 - [x] **Phase 11 — Closed / merged in PR #69:** operational autonomy reuses the existing Planner, Model/Tool Steps, Worker, shared inference runtime, Memory/RAG and HITL boundaries. It includes Project policies and budgets, bounded cycles and continuations, NextWork/Proposals, ASK_USER, versioned replanning, Task Center observability and HITL controls, and final hardening.
 - [ ] **Phase 12 — Current:** **12A PASS** hardens public HTTP error safety. **12B closure/hardening is implemented as a merge candidate:** the schema chain is versioned through 14 migrations, generated-column compatibility is reconciled for MySQL 8, GLOBAL/USER AI configuration is clean-installable, privileged operations use DB-backed `system_role`, first/ordinary users are provisioned through CLI, destructive runtime reset is CLI-only and fail-closed, Task retry/heartbeat/model provenance are hardened, and manual Task results are durably linked to Chat history. Production EC2 proved the Worker → Bedrock → completed Task path; isolated destructive MySQL certification still requires `TASK_TEST_DB_*` and must remain reported as SKIP/NOT RUNNABLE when those credentials are absent. Phase 12 remains open for final external certification/release operations.
 
+  Closure evidence and the exact implemented/pending boundary are documented in `michat/doc/fase12b-closure-audit.md`.
+
 ---
 
 ## Task Orchestrator
@@ -700,6 +702,8 @@ php michat/bin/migrations.php baseline --profile=current-dump
 ```
 
 `DB_NAME` is selected by each deployment. The schema dump does not create or select a database; it imports into the database already selected by the MySQL client. Configure the application with that same `DB_NAME` before opening the web UI or starting the Worker. A zero import exit code is required. The static clean-install contract is covered in-repo, while a real clean import remains `SKIP`/not certified until isolated `TASK_TEST_DB_*` credentials are provided.
+
+`adbbmis1_Cloud.sql` is the canonical clean-install dump. `adbbmis1_Cloud-final.sql` is a production snapshot retained as reconciliation/audit evidence and may contain deployment-specific database metadata or runtime rows; do not use it as the portable installation source.
 
 MiChat carga el archivo `.env` de la raíz cuando existe. Las variables ya
 inyectadas por el proceso, PHP-FPM, Apache, EC2 o systemd tienen prioridad y no
