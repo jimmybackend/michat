@@ -253,21 +253,27 @@ La rama contiene el workflow:
 
 Cubre:
 
+- `git diff --check origin/main...HEAD`;
 - sintaxis de todo PHP;
 - contratos PHP críticos;
+- **regresión completa de todos los `michat/tests/*_test.php`**;
 - contratos JavaScript;
-- guard contra `.env`, backups y material sensible versionado.
+- guard contra `.env`, backups, snapshots de producción y material sensible versionado.
 
-Durante esta closure audit, el run de GitHub Actions correspondiente a:
+Durante esta closure audit se corrigieron assertions estáticas que habían quedado
+desfasadas respecto al contrato final de Tasks manuales y al harness de upgrade;
+no se relajó el comportamiento productivo para hacer pasar la suite.
+
+El HEAD funcional previo al cierre exclusivamente documental:
 
 ```text
-e8554116a74ed4b15b7fe54f9e63effd8570a860
+f6a1513c4d45cb8bfe409cfb24c73ee329e927b6
 ```
 
-terminó **SUCCESS** después de corregir dos assertions estáticas frágiles del
-harness de upgrade. No se modificó el comportamiento del migration runner para
-hacer pasar esa validación; se corrigió la forma en que el test reconocía dos
-casos que ya estaban cubiertos semánticamente por el harness MySQL.
+completó el workflow **Fase 12B validation** con **SUCCESS** en el run
+`33130754823`: diff hygiene, Composer, lint de todo PHP, contratos críticos,
+regresión PHP completa, JavaScript y guardas de release. Los harnesses que exigen
+`TASK_TEST_DB_*` reportaron SKIP de forma explícita, no PASS.
 
 ## 10. Evidencia operacional EC2
 
@@ -335,5 +341,5 @@ La rama puede proponerse contra `main` cuando:
 - la certificación MySQL externa pendiente continúe expresada como pendiente y
   no como PASS.
 
-El merge no debe borrar la evidencia de rescate ni sustituir
-`adbbmis1_Cloud.sql` por la fotografía de producción.
+El merge no debe borrar la evidencia de rescate, sustituir `adbbmis1_Cloud.sql`
+por otra fuente ni reincorporar snapshots de producción al árbol público.
