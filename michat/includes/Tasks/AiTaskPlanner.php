@@ -4,7 +4,7 @@ declare(strict_types=1);
 /** Adapter for the existing agent runtime; it never executes a business step. */
 final class AiTaskPlanner implements UsageAwareTaskPlanner
 {
-    public const INSTRUCTION = 'Convierte el objetivo en el menor numero de pasos necesarios (maximo 8). Devuelve solo JSON con steps y los campos step_key, title, description, step_type y agent_key. Tipos: model, tool, approval, wait, finalize. Para respuestas normales o codigo entregado como texto usa exactamente un step model. No agregues validation ni finalize como confirmaciones genericas: validation queda reservado para validaciones tecnicas con input ejecutable, y este contrato de planning no transporta ese input. No ejecutes, no generes SQL, credenciales, tareas hijas, cambios de ownership, afirmaciones de ejecucion ni razonamiento privado.';
+    public const INSTRUCTION = 'Convierte el objetivo en el menor numero de pasos necesarios (maximo 8). Devuelve solo JSON con steps y los campos step_key, title, description, step_type y agent_key. Tipos: model, tool, approval, wait, validation, finalize. Para respuestas normales o codigo entregado como texto usa exactamente un step model. No agregues validation ni finalize como confirmaciones genericas: validation queda reservado para validaciones tecnicas con input ejecutable, y este contrato de planning no transporta ese input. No ejecutes, no generes SQL, credenciales, tareas hijas, cambios de ownership, afirmaciones de ejecucion ni razonamiento privado.';
 
     /**
      * @param callable(array,string,string=):string|SingleTurnInferenceResult $invokeModel
