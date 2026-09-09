@@ -8,12 +8,13 @@ $first=(string)file_get_contents($root.'/michat/bin/create_first_user.php');
 $bootstrapExisting=(string)file_get_contents($root.'/michat/bin/bootstrap_superadmin.php');
 $user=(string)file_get_contents($root.'/michat/bin/create_user.php');
 $reset=(string)file_get_contents($root.'/michat/bin/reset_runtime_data.php');
+$truncate=(string)file_get_contents($root.'/michat/truncate.php');
 $chat=(string)file_get_contents($root.'/michat/chat.php');
 $advanced=(string)file_get_contents($root.'/michat/includes/preferences/advanced.php');
 $administration=(string)file_get_contents($root.'/michat/includes/preferences/administration.php');
 $passed=0;$failed=0;$check=static function(bool$ok,string$label)use(&$passed,&$failed){echo($ok?'PASS ':'FAIL ').$label."\n";$ok?$passed++:$failed++;};
 
-$check(str_contains($first,"PHP_SAPI!=='cli'")&&str_contains($bootstrapExisting,"PHP_SAPI!=='cli'")&&str_contains($user,"PHP_SAPI!=='cli'")&&str_contains($reset,"PHP_SAPI!=='cli'"),'provisioning and reset adapters are CLI-only');
+$check(str_contains($first,"PHP_SAPI!=='cli'")&&str_contains($bootstrapExisting,"PHP_SAPI!=='cli'")&&str_contains($user,"PHP_SAPI!=='cli'")&&str_contains($reset,"PHP_SAPI!=='cli'"),'provisioning and CLI reset adapters remain CLI-only');
 $check(str_contains($provision,"SELECT COUNT(*) c FROM Users")&&str_contains($provision,"'superadmin'")&&str_contains($provision,'michat:first_user_bootstrap'),'first-user bootstrap is locked and only applies to an empty Users table');
 $check(str_contains($provision,'begin_transaction')&&str_contains($provision,'rollback')&&str_contains($provision,'initialProfile->apply'),'user creation and canonical profile share a transaction');
 $check(str_contains($first,"getenv('MICHAT_NEW_USER_PASSWORD')")&&!preg_match('/--password/', $first),'first-user password is not accepted on the command line');
@@ -33,11 +34,15 @@ foreach($features as$key=>$enabled)$check(str_contains($profile,"'{$key}'=>{$ena
 foreach(["'amazon.nova-micro-v1:0'","42","0.00","200","300","0.100","'session'","20","5","'theme-light'"]as$value)$check(str_contains($profile,$value),'initial preferences include '.$value);
 $check(!str_contains($profile,'INSERT INTO UserAIAgentConfigs'),'new users inherit GLOBAL AI configuration instead of cloning it');
 
-$check(str_contains($reset,"'SchemaMigrations'")&&str_contains($reset,"'AccessControl'")&&str_contains($reset,"'FileS3'")&&str_contains($reset,"'S3Folders'"),'runtime reset preserves durable identity/config/storage tables');
-$check(!preg_match('/\bTRUNCATE\b/i',$reset)&&!str_contains($reset,'FOREIGN_KEY_CHECKS'),'runtime reset never disables FKs or truncates tables');
-$check(str_contains($reset,'hard_reset_requires_development_or_test_environment')&&str_contains($reset,"'system.reset'")&&str_contains($reset,'runtime_data_reset'),'destructive reset is dev/test-only, authorized and audited');
-$check(!is_file($root.'/michat/truncate.php'),'legacy destructive HTTP endpoint is removed');
-$check(!str_contains($chat,'mostrarTruncate')&&!str_contains($advanced,'adminTruncateTables')&&!str_contains($administration,'adminTruncateTables'),'web UI exposes no runtime reset control');
-$check(!preg_match('/(?:user_id|userId)[^\n]{0,50}(?:===|==)\s*1/',$auth.$provision.$first.$bootstrapExisting.$user.$reset.$chat),'administration contains no magic user-id privilege');
+$check(str_contains($reset,"'SchemaMigrations'")&&str_contains($reset,"'AccessControl'")&&str_contains($reset,"'FileS3'")&&str_contains($reset,"'S3Folders'"),'CLI runtime reset preserves durable identity/config/storage tables');
+$check(!preg_match('/\bTRUNCATE\b/i',$reset)&&!str_contains($reset,'FOREIGN_KEY_CHECKS'),'CLI runtime reset never disables FKs or truncates tables');
+$check(str_contains($reset,'hard_reset_requires_development_or_test_environment')&&str_contains($reset,"'system.reset'")&&str_contains($reset,'runtime_data_reset'),'CLI destructive reset remains dev/test-only, authorized and audited');
+
+$check(is_file($root.'/michat/truncate.php'),'superadmin web runtime cleanup endpoint exists');
+$check(str_contains($truncate,"assertAllowed(\$userId, 'system.reset')")&&str_contains($truncate,'ChatIdentity::resolveUserId'),'web cleanup authorizes the authenticated user by system.reset permission');
+$check(str_contains($truncate,"'TokenUsage'")&&str_contains($truncate,"'UserAIAgentConfigs'")&&str_contains($truncate,"'UserPreferences'")&&str_contains($truncate,"'UserPipelineFeatures'")&&str_contains($truncate,"'Projects'"),'web cleanup preserves token usage and durable configuration');
+$check(str_contains($truncate,"'dry_run'")&&str_contains($truncate,"'RESET_RUNTIME_DATA'")&&str_contains($truncate,"'csrf_token'")&&str_contains($truncate,'runtime_data_web_reset'),'web cleanup requires preview, explicit confirmation, CSRF and audit');
+$check(str_contains($administration,'$canRuntimeReset')&&str_contains($administration,"allows(\$runtimeResetUserId, 'system.reset')")&&str_contains($administration,'adminTruncateTables'),'administration UI exposes runtime cleanup only when system.reset is allowed');
+$check(!preg_match('/(?:user_id|userId)[^\n]{0,50}(?:===|==)\s*1/',$auth.$provision.$first.$bootstrapExisting.$user.$reset.$truncate.$chat),'administration contains no magic user-id privilege');
 
 echo"Result: {$passed} passed, {$failed} failed\n";exit($failed?1:0);
