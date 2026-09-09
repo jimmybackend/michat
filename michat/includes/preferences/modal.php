@@ -48,6 +48,7 @@
                     </div>
                     <div class="tab-pane fade" id="settings-models" role="tabpanel" aria-labelledby="settings-models-tab">
                         <?php require __DIR__ . '/models.php'; ?>
+                        <?php require __DIR__ . '/attachment_vision.php'; ?>
                     </div>
                     <div class="tab-pane fade" id="settings-pipeline" role="tabpanel" aria-labelledby="settings-pipeline-tab">
                         <?php require __DIR__ . '/pipeline.php'; ?>
