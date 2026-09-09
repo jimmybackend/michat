@@ -29,7 +29,7 @@ $check(str_contains($vision, 'attachment_vision_preferences.php'), 'UI persiste 
 $check(str_contains($vision, 'Nova Micro') && str_contains($vision, 'solo texto'), 'UI explica que Nova Micro no sirve para visión');
 $check(str_contains($endpoint, "ATTACHMENT_VISION_DEFAULT_MODEL = 'amazon.nova-lite-v1:0'"), 'Endpoint usa Nova Lite como predeterminado');
 $check(str_contains($endpoint, 'ensureAttachmentVisionGlobal'), 'Primera escritura provisiona configuración global fija');
-$check(str_contains($endpoint, "upsertUserOverride($userId, 'attachment_vision'"), 'Guardado persiste override del usuario');
+$check(str_contains($endpoint, 'upsertUserOverride($userId, \'attachment_vision\''), 'Guardado persiste override del usuario');
 $check(str_contains($endpoint, "hash_equals((string)\$_SESSION['csrf_token'], \$csrf)"), 'Guardado conserva protección CSRF');
 $check(str_contains($endpoint, 'ATTACHMENT_VISION_ALLOWED_MODELS'), 'Backend limita modelos visuales permitidos');
 
