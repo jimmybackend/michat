@@ -30,6 +30,21 @@ final class PipelineFeatureFlags
         'task_planner' => false,
     ];
 
+    /**
+     * Las Tasks son una superficie distinta del chat conversacional.
+     * bedrock_chat2.php consume all() para construir su pipeline; por eso
+     * las flags task_* se excluyen de esa vista sin alterar enabled(), que
+     * sigue exponiendo la configuración real a task_api.php / Task Center.
+     *
+     * @var list<string>
+     */
+    private const TASK_SURFACE_KEYS = [
+        'task_orchestrator',
+        'task_auto_execute',
+        'task_async_execute',
+        'task_planner',
+    ];
+
     private mysqli $db;
     private int $userId;
 
@@ -71,10 +86,25 @@ final class PipelineFeatureFlags
             : false;
     }
 
-    /** @return array<string,bool> */
-    public function all(): array
+    /**
+     * Snapshot para el pipeline conversacional.
+     *
+     * Por defecto NO activa la superficie de Tasks. Esto evita que una
+     * pregunta normal enviada a bedrock_chat2.php se materialice como Task.
+     * Quien necesite inspeccionar todas las flags persistidas puede pasar
+     * true; task_api.php usa enabled() y conserva las Tasks activas.
+     *
+     * @return array<string,bool>
+     */
+    public function all(bool $includeTaskSurface = false): array
     {
-        return $this->flags;
+        $flags = $this->flags;
+        if ($includeTaskSurface) return $flags;
+
+        foreach (self::TASK_SURFACE_KEYS as $key) {
+            $flags[$key] = false;
+        }
+        return $flags;
     }
 
     /** @return array<string,mixed> */
@@ -85,6 +115,7 @@ final class PipelineFeatureFlags
             'storage_available' => $this->storageAvailable,
             'storage_error' => $this->storageError,
             'configured' => $this->flags,
+            'chat_effective' => $this->all(false),
         ];
     }
 
@@ -122,7 +153,7 @@ final class PipelineFeatureFlags
             $stmt->close();
         } catch (Throwable $e) {
             // Compatibilidad de instalación: si todavía no existe la tabla,
-            // todo queda ON y el chat conserva su comportamiento anterior.
+            // se conservan los defaults y el chat permanece operativo.
             $this->storageAvailable = false;
             $this->storageError = $e->getMessage();
         }
