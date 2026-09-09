@@ -2,7 +2,7 @@
     <div class="settings-pane-icon"><i class="fas fa-tools"></i></div>
     <div>
         <h6 class="mb-1">Mantenimiento</h6>
-        <p class="mb-0 small text-muted">Procesos manuales para mantener embeddings y contexto consolidado al día.</p>
+        <p class="mb-0 small text-muted">Repara embeddings pendientes y mantiene el contexto consolidado de las conversaciones al día.</p>
     </div>
 </div>
 
@@ -10,7 +10,14 @@
     <div class="settings-card-heading">
         <div><span class="settings-card-kicker">Operación</span><h6>Mantenimiento de IA</h6></div>
     </div>
-    <p class="small text-muted mb-3">Ejecuta manualmente los procesos. Orden recomendado: <strong>1. Embeddings → 2. Compresión</strong>.</p>
+    <p class="small text-muted mb-2">
+        Los adjuntos nuevos intentan quedar indexados, resumidos y vectorizados automáticamente.
+        <strong>Procesar Embeddings</strong> reintenta cualquier vector pendiente de adjuntos, memoria o archivos de proyecto.
+    </p>
+    <p class="small text-muted mb-3">
+        <strong>Comprimir Sesiones</strong> es independiente: consolida la memoria jerárquica del chat.
+        Orden recomendado para mantenimiento general: <strong>1. Embeddings → 2. Compresión</strong>.
+    </p>
     <div class="settings-action-row">
         <button id="btnRunEmbeddings" class="btn btn-sm btn-outline-primary" type="button">
             <i class="fas fa-vector-square mr-1"></i> 1. Procesar Embeddings
