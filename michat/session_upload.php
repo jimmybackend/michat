@@ -20,6 +20,7 @@ try {
     require_once __DIR__ . '/S3Manager.php';
     require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
     require_once __DIR__ . '/includes/SessionAttachmentKnowledgeService.php';
+    require_once __DIR__ . '/includes/SessionImageKnowledgeService.php';
 } catch (Throwable $e) {
     sessionUploadExit(['ok'=>false,'error'=>'bootstrap: '.$e->getMessage()], 500);
 }
@@ -57,6 +58,7 @@ $rutaDestino = "Data/Chat/Uploads/{$userId}/{$year}/{$month}/{$day}/{$sessionId}
 
 $manager = new S3Manager();
 $knowledgeService = new SessionAttachmentKnowledgeService($db_connection);
+$imageKnowledgeService = new SessionImageKnowledgeService($db_connection);
 $uploaded = [];
 $errors = [];
 
@@ -111,7 +113,9 @@ for ($i = 0; $i < $count; $i++) {
         $fileId = (int)$result['id'];
 
         try {
-            $knowledge = $knowledgeService->process($userId, $sessionId, $fileId);
+            $knowledge = SessionImageKnowledgeService::supportsFilename($originalName)
+                ? $imageKnowledgeService->process($userId, $sessionId, $fileId)
+                : $knowledgeService->process($userId, $sessionId, $fileId);
         } catch (Throwable $knowledgeError) {
             $knowledge = [
                 'ok' => false,
