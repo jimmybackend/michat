@@ -3,7 +3,9 @@ declare(strict_types=1);
 if(PHP_SAPI!=='cli')exit(1);
 
 $root=dirname(__DIR__);
-$flags=(string)file_get_contents($root.'/includes/Pipeline/PipelineFeatureFlags.php');
+require_once $root.'/includes/Pipeline/PipelineFeatureFlags.php';
+
+$flagsSource=(string)file_get_contents($root.'/includes/Pipeline/PipelineFeatureFlags.php');
 $chat=(string)file_get_contents($root.'/bedrock_chat2.php');
 $taskApi=(string)file_get_contents($root.'/task_api.php');
 
@@ -13,17 +15,41 @@ $check=static function(bool$ok,string$label)use(&$passed,&$failed):void{
     $ok?$passed++:$failed++;
 };
 
-$check(str_contains($chat,'$pipelineConfigured = $pipelineFlags->all();'),'chat obtains its feature snapshot through all()');
-$check(str_contains($flags,'TASK_SURFACE_KEYS')&&str_contains($flags,"'task_orchestrator'")&&str_contains($flags,"'task_auto_execute'")&&str_contains($flags,"'task_async_execute'")&&str_contains($flags,"'task_planner'"),'chat snapshot explicitly identifies all task-surface flags');
-$check(str_contains($flags,'public function all(bool $includeTaskSurface = false)')&&str_contains($flags,'$flags[$key] = false'),'normal chat snapshot masks task orchestration by default');
-$check(str_contains($flags,'if ($includeTaskSurface) return $flags;'),'full configured task snapshot remains available explicitly');
-$check(str_contains($taskApi,"\$flags->enabled('task_orchestrator')")&&str_contains($taskApi,"\$flags->enabled('task_planner')"),'Task API continues using persisted task flags directly');
-$check(str_contains($flags,'public function enabled(string $featureKey): bool'),'enabled() remains the independent Task Center configuration path');
+$reflection=new ReflectionClass(PipelineFeatureFlags::class);
+/** @var PipelineFeatureFlags $flags */
+$flags=$reflection->newInstanceWithoutConstructor();
+$flagsProperty=$reflection->getProperty('flags');
+$flagsProperty->setValue($flags,[
+    'prompt_compiler'=>true,
+    'memory_router'=>true,
+    'procedural_memory_read'=>true,
+    'project_memory_read'=>true,
+    'session_memory_read'=>true,
+    'question_memory_read'=>true,
+    'project_rag'=>true,
+    'attachment_rag'=>true,
+    'context_ranking'=>true,
+    'memory_backfill'=>true,
+    'project_tools'=>true,
+    'memory_writer'=>true,
+    'task_orchestrator'=>true,
+    'task_auto_execute'=>true,
+    'task_async_execute'=>true,
+    'task_planner'=>true,
+]);
 
-// Regression contract: bedrock_chat2.php still contains the historical bridge,
-// but it cannot be entered by an ordinary chat turn because its all() snapshot
-// forces task_orchestrator=false. Task Center remains active through enabled().
-$check(str_contains($chat,"pipelineEffective['task_orchestrator']")&&str_contains($chat,'ChatTaskBridge'),'legacy bridge remains available for historical compatibility without being the normal chat path');
+$chatSnapshot=$flags->all();
+$fullSnapshot=$flags->all(true);
+
+$check($chatSnapshot['memory_router']===true&&$chatSnapshot['project_tools']===true,'normal chat keeps its non-Task pipeline features');
+$check($chatSnapshot['task_orchestrator']===false&&$chatSnapshot['task_auto_execute']===false&&$chatSnapshot['task_async_execute']===false&&$chatSnapshot['task_planner']===false,'normal chat masks every Task-surface flag');
+$check($fullSnapshot['task_orchestrator']===true&&$fullSnapshot['task_auto_execute']===true&&$fullSnapshot['task_async_execute']===true&&$fullSnapshot['task_planner']===true,'full persisted Task configuration remains available');
+$check($flags->enabled('task_orchestrator')===true&&$flags->enabled('task_planner')===true,'enabled() still exposes persisted Task flags to Task Center');
+
+$check(str_contains($chat,'$pipelineConfigured = $pipelineFlags->all();'),'bedrock chat obtains the chat-only snapshot');
+$check(str_contains($flagsSource,'TASK_SURFACE_KEYS')&&str_contains($flagsSource,'public function all(bool $includeTaskSurface = false)'),'PipelineFeatureFlags declares the chat/Task surface boundary');
+$check(str_contains($taskApi,"\$flags->enabled('task_orchestrator')")&&str_contains($taskApi,"\$flags->enabled('task_planner')"),'Task API continues reading persisted Task flags directly');
+$check(str_contains($chat,"pipelineEffective['task_orchestrator']")&&str_contains($chat,'ChatTaskBridge'),'legacy bridge remains present but unreachable from an ordinary chat snapshot');
 
 echo"Result: {$passed} passed, {$failed} failed\n";
 exit($failed?1:0);
