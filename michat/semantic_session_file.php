@@ -11,6 +11,7 @@ if (session_status() === PHP_SESSION_NONE) session_start();
 require_once __DIR__ . '/app_bootstrap.php';
 require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
 require_once __DIR__ . '/includes/SessionAttachmentKnowledgeService.php';
+require_once __DIR__ . '/includes/SessionImageKnowledgeService.php';
 
 function semanticSessionFileExit(array $payload, int $status = 200): never
 {
@@ -36,11 +37,19 @@ if ($fileId <= 0 || $sessionId <= 0) {
 }
 
 try {
-    $result = (new SessionAttachmentKnowledgeService($db_connection))->semantic($userId, $sessionId, $fileId);
+    $imageService = new SessionImageKnowledgeService($db_connection);
+    $isImage = $imageService->supports($userId, $sessionId, $fileId);
+    $result = $isImage
+        ? $imageService->process($userId, $sessionId, $fileId)
+        : (new SessionAttachmentKnowledgeService($db_connection))->semantic($userId, $sessionId, $fileId);
     semanticSessionFileExit($result + [
-        'mensaje' => !empty($result['embedding_ready'])
-            ? 'Semántica creada y embedding listo para RAG.'
-            : 'Semántica creada. El embedding pendiente puede reintentarse desde Mantenimiento.',
+        'mensaje' => $isImage
+            ? (!empty($result['embedding_ready'])
+                ? 'Semántica visual creada y embedding listo para RAG.'
+                : 'Semántica visual creada. El embedding pendiente puede reintentarse desde Mantenimiento.')
+            : (!empty($result['embedding_ready'])
+                ? 'Semántica creada y embedding listo para RAG.'
+                : 'Semántica creada. El embedding pendiente puede reintentarse desde Mantenimiento.'),
     ]);
 } catch (InvalidArgumentException $e) {
     semanticSessionFileExit(['ok'=>false,'error'=>$e->getMessage()], 400);
