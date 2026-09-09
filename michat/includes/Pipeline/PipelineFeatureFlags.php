@@ -36,6 +36,11 @@ final class PipelineFeatureFlags
      * las flags task_* se excluyen de esa vista sin alterar enabled(), que
      * sigue exponiendo la configuración real a task_api.php / Task Center.
      *
+     * La única excepción en el chat es la acción reservada
+     * execute_approved_task, usada para reanudar una Task de chat que ya
+     * existía y fue aprobada. bedrock_chat2.php valida después public_id,
+     * ownership, sesión y estado antes de ejecutar esa reanudación.
+     *
      * @var list<string>
      */
     private const TASK_SURFACE_KEYS = [
@@ -94,12 +99,18 @@ final class PipelineFeatureFlags
      * Quien necesite inspeccionar todas las flags persistidas puede pasar
      * true; task_api.php usa enabled() y conserva las Tasks activas.
      *
+     * La acción HTTP reservada execute_approved_task conserva la superficie
+     * Task únicamente para reanudar una Task ya persistida y aprobada.
+     *
      * @return array<string,bool>
      */
     public function all(bool $includeTaskSurface = false): array
     {
         $flags = $this->flags;
         if ($includeTaskSurface) return $flags;
+
+        $action = isset($_POST['action']) ? trim((string)$_POST['action']) : '';
+        if ($action === 'execute_approved_task') return $flags;
 
         foreach (self::TASK_SURFACE_KEYS as $key) {
             $flags[$key] = false;
