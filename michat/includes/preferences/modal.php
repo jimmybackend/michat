@@ -49,6 +49,7 @@
                     <div class="tab-pane fade" id="settings-models" role="tabpanel" aria-labelledby="settings-models-tab">
                         <?php require __DIR__ . '/models.php'; ?>
                         <?php require __DIR__ . '/image_generation.php'; ?>
+                        <?php require __DIR__ . '/video_generation.php'; ?>
                         <?php require __DIR__ . '/attachment_vision.php'; ?>
                         <?php require __DIR__ . '/voice.php'; ?>
                     </div>
