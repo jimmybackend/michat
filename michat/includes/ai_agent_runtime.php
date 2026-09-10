@@ -210,6 +210,7 @@ if (!function_exists('aiRuntimeSnapshot')) {
             'embedding_main',
             'smart_memory_general',
             'smart_memory_code',
+            'image_main',
             'attachment_vision',
             'voice_main',
         ];
