@@ -211,6 +211,7 @@ if (!function_exists('aiRuntimeSnapshot')) {
             'smart_memory_general',
             'smart_memory_code',
             'image_main',
+            'video_main',
             'attachment_vision',
             'voice_main',
         ];

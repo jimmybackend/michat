@@ -1,344 +1,245 @@
 <?php
-// chat_gen_video_status.php — Consulta estado con GetAsyncInvoke y cierra el mensaje cuando aparece output.mp4 en S3
-// GET: message_id (int), wait_secs (int, opcional)
-// RESP: { ok, status, message_id, s3_key?, mime_type?, size_bytes?, duration_ms?, notes? }
+declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
 if (session_status() === PHP_SESSION_NONE) session_start();
 
-@ini_set('max_execution_time','300');
-@set_time_limit(300);
+require_once __DIR__ . '/app_bootstrap.php';
+require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
+require_once __DIR__ . '/includes/Chat/AuthenticatedMediaScope.php';
+require_once __DIR__ . '/includes/Videos/VideoGenerationPolicy.php';
+require_once __DIR__ . '/S3Manager.php';
 
-// Opcional: usa TZ del servidor; si quieres forzarla, descomenta:
-// date_default_timezone_set('America/Mexico_City');
-
-function jexit($arr,$code=200){ http_response_code($code); echo json_encode($arr, JSON_UNESCAPED_UNICODE); exit; }
-
-$notes = [];
-
-/* ============================
-   Resolver rutas (bootstrap/S3Manager)
-   ============================ */
-function resolve_root_candidates(): array {
-  $docRoot = isset($_SERVER['DOCUMENT_ROOT']) ? (string)$_SERVER['DOCUMENT_ROOT'] : '';
-  $rootFromDoc = $docRoot !== '' ? realpath($docRoot . '/..') : false;
-
-  $candidates = [];
-  foreach ([
-    $rootFromDoc,
-    realpath(__DIR__ . '/../../'),
-    realpath(__DIR__ . '/../..'),
-    realpath(__DIR__ . '/../../../'),
-    realpath(__DIR__ . '/../'),
-    realpath(__DIR__),
-  ] as $p) {
-    if ($p && is_dir($p)) $candidates[$p] = true;
-  }
-  return array_keys($candidates);
+function videoStatusExit(array $payload, int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
 }
-function find_file_in_candidates(string $filename, array $bases, array $subfolders): ?string {
-  $filename = ltrim($filename, '/');
-  foreach ($bases as $base) {
-    foreach ($subfolders as $sub) {
-      $sub = ($sub === '' ? '' : '/' . trim($sub,'/'));
-      $try = rtrim($base,'/') . $sub . '/' . $filename;
-      if (is_file($try)) return $try;
+
+function videoStatusUpdateMeta(mysqli $db, int $messageId, array $meta, ?string $content = null): void
+{
+    $json = json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    if ($content === null) {
+        $stmt = $db->prepare('UPDATE ' . 'ChatMessages SET meta=? WHERE id_=?');
+        if (!$stmt) throw new RuntimeException('No se pudo preparar actualización de video.');
+        $stmt->bind_param('si', $json, $messageId);
+    } else {
+        $stmt = $db->prepare('UPDATE ' . 'ChatMessages SET content=?, meta=? WHERE id_=?');
+        if (!$stmt) throw new RuntimeException('No se pudo preparar actualización de video.');
+        $stmt->bind_param('ssi', $content, $json, $messageId);
     }
-  }
-  return null;
+    if (!$stmt->execute()) {
+        $error = $stmt->error;
+        $stmt->close();
+        throw new RuntimeException('No se pudo actualizar el video: ' . $error);
+    }
+    $stmt->close();
 }
 
-/* ============================
-   Cargar bootstrap (vendor + Config + db)
-   ============================ */
-try {
-  $bootstrap = __DIR__ . '/app_bootstrap.php';
-  if (!is_file($bootstrap)) $bootstrap = __DIR__ . '/../app_bootstrap.php';
-
-  if (!is_file($bootstrap)) {
-    $bases = resolve_root_candidates();
-    $bootstrap = find_file_in_candidates('app_bootstrap.php', $bases, ['', 'public_html', 'api', 'app', 'www']);
-  }
-
-  if (!$bootstrap || !is_file($bootstrap)) throw new RuntimeException('app_bootstrap.php no encontrado.');
-  require_once $bootstrap;
-  require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
-  require_once __DIR__ . '/includes/Chat/AuthenticatedMediaScope.php';
-} catch (Throwable $e) {
-  jexit(['ok'=>false,'error'=>'bootstrap: '.$e->getMessage()], 500);
+/** @return array{key:string,size:int}|null */
+function videoStatusFindOutput($s3, string $bucket, string $prefix): ?array
+{
+    $continuation = null;
+    $best = null;
+    do {
+        $args = ['Bucket' => $bucket, 'Prefix' => $prefix];
+        if ($continuation) $args['ContinuationToken'] = $continuation;
+        $result = $s3->listObjectsV2($args);
+        foreach (($result['Contents'] ?? []) as $object) {
+            $key = (string)($object['Key'] ?? '');
+            if ($key === '' || !preg_match('/\.mp4$/i', $key)) continue;
+            $candidate = ['key' => $key, 'size' => (int)($object['Size'] ?? 0)];
+            if (str_ends_with(strtolower($key), '/output.mp4')) return $candidate;
+            if ($best === null || $candidate['size'] > $best['size']) $best = $candidate;
+        }
+        $continuation = $result['NextContinuationToken'] ?? null;
+    } while ($continuation);
+    return $best;
 }
 
-/* ============================
-   Validar DB
-   ============================ */
+function videoStatusRecordUsage(mysqli $db, int $sessionId, int $messageId, string $modelId, int $durationMs): void
+{
+    $stmt = $db->prepare(
+        "INSERT INTO TokenUsage (session_id_,message_id_,phase,model_id,input_tokens,output_tokens,estimated_cost_usd,duration_ms)
+         SELECT ?,?,'respond',?,0,0,0,?
+         WHERE NOT EXISTS (
+             SELECT 1 FROM TokenUsage WHERE message_id_=? AND phase='respond' AND model_id=? LIMIT 1
+         )"
+    );
+    if (!$stmt) return;
+    $stmt->bind_param('iisiis', $sessionId, $messageId, $modelId, $durationMs, $messageId, $modelId);
+    try { $stmt->execute(); } catch (Throwable $e) { error_log('VIDEO_GENERATION_USAGE: ' . $e->getMessage()); }
+    $stmt->close();
+}
+
 if (!isset($db_connection) || !($db_connection instanceof mysqli)) {
-  jexit(['ok'=>false,'error'=>'DB no disponible (bootstrap)'], 500);
+    videoStatusExit(['ok' => false, 'error' => 'DB no disponible'], 500);
 }
 
-/* ============================
-   Cargar S3Manager
-   ============================ */
-$have_s3 = false;
-try {
-  $s3Path = __DIR__ . '/S3Manager.php';
-  if (!is_file($s3Path)) $s3Path = __DIR__ . '/../S3Manager.php';
-  if (!is_file($s3Path)) {
-    $bases = resolve_root_candidates();
-    $s3Path = find_file_in_candidates('S3Manager.php', $bases, ['', 'bd', 'config', 'app', 'includes', 'lib']);
-  }
-  if ($s3Path && is_file($s3Path)) {
-    require_once $s3Path;
-    $have_s3 = true;
-  }
-} catch (Throwable $e) {
-  $notes[] = 'S3Manager: '.$e->getMessage();
-}
+$messageId = (int)($_GET['message_id'] ?? 0);
+$waitSecs = min(120, max(0, (int)($_GET['wait_secs'] ?? 0)));
+if ($messageId <= 0) videoStatusExit(['ok' => false, 'error' => 'message_id inválido'], 400);
 
-/* ============================
-   AWS SDK cargado?
-   ============================ */
-$aws_sdk_loaded = class_exists('Aws\\BedrockRuntime\\BedrockRuntimeClient');
-if (!$aws_sdk_loaded) {
-  $notes[] = 'AWS SDK no está cargado (vendor/autoload.php). Revisa app_bootstrap.php';
-}
-
-/* ============================
-   Inputs
-   ============================ */
-$message_id = isset($_GET['message_id']) ? (int)$_GET['message_id'] : 0;
-$wait_secs  = isset($_GET['wait_secs']) ? max(0, (int)$_GET['wait_secs']) : 0;
-if ($message_id <= 0) jexit(['ok'=>false,'error'=>'message_id inválido'],400);
-
-/* Authenticate, assert compatibility user_id, and resolve message through its owned session before AWS/S3. */
+// Ownership se resuelve antes de S3, Bedrock y cualquier UPDATE.
 $mediaScope = new AuthenticatedMediaScope($db_connection);
 try {
-  $user_id = $mediaScope->authenticatedUserId($_GET['user_id'] ?? null);
-  $row = $mediaScope->resolveOwnedMessage($user_id, $message_id);
-} catch (MediaAuthenticationException $e) { jexit(['ok'=>false,'error'=>$e->getMessage()],401); }
-catch (MediaIdentityMismatchException $e) { jexit(['ok'=>false,'error'=>$e->getMessage()],403); }
-catch (MediaScopeNotFoundException $e) { jexit(['ok'=>false,'error'=>'Mensaje no encontrado'],404); }
+    $userId = $mediaScope->authenticatedUserId($_GET['user_id'] ?? null);
+    $row = $mediaScope->resolveOwnedMessage($userId, $messageId);
+} catch (MediaAuthenticationException $e) {
+    videoStatusExit(['ok' => false, 'error' => $e->getMessage()], 401);
+} catch (MediaIdentityMismatchException $e) {
+    videoStatusExit(['ok' => false, 'error' => $e->getMessage()], 403);
+} catch (MediaScopeNotFoundException $e) {
+    videoStatusExit(['ok' => false, 'error' => 'Mensaje no encontrado'], 404);
+}
 
-$session_id=(int)$row['session_id_'];$s3_key=$row['s3_key'];$mime=$row['mime_type'];$size_bytes=$row['size_bytes'];
-$duration_ms=$row['duration_ms'];$model_id=$row['model_id'];$meta=json_decode($row['meta']?:'{}',true);if(!is_array($meta))$meta=[];
-$status=(string)($meta['status']??'queued');$prefix=(string)($meta['output_prefix']??'');
+if ((string)($row['content_type'] ?? '') !== 'video') {
+    videoStatusExit(['ok' => false, 'error' => 'El mensaje no corresponde a un trabajo de video.'], 400);
+}
 
-/* ============================
-   Reconstruir prefijo si no estaba
-   ============================ */
+$sessionId = (int)$row['session_id_'];
+$modelId = (string)($row['model_id'] ?? '');
+$durationMs = (int)($row['duration_ms'] ?? 6000);
+$s3Key = trim((string)($row['s3_key'] ?? ''));
+$meta = json_decode((string)($row['meta'] ?? '{}'), true);
+if (!is_array($meta)) $meta = [];
+$status = VideoGenerationPolicy::normalizeStatus((string)($meta['status'] ?? 'in_progress'));
+$invocationArn = trim((string)($meta['invocationArn'] ?? ''));
+$prefix = trim((string)($meta['output_prefix'] ?? ''));
+$prompt = trim((string)($meta['prompt'] ?? ''));
+
+if ($status === 'failed') {
+    videoStatusExit(['ok' => true, 'status' => 'failed', 'message_id' => $messageId]);
+}
+
+if (!class_exists('Config') || !method_exists('Config', 'getBedrockRuntime')) {
+    videoStatusExit(['ok' => false, 'error' => 'Bedrock Runtime no está configurado.'], 500);
+}
+
+$rootPrefix = defined('Config::RUTA_RAIZ') && Config::RUTA_RAIZ ? rtrim((string)Config::RUTA_RAIZ, '/') . '/' : '';
 if ($prefix === '') {
-  $rootPrefix = (class_exists('Config') && defined('Config::RUTA_RAIZ') && Config::RUTA_RAIZ) ? rtrim(Config::RUTA_RAIZ,'/').'/' : '';
-  $prefix = $rootPrefix . "Chat/GenerationsVideos/{$session_id}/msg_{$message_id}/";
-  $meta['output_prefix'] = $prefix;
+    $prefix = $rootPrefix . "Chat/GenerationsVideos/{$userId}/{$sessionId}/msg_{$messageId}/";
+    $meta['output_prefix'] = $prefix;
 }
 
-/* ============================
-   Si ya tenemos s3_key y existe → completed
-   ============================ */
-if ($have_s3 && class_exists('Config') && class_exists('S3Manager')) {
-  try{
+try {
     $s3 = Config::getS3();
-    $bucket = (new S3Manager())->getBucket();
-    if ($s3_key) {
-      try {
-        $head = $s3->headObject(['Bucket'=>$bucket,'Key'=>$s3_key]);
+    $bucket = (string)(new S3Manager())->getBucket();
+    if ($bucket === '') throw new RuntimeException('Bucket S3 no configurado.');
+    $bedrock = Config::getBedrockRuntime(['http' => ['connect_timeout' => 10, 'timeout' => 60]]);
+} catch (Throwable $e) {
+    error_log('VIDEO_GENERATION_STATUS_INIT: ' . $e->getMessage());
+    videoStatusExit(['ok' => false, 'error' => 'No se pudo inicializar S3/Bedrock para consultar el video.'], 500);
+}
+
+// Si ya quedó persistido el objeto final, el endpoint es idempotente.
+if ($s3Key !== '') {
+    try {
+        $head = $s3->headObject(['Bucket' => $bucket, 'Key' => $s3Key]);
         $size = (int)($head['ContentLength'] ?? 0);
-        $ct   = (string)($head['ContentType'] ?? ($mime ?: 'video/mp4'));
-
+        $mime = (string)($head['ContentType'] ?? 'video/mp4');
         $meta['status'] = 'completed';
-        $meta['completed_at'] = date('c');
-        $mj = json_encode($meta, JSON_UNESCAPED_UNICODE);
-
-        $stmtU = $db_connection->prepare("UPDATE ChatMessages SET mime_type=?, size_bytes=?, meta=? WHERE id_=?");
-        if($stmtU){ $stmtU->bind_param('sisi',$ct,$size,$mj,$message_id); $stmtU->execute(); $stmtU->close(); }
-
-        jexit(['ok'=>true,'status'=>'completed','message_id'=>$message_id,'s3_key'=>$s3_key,'mime_type'=>$ct,'size_bytes'=>$size,'duration_ms'=>$duration_ms]);
-      } catch(Throwable $e){ /* seguir */ }
-    }
-  } catch(Throwable $e){
-    $notes[] = 'S3 init: '.$e->getMessage();
-  }
-} else {
-  $notes[] = 'S3 no disponible para verificar output.';
-}
-
-/* ============================
-   Helpers S3 scan
-   ============================ */
-function listVideosUnder($s3,$bucket,$prefix){
-  $found=[]; $cont=null;
-  do{
-    $args=['Bucket'=>$bucket,'Prefix'=>$prefix]; if($cont) $args['ContinuationToken']=$cont;
-    $res=$s3->listObjectsV2($args);
-    foreach (($res['Contents'] ?? []) as $obj){
-      $key=(string)$obj['Key']; $lower=strtolower($key);
-      if (preg_match('/\.(mp4|mov|webm|mkv|gif)$/',$lower)) {
-        $found[]=['Key'=>$key,'Size'=>(int)($obj['Size'] ?? 0),'LM'=>(string)($obj['LastModified'] ?? '')];
-      }
-      if (function_exists('str_ends_with') && str_ends_with($lower,'video-generation-status.json')) {
-        $found[]=['StatusKey'=>$key];
-      }
-    }
-    $cont = $res['NextContinuationToken'] ?? null;
-  }while($cont);
-  return $found;
-}
-function tryParseStatus($s3,$bucket,$key){
-  try{
-    $obj=$s3->getObject(['Bucket'=>$bucket,'Key'=>$key]);
-    $txt=(string)$obj['Body']; $j=json_decode($txt,true);
-    if(is_array($j)) return $j;
-  }catch(Throwable $e){}
-  return null;
-}
-
-/* ============================
-   Bedrock getAsyncInvoke (best-effort)
-   ============================ */
-$have_bedrock = $aws_sdk_loaded;
-$bedrock = null;
-
-if ($have_bedrock) {
-  try{
-    $region = (class_exists('Config') && defined('Config::REGION') && Config::REGION) ? Config::REGION : 'us-east-1';
-    $bedrock = new Aws\BedrockRuntime\BedrockRuntimeClient([
-      'region'=>$region,'version'=>'latest',
-      'http'=>['connect_timeout'=>10,'timeout'=>60],
-    ]);
-  }catch(Throwable $e){
-    $notes[]='Bedrock init: '.$e->getMessage();
-    $bedrock=null;
-  }
-}
-
-$started = time();
-$deadline = $started + $wait_secs;
-$invocationArn = (string)($meta['invocationArn'] ?? '');
-
-do {
-  // 1) Estado Bedrock si hay invocationArn
-  if ($bedrock && $invocationArn) {
-    try{
-      $resp = $bedrock->getAsyncInvoke(['invocationArn'=>$invocationArn]);
-      $st = strtolower((string)($resp['status'] ?? ''));
-      if ($st) $status = $st; // completed | inprogress | failed
-
-      if ($st === 'failed') {
-        $meta['status'] = 'failed';
-        $meta['finished_at'] = date('c');
-        $mj = json_encode($meta, JSON_UNESCAPED_UNICODE);
-        $stmtUF = $db_connection->prepare("UPDATE ChatMessages SET meta=? WHERE id_=?");
-        if($stmtUF){ $stmtUF->bind_param('si',$mj,$message_id); $stmtUF->execute(); $stmtUF->close(); }
-
-        // Intentar leer status json en S3 (si existe)
-        $statusJson = null;
-        try{
-          if ($have_s3 && class_exists('Config') && class_exists('S3Manager')) {
-            $s3 = Config::getS3(); $bucket=(new S3Manager())->getBucket();
-            $all = listVideosUnder($s3,$bucket,$prefix);
-            $statusKey=null; foreach($all as $it){ if(isset($it['StatusKey'])){ $statusKey=$it['StatusKey']; break; } }
-            $statusJson = $statusKey ? tryParseStatus($s3,$bucket,$statusKey) : null;
-          }
-        }catch(Throwable $e){}
-
-        $out = ['ok'=>true,'status'=>'failed','message_id'=>$message_id];
-        if (!empty($notes)) $out['notes'] = $notes;
-        if ($statusJson !== null) $out['status_json'] = $statusJson;
-        jexit($out);
-      }
-    }catch(Throwable $e){
-      $notes[]='GetAsyncInvoke: '.$e->getMessage();
-    }
-  }
-
-  // 2) Buscar salida en S3
-  try{
-    if ($have_s3 && class_exists('Config') && class_exists('S3Manager')) {
-      $s3 = Config::getS3();
-      $bucket = (new S3Manager())->getBucket();
-
-      $all = listVideosUnder($s3,$bucket,$prefix);
-
-      // ¿hay status JSON con failure?
-      $statusKey=null; foreach($all as $it){ if(isset($it['StatusKey'])){ $statusKey=$it['StatusKey']; break; } }
-      if ($statusKey) {
-        $statusJson = tryParseStatus($s3,$bucket,$statusKey);
-        if ($statusJson && isset($statusJson['fullVideo']['status']) && strtoupper((string)$statusJson['fullVideo']['status'])==='FAILURE') {
-          $meta['status']='failed'; $meta['finished_at']=date('c');
-          $mj=json_encode($meta,JSON_UNESCAPED_UNICODE);
-          $stmtUF=$db_connection->prepare("UPDATE ChatMessages SET meta=? WHERE id_=?");
-          if($stmtUF){ $stmtUF->bind_param('si',$mj,$message_id); $stmtUF->execute(); $stmtUF->close(); }
-
-          $out = ['ok'=>true,'status'=>'failed','message_id'=>$message_id,'status_json'=>$statusJson];
-          if (!empty($notes)) $out['notes'] = $notes;
-          jexit($out);
-        }
-      }
-
-      // elegir mejor video (prefiere output.mp4; si no, el mayor)
-      $best=null;
-      foreach($all as $it){
-        if(!isset($it['Key'])) continue;
-        $k=$it['Key'];
-        $lk=strtolower($k);
-        if (function_exists('str_ends_with') && str_ends_with($lk, '/output.mp4')) { $best=$it; break; }
-        if (!$best || ((int)$it['Size']) > ((int)$best['Size'])) $best=$it;
-      }
-
-      if ($best && isset($best['Key'])) {
-        // HEAD
-        $head = $s3->headObject(['Bucket'=>$bucket,'Key'=>$best['Key']]);
-        $mime_final = (string)($head['ContentType'] ?? 'video/mp4');
-        $size_final = (int)($head['ContentLength'] ?? ($best['Size'] ?? 0));
-
-        // Nombre único final
-        $rootPrefix = (class_exists('Config') && defined('Config::RUTA_RAIZ') && Config::RUTA_RAIZ) ? rtrim(Config::RUTA_RAIZ,'/').'/' : '';
-        $uniqueName = date('Ymd_His')."_msg_{$message_id}_".bin2hex(random_bytes(3)).".mp4";
-        $finalKey   = $rootPrefix . "Chat/GenerationsVideos/{$session_id}/" . $uniqueName;
-
-        // COPY → destino final
-        $s3->copyObject([
-          'Bucket' => $bucket,
-          'CopySource' => rawurlencode($bucket.'/'.$best['Key']),
-          'Key'    => $finalKey,
-          'ACL'    => 'private',
-          'ContentType' => $mime_final,
-          'ContentDisposition' => 'attachment; filename="'.$uniqueName.'"',
-          'MetadataDirective' => 'REPLACE'
+        $meta['completed_at'] = $meta['completed_at'] ?? date('c');
+        videoStatusUpdateMeta($db_connection, $messageId, $meta);
+        videoStatusExit([
+            'ok' => true,
+            'status' => 'completed',
+            'message_id' => $messageId,
+            's3_key' => $s3Key,
+            'mime_type' => $mime,
+            'size_bytes' => $size,
+            'duration_ms' => $durationMs,
+            'model_id' => $modelId,
         ]);
-
-        // Actualizar DB → usar el key final único
-        $meta['status']='completed';
-        $meta['completed_at']=date('c');
-        $meta['source_key']=$best['Key'];
-        $mj=json_encode($meta,JSON_UNESCAPED_UNICODE);
-
-        $stmtU=$db_connection->prepare("UPDATE ChatMessages SET content_type='video', s3_key=?, mime_type=?, size_bytes=?, meta=? WHERE id_=?");
-        if($stmtU){ $stmtU->bind_param('ssisi',$finalKey,$mime_final,$size_final,$mj,$message_id); $stmtU->execute(); $stmtU->close(); }
-
-        $out = ['ok'=>true,'status'=>'completed','message_id'=>$message_id,'s3_key'=>$finalKey,'mime_type'=>$mime_final,'size_bytes'=>$size_final,'duration_ms'=>$duration_ms];
-        if (!empty($notes)) $out['notes'] = $notes;
-        jexit($out);
-      }
-    } else {
-      $notes[] = 'S3 no disponible (no se puede escanear outputs).';
+    } catch (Throwable $e) {
+        // El registro puede haberse escrito antes de que S3 sea visible; continuar.
     }
-  } catch(Throwable $e){
-    $notes[]='S3 scan: '.$e->getMessage();
-  }
+}
 
-  // 3) timeout de espera del servidor → estado intermedio
-  if (time() >= $deadline) {
-    $meta['status'] = ($status==='queued') ? 'processing' : $status;
-    $meta['last_check_at'] = date('c');
-    $mj=json_encode($meta,JSON_UNESCAPED_UNICODE);
+$deadline = microtime(true) + $waitSecs;
+$notes = [];
+do {
+    if ($invocationArn !== '') {
+        try {
+            $response = $bedrock->getAsyncInvoke(['invocationArn' => $invocationArn]);
+            $remoteStatus = VideoGenerationPolicy::normalizeStatus((string)($response['status'] ?? ''));
+            if ($remoteStatus !== '') $status = $remoteStatus;
+            if ($status === 'failed') {
+                $meta['status'] = 'failed';
+                $meta['failed_at'] = date('c');
+                $failure = trim((string)($response['failureMessage'] ?? ''));
+                if ($failure !== '') $meta['error'] = mb_substr($failure, 0, 500);
+                videoStatusUpdateMeta($db_connection, $messageId, $meta, '⚠️ La generación del video falló.');
+                videoStatusExit([
+                    'ok' => true,
+                    'status' => 'failed',
+                    'message_id' => $messageId,
+                    'error' => $failure !== '' ? $failure : null,
+                ]);
+            }
+        } catch (Throwable $e) {
+            $notes[] = 'GetAsyncInvoke: ' . $e->getMessage();
+        }
+    }
 
-    $stmtUP=$db_connection->prepare("UPDATE ChatMessages SET meta=? WHERE id_=?");
-    if($stmtUP){ $stmtUP->bind_param('si',$mj,$message_id); $stmtUP->execute(); $stmtUP->close(); }
+    try {
+        $output = videoStatusFindOutput($s3, $bucket, $prefix);
+        if ($output !== null) {
+            $head = $s3->headObject(['Bucket' => $bucket, 'Key' => $output['key']]);
+            $finalKey = (string)$output['key'];
+            $mime = (string)($head['ContentType'] ?? 'video/mp4');
+            $size = (int)($head['ContentLength'] ?? $output['size']);
+            $meta['status'] = 'completed';
+            $meta['completed_at'] = date('c');
+            $meta['source_key'] = $finalKey;
+            $metaJson = json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+            $content = $prompt !== '' ? 'Video generado: ' . $prompt : 'Video generado con Amazon Nova Reel.';
 
-    $out = ['ok'=>true,'status'=>$meta['status'],'message_id'=>$message_id];
-    if (!empty($notes)) $out['notes'] = $notes;
-    jexit($out);
-  }
+            $stmt = $db_connection->prepare(
+                "UPDATE ChatMessages
+                 SET content=?, content_type='video', s3_key=?, mime_type=?, size_bytes=?, meta=?
+                 WHERE id_=? AND user_id_=? AND session_id_=?"
+            );
+            if (!$stmt) throw new RuntimeException('No se pudo preparar la persistencia del video.');
+            $stmt->bind_param('sssisiii', $content, $finalKey, $mime, $size, $metaJson, $messageId, $userId, $sessionId);
+            if (!$stmt->execute()) {
+                $error = $stmt->error;
+                $stmt->close();
+                throw new RuntimeException('No se pudo persistir el video: ' . $error);
+            }
+            $stmt->close();
 
-  sleep(3);
-} while(true);
+            $startedAt = isset($meta['started_at']) ? strtotime((string)$meta['started_at']) : false;
+            $generationMs = $startedAt ? max(0, (int)round((microtime(true) - (float)$startedAt) * 1000)) : 0;
+            videoStatusRecordUsage($db_connection, $sessionId, $messageId, $modelId, $generationMs);
+
+            $out = [
+                'ok' => true,
+                'status' => 'completed',
+                'message_id' => $messageId,
+                's3_key' => $finalKey,
+                'mime_type' => $mime,
+                'size_bytes' => $size,
+                'duration_ms' => $durationMs,
+                'model_id' => $modelId,
+                'usage' => ['input_tokens' => 0, 'output_tokens' => 0, 'billing_unit' => 'video_second', 'units' => $durationMs / 1000],
+            ];
+            if ($notes !== []) $out['notes'] = array_slice($notes, -3);
+            videoStatusExit($out);
+        }
+    } catch (Throwable $e) {
+        $notes[] = 'S3: ' . $e->getMessage();
+    }
+
+    if (microtime(true) >= $deadline) {
+        $meta['status'] = 'in_progress';
+        $meta['last_check_at'] = date('c');
+        try { videoStatusUpdateMeta($db_connection, $messageId, $meta); } catch (Throwable $e) { $notes[] = $e->getMessage(); }
+        $out = ['ok' => true, 'status' => 'in_progress', 'message_id' => $messageId, 'model_id' => $modelId];
+        if ($notes !== []) $out['notes'] = array_slice($notes, -3);
+        videoStatusExit($out);
+    }
+
+    sleep(3);
+} while (true);
