@@ -1,0 +1,11 @@
+{
+  "name": "michat-nova2-sonic-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Turn-based Nova 2 Sonic audio bridge for MiChat",
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "3.785.0",
+    "@smithy/node-http-handler": "4.0.4"
+  }
+}
