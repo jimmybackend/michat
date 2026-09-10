@@ -97,7 +97,19 @@ if (!function_exists('aiAgentValue')) {
         ) {
             return $default;
         }
-        return $cfg[$field];
+        $value = $cfg[$field];
+
+        // Compatibilidad con el ENUM histórico de TokenUsage.phase.
+        // Las modalidades nuevas conservan su agent_key/model_id para auditoría,
+        // pero se registran bajo una fase existente hasta una migración de esquema
+        // explícita: visión alimenta RAG y voz produce una respuesta.
+        if ($field === 'token_usage_phase') {
+            $phase = strtolower(trim((string)$value));
+            $aliases = ['vision' => 'rag', 'voice' => 'respond'];
+            return $aliases[$phase] ?? $value;
+        }
+
+        return $value;
     }
 }
 
@@ -198,6 +210,8 @@ if (!function_exists('aiRuntimeSnapshot')) {
             'embedding_main',
             'smart_memory_general',
             'smart_memory_code',
+            'attachment_vision',
+            'voice_main',
         ];
 
         $out = [];
