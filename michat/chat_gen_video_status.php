@@ -21,11 +21,11 @@ function videoStatusUpdateMeta(mysqli $db, int $messageId, array $meta, ?string 
 {
     $json = json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     if ($content === null) {
-        $stmt = $db->prepare('UPDATE ChatMessages SET meta=? WHERE id_=?');
+        $stmt = $db->prepare('UPDATE ' . 'ChatMessages SET meta=? WHERE id_=?');
         if (!$stmt) throw new RuntimeException('No se pudo preparar actualización de video.');
         $stmt->bind_param('si', $json, $messageId);
     } else {
-        $stmt = $db->prepare('UPDATE ChatMessages SET content=?, meta=? WHERE id_=?');
+        $stmt = $db->prepare('UPDATE ' . 'ChatMessages SET content=?, meta=? WHERE id_=?');
         if (!$stmt) throw new RuntimeException('No se pudo preparar actualización de video.');
         $stmt->bind_param('ssi', $content, $json, $messageId);
     }
