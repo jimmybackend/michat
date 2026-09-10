@@ -39,7 +39,7 @@ $runtime = (string)file_get_contents($runtimePath);
 $check(str_contains($modal, "require __DIR__ . '/image_generation.php'"), 'Preferencias carga el bloque image_main');
 $check(str_contains($ui, 'aiImageGenerationModel') && str_contains($ui, 'aiImageGenerationActive'), 'UI permite elegir modelo y activar/desactivar');
 $check(str_contains($ui, 'Titan Image Generator v2') && str_contains($ui, 'Nova Canvas'), 'UI muestra los dos generadores soportados');
-$check(str_contains($prefs, "upsertUserOverride($userId, 'image_main'") && str_contains($prefs, 'csrf_token'), 'preferencia se persiste por usuario con CSRF');
+$check(str_contains($prefs, "upsertUserOverride(\$userId, 'image_main'") && str_contains($prefs, 'csrf_token'), 'preferencia se persiste por usuario con CSRF');
 $check(str_contains($prefs, 'ensureImageGenerationGlobal') && str_contains($prefs, 'defaultGlobalConfig'), 'primer cambio crea configuración global idempotente');
 
 $check(str_contains($endpoint, "aiAgentConfig('image_main')") && str_contains($endpoint, "aiAgentActive('image_main'"), 'runtime respeta image_main y su interruptor');
@@ -49,6 +49,7 @@ $check(str_contains($endpoint, 'resolveOwnedSession($userId, $sessionId)'), 'gen
 $check(str_contains($endpoint, 'Config::getBedrockRuntime()') && str_contains($endpoint, "'taskType' => 'TEXT_IMAGE'"), 'generación usa Bedrock configurado y contrato TEXT_IMAGE');
 $check(str_contains($endpoint, "'ACL' => 'private'") && str_contains($endpoint, "Chat/GenerationsImages/"), 'imagen se guarda privada en S3 bajo namespace de generaciones');
 $check(str_contains($endpoint, 'INSERT INTO ChatMessages') && str_contains($endpoint, "'assistant','image'"), 'resultado se persiste como mensaje de imagen');
+$check(!str_contains($endpoint, 'MAX(id_)') && str_contains($endpoint, '$db_connection->insert_id'), 'mensaje usa AUTO_INCREMENT seguro y evita carrera MAX(id)+1');
 $check(str_contains($endpoint, 'INSERT INTO TokenUsage') && str_contains($endpoint, "'billing_unit' => 'image'"), 'telemetría registra llamada sin inventar tokens');
 $check(!str_contains($endpoint, "\$_POST['width']") && !str_contains($endpoint, "\$_POST['height']"), 'dimensiones costosas no se controlan desde el cliente');
 
