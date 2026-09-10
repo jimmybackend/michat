@@ -18,14 +18,6 @@ function imageGenerationExit(array $payload, int $status = 200): never
     exit;
 }
 
-function imageGenerationNextId(mysqli $db, string $table): int
-{
-    if ($table !== 'ChatMessages') throw new LogicException('Tabla no permitida');
-    $result = $db->query('SELECT COALESCE(MAX(id_),0)+1 AS next_id FROM ChatMessages');
-    if (!$result) throw new RuntimeException('No se pudo reservar ID de mensaje');
-    return max(1, (int)($result->fetch_assoc()['next_id'] ?? 1));
-}
-
 if (!isset($db_connection) || !($db_connection instanceof mysqli)) {
     imageGenerationExit(['ok' => false, 'error' => 'DB no disponible'], 500);
 }
@@ -152,7 +144,6 @@ try {
     ]);
 
     $latencyMs = max(0, (int)round((hrtime(true) - $started) / 1_000_000));
-    $messageId = imageGenerationNextId($db_connection, 'ChatMessages');
     $content = 'Imagen generada: ' . $prompt;
     $meta = json_encode([
         'source' => 'image_main',
@@ -166,19 +157,23 @@ try {
         'billing_unit' => 'image',
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 
+    // ChatMessages.id_ es AUTO_INCREMENT: insert_id evita carreras entre dos
+    // generaciones concurrentes y sigue el contrato de persistencia del chat.
     $stmt = $db_connection->prepare(
         "INSERT INTO ChatMessages
-         (id_,session_id_,user_id_,role,content_type,content,s3_key,mime_type,size_bytes,model_id,stop_reason,prompt_tokens,completion_tokens,latency_ms,meta,is_primordial,phase)
-         VALUES (?,?,?,'assistant','image',?,?,?, ?,?,'end_turn',NULL,NULL,?,?,0,'respond')"
+         (session_id_,user_id_,role,content_type,content,s3_key,mime_type,size_bytes,model_id,stop_reason,prompt_tokens,completion_tokens,latency_ms,meta,is_primordial,phase)
+         VALUES (?,?,'assistant','image',?,?,?,?,?,'end_turn',NULL,NULL,?,?,0,'respond')"
     );
     if (!$stmt) throw new RuntimeException('No se pudo preparar el mensaje de imagen: ' . $db_connection->error);
-    $stmt->bind_param('iiisssisis', $messageId, $sessionId, $userId, $content, $s3Key, $mimeType, $sizeBytes, $modelId, $latencyMs, $meta);
+    $stmt->bind_param('iisssisis', $sessionId, $userId, $content, $s3Key, $mimeType, $sizeBytes, $modelId, $latencyMs, $meta);
     if (!$stmt->execute()) {
         $error = $stmt->error;
         $stmt->close();
         throw new RuntimeException('No se pudo guardar la imagen en el chat: ' . $error);
     }
+    $messageId = (int)$db_connection->insert_id;
     $stmt->close();
+    if ($messageId <= 0) throw new RuntimeException('No se obtuvo el ID persistido de la imagen.');
 
     // Los modelos de imagen se facturan por imagen/resolución, no por tokens
     // de texto equivalentes. Registramos la llamada con 0/0 tokens para que
