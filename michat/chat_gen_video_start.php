@@ -123,7 +123,7 @@ $meta = [
 $metaJson = json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 
 try {
-    // ChatMessages usa AUTO_INCREMENT: evita la carrera de MAX(id_)+1.
+    // ChatMessages usa el AUTO_INCREMENT de MySQL para evitar reservar IDs manualmente.
     $stmt = $db_connection->prepare(
         "INSERT INTO ChatMessages
          (session_id_,user_id_,role,content_type,content,s3_key,mime_type,size_bytes,thumb_s3_key,duration_ms,model_id,stop_reason,prompt_tokens,completion_tokens,latency_ms,meta,is_primordial,phase,parent_msg_id)
