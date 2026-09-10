@@ -45,7 +45,7 @@ $runtime = (string)file_get_contents($runtimePath);
 $check(str_contains($modal, "require __DIR__ . '/video_generation.php'"), 'Preferencias carga bloque video_main');
 $check(str_contains($ui, 'aiVideoGenerationModel') && str_contains($ui, 'aiVideoGenerationActive'), 'UI permite modelo y activación de video');
 $check(str_contains($ui, 'Nova Reel 1.1') && str_contains($ui, 'Nova Reel 1.0'), 'UI sólo ofrece generadores Amazon Nova Reel');
-$check(str_contains($prefs, "upsertUserOverride($userId, 'video_main'") && str_contains($prefs, 'csrf_token'), 'preferencia se persiste por usuario con CSRF');
+$check(str_contains($prefs, "upsertUserOverride(\$userId, 'video_main'") && str_contains($prefs, 'csrf_token'), 'preferencia se persiste por usuario con CSRF');
 $check(str_contains($prefs, 'ensureVideoGenerationGlobal') && str_contains($prefs, 'defaultGlobalConfig'), 'primer cambio crea configuración global idempotente');
 $check(str_contains($prefs, 'supportsRegion'), 'preferencias validan compatibilidad regional');
 
