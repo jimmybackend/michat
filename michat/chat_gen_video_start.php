@@ -1,278 +1,209 @@
 <?php
-// chat_gen_video_start.php — Nova Reel (Async Invoke) → escribe en S3 y crea placeholder en ChatMessages
-// POST: session_id, prompt?, duration?, model (OBLIGATORIO)
-// RESP: { ok, message_id, invocationArn, status, prefix, notes? }
+declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
 if (session_status() === PHP_SESSION_NONE) session_start();
 
-@ini_set('max_execution_time', '300');
-@set_time_limit(300);
+require_once __DIR__ . '/app_bootstrap.php';
+require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
+require_once __DIR__ . '/includes/Chat/AuthenticatedMediaScope.php';
+require_once __DIR__ . '/includes/ai_agent_runtime.php';
+require_once __DIR__ . '/includes/Videos/VideoGenerationPolicy.php';
+require_once __DIR__ . '/S3Manager.php';
 
-// Opcional: usa la TZ por defecto del servidor; si quieres forzarla, descomenta:
-// date_default_timezone_set('America/Mexico_City');
-
-function jexit($arr, $code=200){ http_response_code($code); echo json_encode($arr, JSON_UNESCAPED_UNICODE); exit; }
-
-$errors = [];
-
-/* ============================
-   Resolver rutas (bootstrap/S3Manager)
-   ============================ */
-function resolve_root_candidates(): array {
-  $docRoot = isset($_SERVER['DOCUMENT_ROOT']) ? (string)$_SERVER['DOCUMENT_ROOT'] : '';
-  $rootFromDoc = $docRoot !== '' ? realpath($docRoot . '/..') : false;
-
-  $candidates = [];
-  foreach ([
-    $rootFromDoc,
-    realpath(__DIR__ . '/../../'),
-    realpath(__DIR__ . '/../..'),
-    realpath(__DIR__ . '/../../../'),
-    realpath(__DIR__ . '/../'),
-    realpath(__DIR__),
-  ] as $p) {
-    if ($p && is_dir($p)) $candidates[$p] = true;
-  }
-  return array_keys($candidates);
+function videoGenerationExit(array $payload, int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
 }
-function find_file_in_candidates(string $filename, array $bases, array $subfolders): ?string {
-  $filename = ltrim($filename, '/');
-  foreach ($bases as $base) {
-    foreach ($subfolders as $sub) {
-      $sub = ($sub === '' ? '' : '/' . trim($sub,'/'));
-      $try = rtrim($base,'/') . $sub . '/' . $filename;
-      if (is_file($try)) return $try;
+
+function videoGenerationUpdateMeta(mysqli $db, int $messageId, array $meta, ?string $content = null): void
+{
+    $json = json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    if ($content === null) {
+        $stmt = $db->prepare('UPDATE ChatMessages SET meta=? WHERE id_=?');
+        if (!$stmt) throw new RuntimeException('No se pudo preparar la actualización del trabajo de video.');
+        $stmt->bind_param('si', $json, $messageId);
+    } else {
+        $stmt = $db->prepare('UPDATE ChatMessages SET content=?, meta=? WHERE id_=?');
+        if (!$stmt) throw new RuntimeException('No se pudo preparar la actualización del trabajo de video.');
+        $stmt->bind_param('ssi', $content, $json, $messageId);
     }
-  }
-  return null;
+    if (!$stmt->execute()) {
+        $error = $stmt->error;
+        $stmt->close();
+        throw new RuntimeException('No se pudo actualizar el trabajo de video: ' . $error);
+    }
+    $stmt->close();
 }
 
-/* ============================
-   Cargar bootstrap (vendor + Config + db)
-   ============================ */
-try {
-  $bootstrap = __DIR__ . '/app_bootstrap.php';
-  if (!is_file($bootstrap)) $bootstrap = __DIR__ . '/../app_bootstrap.php';
-
-  if (!is_file($bootstrap)) {
-    $bases = resolve_root_candidates();
-    $bootstrap = find_file_in_candidates('app_bootstrap.php', $bases, ['', 'public_html', 'api', 'app', 'www']);
-  }
-
-  if (!$bootstrap || !is_file($bootstrap)) throw new RuntimeException('app_bootstrap.php no encontrado.');
-  require_once $bootstrap;
-  require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
-  require_once __DIR__ . '/includes/Chat/AuthenticatedMediaScope.php';
-} catch (Throwable $e) {
-  jexit(['ok'=>false,'error'=>'bootstrap: '.$e->getMessage()], 500);
-}
-
-/* ============================
-   Validar DB
-   ============================ */
 if (!isset($db_connection) || !($db_connection instanceof mysqli)) {
-  jexit(['ok'=>false,'error'=>'DB no disponible (bootstrap)'], 500);
+    videoGenerationExit(['ok' => false, 'error' => 'DB no disponible'], 500);
 }
 
-/* ============================
-   Cargar S3Manager (si existe)
-   ============================ */
-$have_s3 = false;
-try {
-  $s3Path = __DIR__ . '/S3Manager.php';
-  if (!is_file($s3Path)) $s3Path = __DIR__ . '/../S3Manager.php';
-  if (!is_file($s3Path)) {
-    $bases = resolve_root_candidates();
-    $s3Path = find_file_in_candidates('S3Manager.php', $bases, ['', 'bd', 'config', 'app', 'includes', 'lib']);
-  }
-  if ($s3Path && is_file($s3Path)) {
-    require_once $s3Path;
-    $have_s3 = true;
-  }
-} catch (Throwable $e) {
-  $errors[] = 'S3Manager: '.$e->getMessage();
-}
+$sessionId = (int)($_POST['session_id'] ?? 0);
+$prompt = trim((string)($_POST['prompt'] ?? ''));
+if ($sessionId <= 0) videoGenerationExit(['ok' => false, 'error' => 'session_id inválido'], 400);
+if ($prompt === '') videoGenerationExit(['ok' => false, 'error' => 'Escribe qué video quieres crear.'], 400);
 
-/* ============================
-   AWS SDK cargado?
-   ============================ */
-$aws_sdk_loaded = class_exists('Aws\\BedrockRuntime\\BedrockRuntimeClient');
-if (!$aws_sdk_loaded) {
-  $errors[] = 'AWS SDK no está cargado (vendor/autoload.php). Revisa app_bootstrap.php';
-}
-
-/* ============================
-   Helpers
-   ============================ */
-function next_id(mysqli $db, $table, $col){
-  $table=preg_replace('/[^A-Za-z0-9_]+/','',$table);
-  $col=preg_replace('/[^A-Za-z0-9_]+/','',$col);
-  $rs=$db->query("SELECT IFNULL(MAX($col),0)+1 AS nxt FROM $table");
-  if(!$rs) return 1;
-  $row=$rs->fetch_assoc();
-  return (int)($row['nxt'] ?? 1);
-}
-
-/* ============================
-   Inputs
-   ============================ */
-$session_id = isset($_POST['session_id']) ? (int)$_POST['session_id'] : 0;
-if ($session_id <= 0) jexit(['ok'=>false,'error'=>'session_id inválido'],400);
-
+// La sesión persistida determina identidad y alcance antes de cualquier efecto
+// en DB, S3 o Bedrock. user_id del request sólo funciona como assertion.
 $mediaScope = new AuthenticatedMediaScope($db_connection);
 try {
-  $user_id = $mediaScope->authenticatedUserId($_POST['user_id'] ?? null);
-  $sessionRow = $mediaScope->resolveOwnedSession($user_id, $session_id);
-} catch (MediaAuthenticationException $e) { jexit(['ok'=>false,'error'=>$e->getMessage()],401); }
-catch (MediaIdentityMismatchException $e) { jexit(['ok'=>false,'error'=>$e->getMessage()],403); }
-catch (MediaScopeNotFoundException $e) { jexit(['ok'=>false,'error'=>'Sesión no encontrada'],404); }
-
-$prompt = trim((string)($_POST['prompt'] ?? ''));
-
-// Reel (TEXT_VIDEO) solo acepta 6s
-$duration_s = 6;
-
-// ✅ Modelo OBLIGATORIO (lo envías desde el <select>)
-$model_id = isset($_POST['model']) ? trim((string)$_POST['model']) : '';
-if ($model_id === '') jexit(['ok'=>false,'error'=>'Falta parámetro model'], 400);
-
-// Solo permitir Reel en este endpoint
-$allowed_video_models = [
-  'amazon.nova-reel-v1:0',
-  'amazon.nova-reel-v1:1',
-];
-if (!in_array($model_id, $allowed_video_models, true)) {
-  jexit(['ok'=>false,'error'=>'Modelo no permitido para video','model'=>$model_id], 400);
+    $userId = $mediaScope->authenticatedUserId($_POST['user_id'] ?? null);
+    $mediaScope->resolveOwnedSession($userId, $sessionId);
+} catch (MediaAuthenticationException $e) {
+    videoGenerationExit(['ok' => false, 'error' => $e->getMessage()], 401);
+} catch (MediaIdentityMismatchException $e) {
+    videoGenerationExit(['ok' => false, 'error' => $e->getMessage()], 403);
+} catch (MediaScopeNotFoundException $e) {
+    videoGenerationExit(['ok' => false, 'error' => 'Sesión no encontrada'], 404);
 }
-
-// Seed opcional
-$seed = (isset($_POST['seed']) && $_POST['seed'] !== '') ? (int)$_POST['seed'] : 42;
-
-/* Ownership was verified before placeholder, S3 and Bedrock side effects. */
-
-/* ============================
-   Placeholder en DB
-   ============================ */
-$msg_id = next_id($db_connection,'ChatMessages','id_');
-
-$rootPrefix = (class_exists('Config') && defined('Config::RUTA_RAIZ') && Config::RUTA_RAIZ) ? rtrim(Config::RUTA_RAIZ,'/').'/' : '';
-$relPrefix  = $rootPrefix . "Chat/GenerationsVideos/{$session_id}/msg_{$msg_id}/"; // Reel creará subfolder por invocationId
-
-$role_assistant='assistant';
-$content_type='video';
-$content = $prompt !== '' ? "🎬 Generando video…\n\n**Prompt:** ".$prompt : "🎬 Generando video…";
-$s3_key=null; $mime=null; $size_bytes=null; $thumb=null;
-$duration_ms = $duration_s * 1000;
-$stop_reason=null; $prompt_tok=null; $compl_tok=null; $latency_ms=null;
-
-$meta = [
-  'kind'           => 'video_job',
-  'provider'       => 'bedrock-nova-reel',
-  'status'         => 'queued',
-  'created_at'     => date('c'),
-  'output_prefix'  => $relPrefix,  // Reel pondrá un subfolder con invocationId
-  'invocationArn'  => null,
-  'model_id'       => $model_id,
-  'duration_s'     => $duration_s,
-];
-$meta_json = json_encode($meta, JSON_UNESCAPED_UNICODE);
-
-$sqlI = "INSERT INTO ChatMessages (
-  id_, session_id_, user_id_, role, content_type, content,
-  s3_key, mime_type, size_bytes, thumb_s3_key, duration_ms,
-  model_id, stop_reason, prompt_tokens, completion_tokens, latency_ms, meta
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
-$stmtI = $db_connection->prepare($sqlI);
-if(!$stmtI) jexit(['ok'=>false,'error'=>'INSERT placeholder: '.$db_connection->error],500);
-$types="iiisssssisissiiis";
-$stmtI->bind_param($types, $msg_id,$session_id,$owner_id,$role_assistant,$content_type,$content,
-  $s3_key,$mime,$size_bytes,$thumb,$duration_ms,$model_id,$stop_reason,$prompt_tok,$compl_tok,$latency_ms,$meta_json);
-if(!$stmtI->execute()){ $e=$stmtI->error; $stmtI->close(); jexit(['ok'=>false,'error'=>'INSERT placeholder: '.$e],500); }
-$stmtI->close();
-
-/* ============================
-   Preflight S3: comprobar escritura
-   ============================ */
-if (!$have_s3 || !class_exists('S3Manager') || !class_exists('Config')) {
-  jexit(['ok'=>false,'error'=>'S3Manager/Config no disponible para video async'], 500);
-}
-
-try{
-  $s3 = Config::getS3();
-  $bucket = (new S3Manager())->getBucket();
-  $markerKey = $relPrefix.'preflight.txt';
-  $s3->putObject(['Bucket'=>$bucket,'Key'=>$markerKey,'Body'=>'ok','ContentType'=>'text/plain']);
-}catch(Throwable $e){
-  jexit(['ok'=>false,'error'=>'No se puede escribir en S3 (PutObject falló): '.$e->getMessage()],500);
-}
-
-/* ============================
-   Start Async Invoke (Nova Reel escribe a S3 bajo ese prefijo)
-   ============================ */
-$invocationArn = null;
 
 try {
-  if (!$aws_sdk_loaded) throw new RuntimeException('AWS SDK no cargado.');
-
-  $region = (class_exists('Config') && defined('Config::REGION') && Config::REGION) ? Config::REGION : 'us-east-1';
-
-  $bedrock = new Aws\BedrockRuntime\BedrockRuntimeClient([
-    'region'  => $region,
-    'version' => 'latest',
-    'http'    => ['connect_timeout'=>20,'timeout'=>240],
-  ]);
-
-  $modelInput = [
-    'taskType' => 'TEXT_VIDEO',
-    'textToVideoParams' => [
-      'text' => ($prompt !== '' ? $prompt : 'Short cinematic establishing shot')
-    ],
-    'videoGenerationConfig' => [
-      'durationSeconds' => $duration_s,   // 6s requerido
-      'fps'             => 24,
-      'dimension'       => '1280x720',
-      'seed'            => $seed
-    ]
-  ];
-
-  $bucket = (new S3Manager())->getBucket();
-  $s3Uri = "s3://{$bucket}/{$relPrefix}";
-
-  $resp = $bedrock->startAsyncInvoke([
-    'modelId' => $model_id,
-    'modelInput' => $modelInput,
-    'outputDataConfig' => [
-      's3OutputDataConfig' => [ 's3Uri' => $s3Uri ]
-    ],
-    'clientRequestToken' => 'msg-'.$msg_id.'-'.bin2hex(random_bytes(6)),
-  ]);
-
-  if (isset($resp['invocationArn'])) {
-    $invocationArn = (string)$resp['invocationArn'];
-  }
-
+    aiRuntimeLoad($db_connection, $userId);
 } catch (Throwable $e) {
-  $errors[] = 'StartAsyncInvoke: '.$e->getMessage();
+    error_log('VIDEO_GENERATION_RUNTIME: ' . $e->getMessage());
+    videoGenerationExit(['ok' => false, 'error' => 'No se pudo cargar la configuración de IA.'], 500);
 }
 
-/* ============================
-   Persistir meta con invocationArn / estado
-   ============================ */
-$meta['status'] = $invocationArn ? 'in_progress' : 'queued';
-$meta['invocationArn'] = $invocationArn;
-$meta_json = json_encode($meta, JSON_UNESCAPED_UNICODE);
+$region = class_exists('Config') && method_exists('Config', 'getRegion') ? Config::getRegion() : 'us-east-1';
+$videoConfig = aiAgentConfig('video_main');
+if ($videoConfig && !aiAgentActive('video_main', true)) {
+    videoGenerationExit(['ok' => false, 'error' => 'La generación de videos está desactivada en Preferencias.'], 409);
+}
 
-$stmtU = $db_connection->prepare("UPDATE ChatMessages SET meta=? WHERE id_=?");
-if($stmtU){ $stmtU->bind_param('si', $meta_json, $msg_id); $stmtU->execute(); $stmtU->close(); }
+$defaultModel = VideoGenerationPolicy::fallbackForRegion($region);
+$modelId = aiAgentModel('video_main', $defaultModel);
+if (!VideoGenerationPolicy::isAllowed($modelId)) {
+    error_log('VIDEO_GENERATION_CONFIG: modelo no permitido: ' . $modelId);
+    videoGenerationExit(['ok' => false, 'error' => 'El modelo configurado para videos no es compatible.'], 500);
+}
+if (!VideoGenerationPolicy::supportsRegion($modelId, $region)) {
+    videoGenerationExit(['ok' => false, 'error' => "{$modelId} no está disponible en la región {$region}."], 409);
+}
 
-$out = [
-  'ok'=>true,
-  'message_id'=>$msg_id,
-  'invocationArn'=>$invocationArn,
-  'status'=>$meta['status'],
-  'prefix'=>$relPrefix,
+$maxPromptChars = VideoGenerationPolicy::maxPromptChars($modelId);
+if (mb_strlen($prompt) > $maxPromptChars) {
+    videoGenerationExit([
+        'ok' => false,
+        'error' => "El prompt supera el límite de {$maxPromptChars} caracteres para el clip simple de Nova Reel.",
+        'max_prompt_chars' => $maxPromptChars,
+    ], 400);
+}
+
+$defaults = VideoGenerationPolicy::defaults();
+$durationSeconds = (int)$defaults['duration_seconds'];
+$fps = (int)$defaults['fps'];
+$dimension = (string)$defaults['dimension'];
+$durationMs = $durationSeconds * 1000;
+$seed = random_int(0, 2147483646);
+$role = 'assistant';
+$contentType = 'video';
+$content = "🎬 Generando video…\n\n**Prompt:** " . $prompt;
+$meta = [
+    'kind' => 'video_job',
+    'source' => 'video_main',
+    'provider' => 'amazon-bedrock',
+    'generation' => 'text_to_video',
+    'status' => 'queued',
+    'created_at' => date('c'),
+    'prompt' => $prompt,
+    'output_prefix' => null,
+    'invocationArn' => null,
+    'model_id' => $modelId,
+    'region' => $region,
+    'duration_s' => $durationSeconds,
+    'fps' => $fps,
+    'dimension' => $dimension,
+    'seed' => $seed,
+    'billing_unit' => 'video_second',
 ];
-if(!empty($errors)) $out['notes'] = $errors;
+$metaJson = json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 
-jexit($out);
+try {
+    // ChatMessages usa AUTO_INCREMENT: evita la carrera de MAX(id_)+1.
+    $stmt = $db_connection->prepare(
+        "INSERT INTO ChatMessages
+         (session_id_,user_id_,role,content_type,content,s3_key,mime_type,size_bytes,thumb_s3_key,duration_ms,model_id,stop_reason,prompt_tokens,completion_tokens,latency_ms,meta,is_primordial,phase,parent_msg_id)
+         VALUES (?,?,?,?,?,NULL,NULL,NULL,NULL,?,?,NULL,NULL,NULL,NULL,?,0,'respond',NULL)"
+    );
+    if (!$stmt) throw new RuntimeException('No se pudo preparar el placeholder de video: ' . $db_connection->error);
+    $stmt->bind_param('iisssiss', $sessionId, $userId, $role, $contentType, $content, $durationMs, $modelId, $metaJson);
+    if (!$stmt->execute()) {
+        $error = $stmt->error;
+        $stmt->close();
+        throw new RuntimeException('No se pudo guardar el trabajo de video: ' . $error);
+    }
+    $messageId = (int)$db_connection->insert_id;
+    $stmt->close();
+    if ($messageId <= 0) throw new RuntimeException('No se obtuvo el ID del mensaje de video.');
+
+    $rootPrefix = defined('Config::RUTA_RAIZ') && Config::RUTA_RAIZ ? rtrim((string)Config::RUTA_RAIZ, '/') . '/' : '';
+    $outputPrefix = $rootPrefix . "Chat/GenerationsVideos/{$userId}/{$sessionId}/msg_{$messageId}/";
+    $meta['output_prefix'] = $outputPrefix;
+    videoGenerationUpdateMeta($db_connection, $messageId, $meta);
+
+    if (!class_exists('Config') || !method_exists('Config', 'getBedrockRuntime')) {
+        throw new RuntimeException('Bedrock Runtime no está configurado.');
+    }
+
+    // Mantiene la misma cadena de credenciales/región que el resto de MiChat.
+    // S3 se inicializa después del guard de ownership para conservar la frontera multiusuario.
+    $s3 = Config::getS3();
+    $bucket = (string)(new S3Manager())->getBucket();
+    if ($bucket === '') throw new RuntimeException('Bucket S3 no configurado.');
+    unset($s3);
+
+    $modelInput = [
+        'taskType' => 'TEXT_VIDEO',
+        'textToVideoParams' => ['text' => $prompt],
+        'videoGenerationConfig' => [
+            'durationSeconds' => $durationSeconds,
+            'fps' => $fps,
+            'dimension' => $dimension,
+            'seed' => $seed,
+        ],
+    ];
+
+    $bedrock = Config::getBedrockRuntime();
+    $response = $bedrock->startAsyncInvoke([
+        'modelId' => $modelId,
+        'modelInput' => $modelInput,
+        'outputDataConfig' => [
+            's3OutputDataConfig' => ['s3Uri' => "s3://{$bucket}/{$outputPrefix}"],
+        ],
+        'clientRequestToken' => 'michat-video-' . $messageId . '-' . bin2hex(random_bytes(8)),
+    ]);
+
+    $invocationArn = trim((string)($response['invocationArn'] ?? ''));
+    if ($invocationArn === '') throw new RuntimeException('Bedrock no devolvió invocationArn.');
+
+    $meta['status'] = 'in_progress';
+    $meta['invocationArn'] = $invocationArn;
+    $meta['started_at'] = date('c');
+    videoGenerationUpdateMeta($db_connection, $messageId, $meta);
+
+    videoGenerationExit([
+        'ok' => true,
+        'message_id' => $messageId,
+        'invocationArn' => $invocationArn,
+        'status' => 'in_progress',
+        'model_id' => $modelId,
+        'region' => $region,
+        'duration_s' => $durationSeconds,
+        'output_prefix' => $outputPrefix,
+    ]);
+} catch (Throwable $e) {
+    if (isset($messageId) && (int)$messageId > 0) {
+        try {
+            $meta['status'] = 'failed';
+            $meta['failed_at'] = date('c');
+            $meta['error'] = mb_substr($e->getMessage(), 0, 500);
+            videoGenerationUpdateMeta($db_connection, (int)$messageId, $meta, '⚠️ No se pudo generar el video.');
+        } catch (Throwable $ignored) {}
+    }
+    error_log('VIDEO_GENERATION_START: ' . $e->getMessage());
+    videoGenerationExit(['ok' => false, 'error' => 'No se pudo iniciar el video: ' . $e->getMessage()], 500);
+}
