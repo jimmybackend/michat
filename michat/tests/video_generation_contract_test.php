@@ -57,7 +57,7 @@ $guard = strpos($start, 'resolveOwnedSession(');
 $check($guard !== false && $guard < strpos($start, 'INSERT INTO ChatMessages') && $guard < strpos($start, 'Config::getS3()') && $guard < strpos($start, 'startAsyncInvoke('), 'guard de ownership precede DB, S3 y Bedrock');
 $check(str_contains($start, '$db_connection->insert_id') && !str_contains($start, 'MAX(id_)'), 'placeholder usa AUTO_INCREMENT seguro');
 $check(str_contains($start, 'Config::getBedrockRuntime()') && str_contains($start, "'taskType' => 'TEXT_VIDEO'") && str_contains($start, 'startAsyncInvoke('), 'inicio usa Bedrock Async Invoke y TEXT_VIDEO');
-$check(str_contains($start, "'durationSeconds' => $durationSeconds") && str_contains($start, "'dimension' => $dimension"), 'parámetros de video salen de política server-side');
+$check(str_contains($start, "'durationSeconds' => \$durationSeconds") && str_contains($start, "'dimension' => \$dimension"), 'parámetros de video salen de política server-side');
 $check(str_contains($start, 'Chat/GenerationsVideos/') && str_contains($start, "'s3OutputDataConfig'"), 'Bedrock escribe video bajo namespace privado del usuario/sesión');
 
 $statusGuard = strpos($status, 'resolveOwnedMessage(');
