@@ -1,292 +1,212 @@
 <?php
-// chat_gen_image.php
-// Genera imagen con Bedrock (Titan Image v2 / Nova Canvas) y guarda en S3/DB.
+declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
 if (session_status() === PHP_SESSION_NONE) session_start();
 
-$errors = [];
+require_once __DIR__ . '/app_bootstrap.php';
+require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
+require_once __DIR__ . '/includes/Chat/AuthenticatedMediaScope.php';
+require_once __DIR__ . '/includes/ai_agent_runtime.php';
+require_once __DIR__ . '/includes/Images/ImageGenerationPolicy.php';
+require_once __DIR__ . '/S3Manager.php';
 
-/* ============================
-   Helpers (salida)
-   ============================ */
-function jexit($a, $c = 200) { http_response_code($c); echo json_encode($a, JSON_UNESCAPED_UNICODE); exit; }
-function next_id(mysqli $db, $t, $c){
-  $t = preg_replace('/[^A-Za-z0-9_]+/','',$t);
-  $c = preg_replace('/[^A-Za-z0-9_]+/','',$c);
-  $rs = $db->query("SELECT COALESCE(MAX($c),0)+1 AS nxt FROM $t");
-  if(!$rs) return 1;
-  $row = $rs->fetch_assoc();
-  return (int)($row['nxt'] ?? 1);
-}
-function clamp_dim($n){
-  $n = max(128, min(2048, (int)$n));
-  $n = (int)(round($n / 8) * 8);
-  return $n;
+function imageGenerationExit(array $payload, int $status = 200): never
+{
+    http_response_code($status);
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
 }
 
-/* ============================
-   Resolver rutas (bootstrap/S3Manager)
-   ============================ */
-function resolve_root_candidates(): array {
-  $docRoot = isset($_SERVER['DOCUMENT_ROOT']) ? (string)$_SERVER['DOCUMENT_ROOT'] : '';
-  $rootFromDoc = $docRoot !== '' ? realpath($docRoot . '/..') : false;
-
-  $candidates = [];
-  foreach ([
-    $rootFromDoc,
-    realpath(__DIR__ . '/../../'),
-    realpath(__DIR__ . '/../..'),
-    realpath(__DIR__ . '/../../../'),
-    realpath(__DIR__ . '/../'),
-    realpath(__DIR__),
-  ] as $p) {
-    if ($p && is_dir($p)) $candidates[$p] = true;
-  }
-  return array_keys($candidates);
-}
-function find_file_in_candidates(string $filename, array $bases, array $subfolders): ?string {
-  $filename = ltrim($filename, '/');
-  foreach ($bases as $base) {
-    foreach ($subfolders as $sub) {
-      $sub = ($sub === '' ? '' : '/' . trim($sub,'/'));
-      $try = rtrim($base,'/') . $sub . '/' . $filename;
-      if (is_file($try)) return $try;
-    }
-  }
-  return null;
-}
-
-/* ============================
-   Cargar bootstrap (vendor + Config + db)
-   ============================ */
-try {
-  $bootstrap = __DIR__ . '/app_bootstrap.php';
-  if (!is_file($bootstrap)) $bootstrap = __DIR__ . '/../app_bootstrap.php';
-
-  if (!is_file($bootstrap)) {
-    $bases = resolve_root_candidates();
-    $bootstrap = find_file_in_candidates('app_bootstrap.php', $bases, ['', 'public_html', 'api', 'app', 'www']);
-  }
-
-  if (!$bootstrap || !is_file($bootstrap)) {
-    throw new RuntimeException('app_bootstrap.php no encontrado.');
-  }
-
-  require_once $bootstrap;
-  require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
-  require_once __DIR__ . '/includes/Chat/AuthenticatedMediaScope.php';
-
-} catch (Throwable $e) {
-  jexit(['ok'=>false,'error'=>'bootstrap: '.$e->getMessage()], 500);
-}
-
-/* ============================
-   Validar DB
-   ============================ */
 if (!isset($db_connection) || !($db_connection instanceof mysqli)) {
-  jexit(['ok'=>false,'error'=>'DB no disponible (bootstrap)'], 500);
+    imageGenerationExit(['ok' => false, 'error' => 'DB no disponible'], 500);
 }
 
-/* ============================
-   Cargar S3Manager (si existe)
-   ============================ */
-$have_s3 = false;
-try {
-  $s3Path = __DIR__ . '/S3Manager.php';
-  if (!is_file($s3Path)) $s3Path = __DIR__ . '/../S3Manager.php';
-  if (!is_file($s3Path)) {
-    $bases = resolve_root_candidates();
-    $s3Path = find_file_in_candidates('S3Manager.php', $bases, ['', 'bd', 'config', 'app', 'includes', 'lib']);
-  }
-  if ($s3Path && is_file($s3Path)) {
-    require_once $s3Path;
-    $have_s3 = true;
-  }
-} catch (Throwable $e) {
-  $errors[] = 'S3Manager: ' . $e->getMessage();
-}
+$sessionId = (int)($_POST['session_id'] ?? 0);
+$prompt = trim((string)($_POST['prompt'] ?? ''));
+if ($sessionId <= 0) imageGenerationExit(['ok' => false, 'error' => 'session_id inválido'], 400);
+if ($prompt === '') imageGenerationExit(['ok' => false, 'error' => 'Escribe qué imagen quieres crear.'], 400);
 
-/* ============================
-   AWS SDK cargado?
-   ============================ */
-$aws_sdk_loaded = class_exists('Aws\\BedrockRuntime\\BedrockRuntimeClient');
-if (!$aws_sdk_loaded) {
-  $errors[] = 'AWS SDK no está cargado (vendor/autoload.php). Revisa app_bootstrap.php';
-}
-
-/* ============================
-   Params
-   ============================ */
-$session_id = isset($_POST['session_id']) ? (int)$_POST['session_id'] : 0;
-$prompt     = isset($_POST['prompt']) ? trim((string)$_POST['prompt']) : '';
-if ($session_id <= 0) jexit(['ok'=>false,'error'=>'session_id inválido'], 400);
-if ($prompt === '')   jexit(['ok'=>false,'error'=>'prompt vacío'], 400);
-
+// La sesión persistida determina la identidad y el alcance. El cliente nunca
+// puede generar contenido dentro de una conversación ajena.
 $mediaScope = new AuthenticatedMediaScope($db_connection);
 try {
-  $user_id = $mediaScope->authenticatedUserId($_POST['user_id'] ?? null);
-  $sessionRow = $mediaScope->resolveOwnedSession($user_id, $session_id);
-} catch (MediaAuthenticationException $e) { jexit(['ok'=>false,'error'=>$e->getMessage()],401); }
-catch (MediaIdentityMismatchException $e) { jexit(['ok'=>false,'error'=>$e->getMessage()],403); }
-catch (MediaScopeNotFoundException $e) { jexit(['ok'=>false,'error'=>'Sesión no encontrada'],404); }
-
-// ✅ Modelo OBLIGATORIO (lo envías desde el <select>)
-$model_id = isset($_POST['model']) ? trim((string)$_POST['model']) : '';
-if ($model_id === '') jexit(['ok'=>false,'error'=>'Falta parámetro model'], 400);
-
-// Permitir SOLO modelos de IMAGEN en este endpoint
-$allowed_image_models = [
-  'amazon.titan-image-generator-v2:0',
-  'amazon.nova-canvas-v1:0',
-];
-if (!in_array($model_id, $allowed_image_models, true)) {
-  jexit(['ok'=>false,'error'=>'Modelo no permitido para imágenes','model'=>$model_id], 400);
+    $userId = $mediaScope->authenticatedUserId($_POST['user_id'] ?? null);
+    $mediaScope->resolveOwnedSession($userId, $sessionId);
+} catch (MediaAuthenticationException $e) {
+    imageGenerationExit(['ok' => false, 'error' => $e->getMessage()], 401);
+} catch (MediaIdentityMismatchException $e) {
+    imageGenerationExit(['ok' => false, 'error' => $e->getMessage()], 403);
+} catch (MediaScopeNotFoundException $e) {
+    imageGenerationExit(['ok' => false, 'error' => 'Sesión no encontrada'], 404);
 }
 
-$width   = clamp_dim(isset($_POST['width']) ? (int)$_POST['width'] : 1024);
-$height  = clamp_dim(isset($_POST['height']) ? (int)$_POST['height'] : 1024);
-$cfgScale= isset($_POST['cfg_scale']) ? (float)$_POST['cfg_scale'] : 8.0;
-$seed    = (isset($_POST['seed']) && $_POST['seed'] !== '') ? (int)$_POST['seed'] : null;
-
-/* Ownership was verified before any AWS/S3/DB generation side effect. */
-
-/* ============================
-   Invocar modelo de imagen
-   ============================ */
 try {
-  if (!$aws_sdk_loaded) throw new RuntimeException('AWS SDK no cargado.');
-
-  $region = (class_exists('Config') && defined('Config::REGION') && Config::REGION) ? Config::REGION : 'us-east-1';
-
-  // Usar provider chain por defecto; si necesitas forzar creds, hazlo en Config::getAwsConfig() o similar
-  $bedrock = new Aws\BedrockRuntime\BedrockRuntimeClient([
-    'region'  => $region,
-    'version' => 'latest',
-    'http'    => ['connect_timeout' => 20, 'timeout' => 240],
-  ]);
-
-  // Titan Image v2 (invokeModel) request
-  // Nota: si en el futuro usas Nova Canvas, este body puede cambiar; por ahora mantenemos el de Titan v2.
-  $body = [
-    'taskType' => 'TEXT_IMAGE',
-    'textToImageParams' => [
-      'text' => $prompt,
-    ],
-    'imageGenerationConfig' => [
-      'numberOfImages' => 1,
-      'height' => $height,
-      'width'  => $width,
-      'cfgScale' => $cfgScale,
-    ],
-  ];
-  if ($seed !== null) $body['imageGenerationConfig']['seed'] = $seed;
-
-  $resp = $bedrock->invokeModel([
-    'modelId'     => $model_id,
-    'accept'      => 'application/json',
-    'contentType' => 'application/json',
-    'body'        => json_encode($body, JSON_UNESCAPED_UNICODE),
-  ]);
-
-  $jsonTxt = (string)$resp->get('body');
-  $data = json_decode($jsonTxt, true);
-
-  $image_b64 = null;
-  $mime = 'image/png';
-
-  // Titan v2: images[0] suele ser string base64, o images[0]['image']
-  if (isset($data['images'][0]['image'])) {
-    $image_b64 = (string)$data['images'][0]['image'];
-    if (!empty($data['images'][0]['mimeType'])) $mime = (string)$data['images'][0]['mimeType'];
-  } elseif (isset($data['images'][0]) && is_string($data['images'][0])) {
-    $image_b64 = (string)$data['images'][0];
-  } else {
-    $snippet = function_exists('mb_substr') ? mb_substr($jsonTxt, 0, 280, 'UTF-8') : substr($jsonTxt, 0, 280);
-    throw new RuntimeException('Respuesta sin imagen. JSON: '.$snippet);
-  }
-
-  $bin = base64_decode($image_b64, true);
-  if ($bin === false) throw new RuntimeException('Base64 inválido');
-
-  $ext = '.png';
-  if (stripos($mime, 'jpeg') !== false || stripos($mime, 'jpg') !== false) $ext = '.jpg';
-  elseif (stripos($mime, 'webp') !== false) $ext = '.webp';
-
-  $tmp = tempnam(sys_get_temp_dir(), 'titan_img_');
-  $tmpFile = $tmp . $ext;
-  @rename($tmp, $tmpFile);
-  file_put_contents($tmpFile, $bin);
-  $size_bytes = (int)@filesize($tmpFile);
-
-  // Subir a S3 (si existe)
-  $s3_key = null;
-  if ($have_s3 && class_exists('S3Manager') && class_exists('Config')) {
-    try {
-      $manager = new S3Manager();
-      $bucket  = $manager->getBucket();
-      $s3      = Config::getS3();
-
-      $prefix = 'Chat/GenerationsImages/'.$session_id.'/';
-      if (defined('Config::RUTA_RAIZ') && Config::RUTA_RAIZ) {
-        $prefix = rtrim(Config::RUTA_RAIZ,'/').'/'.$prefix;
-      }
-
-      $key = $prefix . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . $ext;
-
-      $s3->putObject([
-        'Bucket'      => $bucket,
-        'Key'         => $key,
-        'SourceFile'  => $tmpFile,
-        'ContentType' => $mime,
-        'ACL'         => 'private'
-      ]);
-
-      $s3_key = $key;
-    } catch (Throwable $e) {
-      $errors[] = 'S3 putObject: '.$e->getMessage();
-    }
-  }
-
-  // Guardar en ChatMessages como assistant/image
-  $idA = next_id($db_connection, 'ChatMessages', 'id_');
-  $sqlA = "INSERT INTO ChatMessages (
-    id_,session_id_,user_id_,role,content_type,content,
-    s3_key,mime_type,size_bytes,thumb_s3_key,duration_ms,
-    model_id,stop_reason,prompt_tokens,completion_tokens,latency_ms,meta
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
-
-  $stmtA = $db_connection->prepare($sqlA);
-  if (!$stmtA) jexit(['ok'=>false,'error'=>'Error preparando INSERT imagen: '.$db_connection->error], 500);
-
-  $role_assistant = 'assistant';
-  $content_type   = 'image';
-  $content_txt    = $prompt;
-  $thumb_key      = null;
-  $duration_ms    = null;
-  $stop_reason    = null;
-  $prompt_tok     = null;
-  $compl_tok      = null;
-  $latency_ms     = null;
-  $meta           = null;
-
-  $types = "iiisssssisissiiis";
-  $stmtA->bind_param(
-    $types,
-    $idA, $session_id, $owner_id, $role_assistant, $content_type, $content_txt,
-    $s3_key, $mime, $size_bytes, $thumb_key, $duration_ms,
-    $model_id, $stop_reason, $prompt_tok, $compl_tok, $latency_ms, $meta
-  );
-
-  if (!$stmtA->execute()) { $e=$stmtA->error; $stmtA->close(); jexit(['ok'=>false,'error'=>'Error insertando imagen en DB: '.$e], 500); }
-  $stmtA->close();
-
-  @unlink($tmpFile);
-
-  $out = ['ok'=>true,'message_id'=>(int)$idA,'s3_key'=>$s3_key,'mime_type'=>$mime,'size_bytes'=>$size_bytes];
-  if (!empty($errors)) $out['notes'] = $errors;
-  jexit($out);
-
+    aiRuntimeLoad($db_connection, $userId);
 } catch (Throwable $e) {
-  jexit(['ok'=>false,'error'=>'Fallo Bedrock imagen: '.$e->getMessage(),'details'=>$errors], 500);
+    error_log('IMAGE_GENERATION_RUNTIME: ' . $e->getMessage());
+    imageGenerationExit(['ok' => false, 'error' => 'No se pudo cargar la configuración de IA.'], 500);
+}
+
+$imageConfig = aiAgentConfig('image_main');
+if ($imageConfig && !aiAgentActive('image_main', true)) {
+    imageGenerationExit(['ok' => false, 'error' => 'La generación de imágenes está desactivada en Preferencias.'], 409);
+}
+
+$modelId = aiAgentModel('image_main', ImageGenerationPolicy::DEFAULT_MODEL);
+if (!ImageGenerationPolicy::isAllowed($modelId)) {
+    error_log('IMAGE_GENERATION_CONFIG: modelo no permitido: ' . $modelId);
+    imageGenerationExit(['ok' => false, 'error' => 'El modelo configurado para imágenes no es compatible.'], 500);
+}
+
+$maxPromptChars = ImageGenerationPolicy::maxPromptChars($modelId);
+if (mb_strlen($prompt) > $maxPromptChars) {
+    imageGenerationExit([
+        'ok' => false,
+        'error' => "El prompt supera el límite de {$maxPromptChars} caracteres del modelo seleccionado.",
+        'max_prompt_chars' => $maxPromptChars,
+    ], 400);
+}
+
+$defaults = ImageGenerationPolicy::defaults();
+$width = (int)aiAgentExtra('image_main', 'width', $defaults['width']);
+$height = (int)aiAgentExtra('image_main', 'height', $defaults['height']);
+$quality = strtolower(trim((string)aiAgentExtra('image_main', 'quality', $defaults['quality'])));
+$cfgScale = (float)aiAgentExtra('image_main', 'cfg_scale', $defaults['cfg_scale']);
+
+// Primera versión deliberadamente cerrada: evita que parámetros manipulados
+// desde el cliente provoquen resoluciones costosas o incompatibles.
+$width = $width === 1024 ? 1024 : 1024;
+$height = $height === 1024 ? 1024 : 1024;
+$quality = in_array($quality, ['standard', 'premium'], true) ? $quality : 'standard';
+$cfgScale = max(1.1, min(10.0, $cfgScale));
+$seedMax = $modelId === ImageGenerationPolicy::NOVA_CANVAS_V1 ? 858993459 : 2147483647;
+$seed = random_int(0, $seedMax);
+
+$body = [
+    'taskType' => 'TEXT_IMAGE',
+    'textToImageParams' => ['text' => $prompt],
+    'imageGenerationConfig' => [
+        'numberOfImages' => 1,
+        'quality' => $quality,
+        'height' => $height,
+        'width' => $width,
+        'cfgScale' => $cfgScale,
+        'seed' => $seed,
+    ],
+];
+
+$started = hrtime(true);
+$s3Key = null;
+try {
+    if (!class_exists('Config') || !method_exists('Config', 'getBedrockRuntime')) {
+        throw new RuntimeException('Bedrock Runtime no está configurado.');
+    }
+
+    // Config::getBedrockRuntime() conserva la cadena de credenciales y región
+    // oficial del despliegue; no crea una segunda configuración AWS paralela.
+    $bedrock = Config::getBedrockRuntime();
+    $response = $bedrock->invokeModel([
+        'modelId' => $modelId,
+        'accept' => 'application/json',
+        'contentType' => 'application/json',
+        'body' => json_encode($body, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+    ]);
+
+    $raw = (string)$response->get('body');
+    $data = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+    $imageBase64 = isset($data['images'][0]) && is_string($data['images'][0])
+        ? $data['images'][0]
+        : (string)($data['images'][0]['image'] ?? '');
+    if ($imageBase64 === '') throw new RuntimeException('Bedrock no devolvió una imagen.');
+
+    $binary = base64_decode($imageBase64, true);
+    if ($binary === false || $binary === '') throw new RuntimeException('Bedrock devolvió una imagen inválida.');
+
+    $mimeType = 'image/png';
+    $sizeBytes = strlen($binary);
+    $manager = new S3Manager();
+    $bucket = (string)$manager->getBucket();
+    if ($bucket === '') throw new RuntimeException('Bucket S3 no configurado.');
+
+    $prefix = 'Chat/GenerationsImages/' . $userId . '/' . $sessionId . '/';
+    if (defined('Config::RUTA_RAIZ') && Config::RUTA_RAIZ) {
+        $prefix = rtrim((string)Config::RUTA_RAIZ, '/') . '/' . $prefix;
+    }
+    $s3Key = $prefix . gmdate('Ymd_His') . '_' . bin2hex(random_bytes(6)) . '.png';
+
+    Config::getS3()->putObject([
+        'Bucket' => $bucket,
+        'Key' => $s3Key,
+        'Body' => $binary,
+        'ContentType' => $mimeType,
+        'ACL' => 'private',
+    ]);
+
+    $latencyMs = max(0, (int)round((hrtime(true) - $started) / 1_000_000));
+    $content = 'Imagen generada: ' . $prompt;
+    $meta = json_encode([
+        'source' => 'image_main',
+        'generation' => 'text_to_image',
+        'model_id' => $modelId,
+        'seed' => $seed,
+        'width' => $width,
+        'height' => $height,
+        'quality' => $quality,
+        'cfg_scale' => $cfgScale,
+        'billing_unit' => 'image',
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+
+    // ChatMessages.id_ es AUTO_INCREMENT: insert_id evita carreras entre dos
+    // generaciones concurrentes y sigue el contrato de persistencia del chat.
+    $stmt = $db_connection->prepare(
+        "INSERT INTO ChatMessages
+         (session_id_,user_id_,role,content_type,content,s3_key,mime_type,size_bytes,model_id,stop_reason,prompt_tokens,completion_tokens,latency_ms,meta,is_primordial,phase)
+         VALUES (?,?,'assistant','image',?,?,?,?,?,'end_turn',NULL,NULL,?,?,0,'respond')"
+    );
+    if (!$stmt) throw new RuntimeException('No se pudo preparar el mensaje de imagen: ' . $db_connection->error);
+    $stmt->bind_param('iisssisis', $sessionId, $userId, $content, $s3Key, $mimeType, $sizeBytes, $modelId, $latencyMs, $meta);
+    if (!$stmt->execute()) {
+        $error = $stmt->error;
+        $stmt->close();
+        throw new RuntimeException('No se pudo guardar la imagen en el chat: ' . $error);
+    }
+    $messageId = (int)$db_connection->insert_id;
+    $stmt->close();
+    if ($messageId <= 0) throw new RuntimeException('No se obtuvo el ID persistido de la imagen.');
+
+    // Los modelos de imagen se facturan por imagen/resolución, no por tokens
+    // de texto equivalentes. Registramos la llamada con 0/0 tokens para que
+    // la telemetría muestre modelo y duración sin inventar un conteo.
+    $usage = $db_connection->prepare(
+        "INSERT INTO TokenUsage (session_id_,message_id_,phase,model_id,input_tokens,output_tokens,estimated_cost_usd,duration_ms)
+         VALUES (?,?,'respond',?,0,0,0,?)"
+    );
+    if ($usage) {
+        $usage->bind_param('iisi', $sessionId, $messageId, $modelId, $latencyMs);
+        try { $usage->execute(); } catch (Throwable $ignored) { error_log('IMAGE_GENERATION_USAGE: ' . $ignored->getMessage()); }
+        $usage->close();
+    }
+
+    imageGenerationExit([
+        'ok' => true,
+        'message_id' => $messageId,
+        's3_key' => $s3Key,
+        'mime_type' => $mimeType,
+        'size_bytes' => $sizeBytes,
+        'model_id' => $modelId,
+        'latency_ms' => $latencyMs,
+        'usage' => ['input_tokens' => 0, 'output_tokens' => 0, 'billing_unit' => 'image'],
+    ]);
+} catch (Throwable $e) {
+    // Si S3 alcanzó a recibir el objeto pero la persistencia falló, evitamos
+    // dejar basura huérfana cuando sea posible.
+    if ($s3Key !== null && class_exists('Config') && method_exists('Config', 'getS3')) {
+        try {
+            $bucket = (new S3Manager())->getBucket();
+            if ($bucket) Config::getS3()->deleteObject(['Bucket' => $bucket, 'Key' => $s3Key]);
+        } catch (Throwable $ignored) {}
+    }
+    error_log('IMAGE_GENERATION: ' . $e->getMessage());
+    imageGenerationExit(['ok' => false, 'error' => 'No se pudo generar la imagen: ' . $e->getMessage()], 500);
 }
