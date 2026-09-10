@@ -202,7 +202,7 @@ do {
                  WHERE id_=? AND user_id_=? AND session_id_=?"
             );
             if (!$stmt) throw new RuntimeException('No se pudo preparar la persistencia del video.');
-            $stmt->bind_param('sssisi ii', $content, $finalKey, $mime, $size, $metaJson, $messageId, $userId, $sessionId);
+            $stmt->bind_param('sssisiii', $content, $finalKey, $mime, $size, $metaJson, $messageId, $userId, $sessionId);
             if (!$stmt->execute()) {
                 $error = $stmt->error;
                 $stmt->close();
