@@ -1,217 +1,347 @@
-# task.php — Sistema de agentes y tareas de MiChat
+# Tasks — Orquestador persistente de trabajo de MiChat
 
-> Estado del documento: diseño aterrizado / componente en desarrollo.
-> Componente previsto: `task.php`.
-> Fecha de documentación: 2026-08-21.
+> Estado: implementación verificada en `main`.
+> Superficie web: `michat/task_center.php`.
+> API: `michat/task_api.php`.
+> Worker: `michat/bin/task_worker.php`.
+> Actualizado: 2026-09-09/10.
 
-## 1. Qué es task.php
+## 1. Qué es el sistema de Tasks
 
-`task.php` será el sistema de agentes y tareas de MiChat, inspirado funcionalmente en una organización de trabajo tipo Monday: una tarea puede dividirse, asignarse a agentes especializados, ejecutarse por segmentos y mantenerse bajo supervisión o avanzar con mayor autonomía.
+El sistema de Tasks de MiChat ya no es solo un diseño previsto. Es un dominio persistente que permite crear trabajo explícito, planificarlo, ejecutarlo por Steps, pausarlo para aprobación humana, reintentarlo, programarlo y mantenerlo activo independientemente del navegador.
 
-No representa el flujo conversacional principal. Esa responsabilidad pertenece a `chat.php`.
-
-Idea resumida:
-
-**`chat.php` conversa y construye respuestas; `task.php` organiza agentes para ejecutar trabajo.**
-
-## 2. Objetivo
-
-`task.php` permitirá utilizar agentes especializados para trabajos que requieren pasos, seguimiento, división de responsabilidades o ejecución progresiva.
-
-La arquitectura busca evitar depender de un único prompt enorme o de un único agente que intente realizar todas las funciones.
-
-Conceptualmente:
+La idea actual es:
 
 ```text
-Tarea
+Objetivo
   ↓
-task.php
+Task persistida
   ↓
-plan / estructura de trabajo
+Plan
   ↓
-agente o agentes especializados
+Steps
   ↓
-ejecución por segmentos
+Worker / HTTP sync
   ↓
-resultados observables
+Modelos + Tools
   ↓
-evaluación / continuación
+Resultados + Artifacts + Events
 ```
 
-## 3. Dos formas de trabajo
+La conversación normal pertenece a `chat.php`; el trabajo orquestado pertenece a `task_center.php` y a los servicios POO de `michat/includes/Tasks/`.
 
-El diseño contempla dos formas principales de ejecución.
+## 2. Frontera con el Chat
 
-### Supervisada
+Una pregunta normal del Chat no debe crear automáticamente una Task.
 
-El agente trabaja por segmentos bajo control. Esto permite observar lo que está haciendo, controlar el contexto y consumo de tokens, corregir instrucciones y decidir qué debe hacer en el siguiente paso.
+La implementación actual separa ambas superficies:
 
-Este modo es especialmente importante mientras un agente o prompt todavía está siendo afinado.
+- Chat usa un snapshot que enmascara flags `task_*`;
+- Task Center y `task_api.php` usan la configuración Task persistida;
+- el Worker continúa ejecutando trabajo async aunque el navegador se cierre;
+- una Task previamente creada y aprobada puede reanudarse mediante una acción explícita del dominio Task.
 
-### Libre / autónoma
+Esta frontera evita que una pregunta conversacional termine solicitando aprobación de agente sin que el usuario haya pedido una Task.
 
-Cuando la tarea, el agente y sus instrucciones han demostrado un comportamiento suficientemente estable, puede permitirse que continúe el trabajo con menor intervención humana.
+Referencia: `michat/doc/chat-task-boundary.md`.
 
-La autonomía no se considera un valor absoluto. Puede concederse progresivamente según el tipo de agente y los resultados obtenidos.
+## 3. Estados y persistencia
 
-## 4. Por qué trabajar por segmentos
+MySQL es la fuente de verdad. El dominio utiliza tablas como:
 
-La ejecución segmentada cumple al menos dos objetivos:
+- `Tasks`;
+- `TaskSteps`;
+- `TaskExecutions`;
+- `TaskEvents`;
+- `TaskDependencies`;
+- `TaskArtifacts`;
+- `TaskRecurrenceRules`;
+- `TaskRecurrenceOccurrences`;
+- tablas de autonomía, continuaciones y replanning de Fase 11.
 
-1. controlar el uso de tokens y el contexto entregado al modelo;
-2. mantener observabilidad sobre los resultados intermedios para saber qué instrucción proporcionar o cuándo permitir que el agente continúe solo.
+Los estados se validan mediante state machines y servicios POO, evitando transiciones improvisadas en endpoints o en el Worker.
 
-Esto permite evaluar el proceso externo de la arquitectura sin afirmar que se inspecciona el razonamiento neuronal interno del modelo.
+## 4. Creación manual y planificación
 
-Ejemplo:
+Task Center permite crear una Task manual con objetivo, sesión/proyecto, modo y programación.
+
+La planificación puede usar `task_planner`. El Planner produce un plan limitado a tipos ejecutables y el servidor asigna posiciones y valida el resultado antes de persistirlo.
+
+Después de PR #78, una respuesta normal que el Planner represente como `model -> validation -> finalize` se normaliza a un único Step `model` cuando esos controles no contienen una validación determinista ejecutable. Esto evita falsos `validation_failed` después de una respuesta correcta sin debilitar los validadores técnicos reales.
+
+## 5. Modos de ejecución
+
+### Supervised
+
+La Task o un Step puede quedar en `waiting_user` y exigir una decisión humana antes de continuar.
+
+### Automatic
+
+La Task puede quedar `ready` y ser reclamada por el Worker sin aprobación inicial, siempre respetando políticas, budgets, dependencias, scheduling y gates de Tools.
+
+La autonomía no significa ejecución sin límites. Los límites y la política siguen siendo autoridad server-side.
+
+## 6. Worker durable
+
+El Worker real es:
+
+```bash
+php michat/bin/task_worker.php --loop
+```
+
+En la instalación EC2 actual se supervisa mediante systemd. El Worker:
+
+- usa identidad propia por proceso;
+- reclama trabajo con lease;
+- usa `FOR UPDATE SKIP LOCKED` donde corresponde;
+- mantiene heartbeat de Task/Execution;
+- recupera ejecuciones abandonadas de forma conservadora;
+- observa cancelación cooperativa;
+- respeta `scheduled_at`;
+- procesa recurrencias, replans y continuaciones de forma acotada;
+- comparte la misma frontera POO de ejecución que HTTP;
+- no llama endpoints HTTP internos para ejecutar un Step.
+
+Configuración principal del Worker se recibe por entorno, incluyendo `TASK_WORKER_ID`, lease, sleep, recovery y budgets.
+
+## 7. Ejecución de Steps
+
+El registry productivo permite Steps y componentes especializados. Entre los ejecutores actuales se encuentran:
+
+- `model`;
+- `tool`;
+- `validation`;
+- `approval`;
+- `wait`;
+- controles internos necesarios para progresión.
+
+`ModelTaskStepExecutor` reutiliza `ChatExecutionService`, Memory/RAG y el runtime de Bedrock. El modelo efectivo queda persistido en la Execution.
+
+`ToolTaskStepExecutor` ejecuta Tools a través del registry compartido y conserva ToolCalls/Artifacts con provenance real.
+
+## 8. Tools
+
+El registry de producción incluye, entre otras:
+
+- `grep`;
+- `search`;
+- `view`;
+- `str_replace`;
+- `code_edit`.
+
+Las Tools de lectura son distinguibles de las escrituras. Las operaciones de escritura no deben ejecutarse silenciosamente en una Task que requiere HITL.
+
+## 9. HITL de Tools de escritura
+
+Las Tools con efectos de escritura pueden pasar por un gate de aprobación humana.
+
+El flujo es:
 
 ```text
-entrada
+Model / Tool Step propone escritura
   ↓
-segmento 1
+Policy clasifica riesgo
   ↓
-resultado observable
+Proposal segura + fingerprint persistido
   ↓
-segmento 2
+Task/Step/Execution -> waiting_user
   ↓
-nuevo resultado
+Usuario aprueba o rechaza
   ↓
-evaluación
+Nueva Execution
   ↓
-continuar / corregir / detener
+Fingerprint exacto se consume una sola vez
+  ↓
+Tool se ejecuta
 ```
 
-## 5. Agentes especializados
+La propuesta pública no expone parámetros sensibles, IDs internos ni payloads completos. La aprobación se vincula al fingerprint persistido y no a una descripción humana ambigua.
 
-Los agentes se diseñarán según el área o responsabilidad necesaria. Cada agente podrá tener una estructura/plantilla que defina qué debe hacer y bajo qué condiciones.
+## 10. Scheduling
 
-El sistema debe permitir crear o utilizar agentes específicos sin convertir cada nueva capacidad en un flujo rígido dentro de `chat.php`.
+Fase 10A añadió `scheduled_at` como límite one-shot UTC.
 
-## 6. Prompts y configuración de modelos
+- `NULL`: ejecutable cuando el resto de condiciones se cumplen;
+- pasado/presente: elegible;
+- futuro: no elegible todavía.
 
-Los prompts de los agentes se administrarán mediante la infraestructura de configuración de modelos/prompts de MiChat.
+La prioridad no puede saltarse `scheduled_at`.
 
-Durante la fase supervisada, cada agente podrá ser afinado personalmente y probado con distintos parámetros disponibles, entre ellos:
+Task Center permite reprogramar Tasks elegibles mediante optimistic locking.
 
-- prompt/instrucción;
-- modelo;
-- temperatura;
-- `seed`;
-- límites de tokens;
-- `top_p` y otros parámetros soportados;
-- reglas específicas del agente.
+## 11. Recurrencia
 
-El objetivo es encontrar configuraciones reproducibles y suficientemente estables antes de aumentar la autonomía.
+Fases 10D–10F añadieron recurrencia durable:
 
-## 7. Promoción hacia automatización
+- `daily`;
+- `weekly`;
+- timezone IANA;
+- hora civil;
+- manejo explícito de DST;
+- políticas de misfire `skip`, `run_once` y `catch_up` según contrato;
+- materialización acotada en el mismo Worker;
+- una Task como máximo por slot lógico mediante idempotencia/constraints;
+- pausa, resume y cancelación de reglas sin cancelar retrospectivamente Tasks ya materializadas.
 
-El flujo previsto para un agente es:
+No se creó un segundo Worker de recurrencia.
+
+## 12. Dependencias
+
+Las Tasks pueden depender de otras Tasks del mismo scope autorizado.
+
+Task Center expone relaciones directas e inversas sin filtrar IDs internos. El Worker no debe reclamar un Step mientras las dependencias autoritativas no estén satisfechas.
+
+## 13. Artifacts y versiones
+
+Las ejecuciones de Tools pueden producir `TaskArtifacts` que enlazan de forma mínima y auditable recursos como:
+
+- `ProjectSource`;
+- `SourceChunk`;
+- `FileVersion`;
+- `FileS3`.
+
+Los DTO públicos exponen únicamente metadata permitida. El contenido privado, rutas internas, leases, ToolCall IDs y payloads completos permanecen fuera de la respuesta pública.
+
+`code_edit` y otras operaciones de edición reutilizan `FileVersions` para conservar versiones reales y provenance.
+
+## 14. Resultados finales y ChatMessages
+
+Las Tasks modernas pueden enlazar su resultado final a `ChatMessages.result_message_id_` mediante el servicio compartido de persistencia de respuesta.
+
+Para Tasks legacy completadas sin ese vínculo, Task Center conserva compatibilidad de lectura usando `Tasks.result_summary` o el último `TaskSteps.output_summary` de modelo cuando corresponde.
+
+La persistencia moderna usa el `AUTO_INCREMENT` real de MySQL y evita `MAX(id_)+1`.
+
+## 15. Task Center
+
+`michat/task_center.php` es la superficie de operación humana.
+
+Incluye:
+
+- Lista y Tablero;
+- búsqueda y filtros;
+- prioridades y fechas;
+- detalle de Task y Step actual;
+- acciones HITL;
+- cancelación y retry cuando son válidos;
+- programación y recurrencia;
+- dependencias;
+- historial y Events;
+- Executions;
+- Artifacts;
+- navegación hacia chat/trace;
+- controles y observabilidad de autonomía.
+
+Desde PR #78, `michat/js/task-center-live.js` refresca cada 5 segundos mientras hay trabajo no terminal, pausa polling con la pestaña oculta y evita interrumpir formularios que el usuario está editando.
+
+## 16. Retry, recovery y cancelación
+
+El retry manual no revive una Execution histórica. Reactiva de manera controlada la Task y el Step fallido autorizado para que una nueva Execution sea creada.
+
+Recovery diferencia trabajo realmente abandonado de pausas HITL. Cancelación se valida contra estados persistidos y los guards impiden iniciar Bedrock o una Tool cuando la Task ya fue cancelada.
+
+## 17. Budgets
+
+El runtime Task aplica límites server-side a dimensiones como:
+
+- rondas de modelo;
+- Tool Calls;
+- input tokens;
+- output/total tokens;
+- escrituras;
+- duración.
+
+Estos límites no dependen del cliente y permanecen vigentes aunque la Task se ejecute automáticamente.
+
+## 18. Autonomía de Fase 11
+
+Fase 11 añadió autonomía operacional acotada por proyecto, no un loop libre e infinito.
+
+Incluye:
+
+- `ProjectAutonomyPolicies`;
+- budgets/reservas;
+- ciclos;
+- `NextWorkEvaluator`;
+- decisiones `stop`, `ask_user`, `propose_task`;
+- Proposals;
+- materialización de Tasks hijas;
+- continuaciones post-Task;
+- replanning versionado;
+- límites de profundidad y consumo;
+- observabilidad y controles en Task Center.
+
+La política `disabled` es el estado seguro. Los modos supervised/automatic siguen sometidos a presupuesto y scope.
+
+## 19. Observabilidad
+
+Tasks conserva información observable como:
+
+- estado actual;
+- Step actual;
+- modelo efectivo;
+- attempts;
+- Executions;
+- Events;
+- errors sanitizados;
+- ToolCalls;
+- Artifacts;
+- `trace_id`;
+- TokenUsage.
+
+Task Center no expone lease tokens, worker IDs ni IDs internos necesarios solo para persistencia.
+
+## 20. Seguridad
+
+Reglas actuales:
+
+- identidad del usuario resuelta server-side;
+- ownership antes de lectura/mutación;
+- `public_id` para navegación pública de Tasks;
+- optimistic locking para mutaciones sensibles;
+- CSRF en operaciones web;
+- Tools de escritura con HITL cuando la política lo exige;
+- no confiar en IDs de usuario enviados por el navegador;
+- ejecución durable separada del navegador.
+
+## 21. EC2 actual
+
+Ruta del repositorio:
 
 ```text
-AGENTE NUEVO
-    ↓
-SUPERVISADO
-    ↓
-pruebas por segmentos
-    ↓
-medición de resultados
-    ↓
-ajuste de prompt/parámetros
-    ↓
-nuevas pruebas
-    ↓
-comportamiento estable
-    ↓
-MAYOR AUTONOMÍA
-    ↓
-seguimiento
+/var/www/michat
 ```
 
-Un agente no debe considerarse confiable simplemente porque produjo una respuesta correcta una vez. Su comportamiento deberá evaluarse mediante múltiples ejecuciones y criterios definidos para su tarea.
-
-## 8. Relación con chat.php
-
-`chat.php` es el núcleo conversacional. Puede originar una necesidad de trabajo que posteriormente sea ejecutada por agentes de `task.php`.
+Worker:
 
 ```text
-Usuario
-  ↓
-chat.php
-  ↓
-¿requiere trabajo especializado?
-  ↓
-task.php
-  ↓
-agente(s)
-  ↓
-resultado
+/usr/bin/php /var/www/michat/michat/bin/task_worker.php --loop
 ```
 
-Esta separación permite que la conversación continúe siendo una responsabilidad distinta de la ejecución de tareas.
-
-## 9. Relación con MCMA
-
-MCMA reutilizará la infraestructura de agentes de `task.php`.
-
-No se pretende crear un segundo sistema independiente de agentes exclusivamente para memoria.
-
-Cuando `mcma.php` determine que se requiere una operación de memoria, podrá solicitar el trabajo de agentes especializados mediante `task.php`.
-
-Ejemplo conceptual:
+Unit systemd:
 
 ```text
-chat.php
-   ↓
-mcma.php
-   ↓
-task.php
-   ↓
-agente de memoria
-   ↓
-crear / organizar / relacionar / recuperar
-   ↓
-data/chat/{iduser}/memoria/
+/etc/systemd/system/michat-task-worker.service
 ```
 
-Los agentes de MCMA podrán trabajar, dentro de políticas controladas, sobre decisiones como creación de archivos, nombres, extensiones, contenido, organización, relaciones y recuperación.
-
-## 10. Agentes MCMA y niveles de memoria
-
-Los agentes relacionados con memoria trabajarán con los cuatro niveles oficiales definidos para MCMA:
+Entorno:
 
 ```text
-HOT ↔ WARM ↔ COLD ↔ FROZEN
+/etc/michat.env
 ```
 
-La decisión de promover o degradar información entre niveles deberá formar parte de políticas observables y evaluables, no de comportamiento oculto imposible de auditar.
+La instalación actual ejecuta el servicio como `apache:apache`.
 
-## 11. Observabilidad y métricas
+## 22. Estado por fases
 
-El diseño de `task.php` debe facilitar registrar qué agente actuó, qué configuración utilizó, qué tarea recibió y qué resultado produjo.
+- Fase 8: cerrada — Task Orchestrator y ejecución real.
+- Fase 9: cerrada — Task Center 2.0, relaciones, historial y hardening.
+- Fase 10: cerrada — scheduling, manual Tasks y recurrencia.
+- Fase 11: cerrada — autonomía acotada y replanning.
+- Fase 12: hardening/release — seguridad, migraciones, roles, compatibilidad y certificación externa.
 
-Esto permitirá comparar versiones de prompts, modelos y parámetros y determinar si un cambio realmente mejora el comportamiento.
+Los documentos de fase en `michat/doc/` son evidencia histórica. Para el estado operativo más reciente usar `michat/doc/contexto-operativo-actual.md` y verificar el código real de `main`.
 
-En MCMA esto será especialmente importante porque un error de un agente puede afectar posteriormente la memoria recuperada y, por consecuencia, futuras respuestas.
+## 23. Relación futura con MCMA
 
-## 12. Principios actuales de diseño
-
-1. `task.php` es la infraestructura de agentes/tareas, no el chat principal.
-2. Los trabajos complejos pueden dividirse por segmentos.
-3. La segmentación ayuda a controlar tokens y observabilidad.
-4. Existen modos supervisados y de mayor autonomía.
-5. Los agentes comienzan controlados mientras se afinan.
-6. Prompts y parámetros deben ser configurables y medibles.
-7. La autonomía se obtiene mediante comportamiento validado.
-8. MCMA reutilizará los agentes de `task.php`.
-9. `task.php` no sustituye a `mcma.php`: ejecuta los trabajos que MCMA necesite.
-10. Las decisiones futuras deben documentarse según la implementación real.
-
-## 13. Estado actual
-
-`task.php` está en proceso de finalización dentro del desarrollo de MiChat. Este documento recoge el diseño funcional acordado y su papel previsto en la integración con `chat.php` y MCMA.
-
-Las funciones, clases, endpoints y estructuras internas concretas deberán documentarse desde el código real cuando la implementación quede terminada y publicada en el repositorio.
-
----
-
-Este documento debe mantenerse separado entre **diseño previsto** e **implementación verificada** para no convertir decisiones futuras en hechos técnicos antes de que existan en código.
+MCMA puede reutilizar este dominio de Tasks para trabajos de memoria cuando esa integración exista. No debe asumirse que MCMA ya controla las Tasks o que `task.php` es una pieza futura pendiente: el sistema Task real de MiChat hoy vive en Task Center, Task API, Worker y servicios POO.
