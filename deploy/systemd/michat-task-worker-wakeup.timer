@@ -1,0 +1,19 @@
+# =============================================================================
+# /etc/systemd/system/michat-task-worker-wakeup.timer
+# Dispara el oneshot de wakeup cada minuto. Persistent=true recupera disparos
+# perdidos tras un reboot (arranca el worker si quedó trabajo pendiente).
+#
+# Este SÍ se habilita: WantedBy=timers.target. El servicio worker largo NO.
+# =============================================================================
+[Unit]
+Description=Run MiChat Task Worker wakeup once per minute
+Requires=michat-task-worker-wakeup.service
+
+[Timer]
+OnCalendar=*:*:00
+Persistent=true
+RandomizedDelaySec=5
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

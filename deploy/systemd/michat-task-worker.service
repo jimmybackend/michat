@@ -1,0 +1,54 @@
+# =============================================================================
+# /etc/systemd/system/michat-task-worker.service
+# Worker de tareas de MiChat: BAJO DEMANDA.
+#
+# Cambios clave frente a la versión anterior:
+#   - NO tiene [Install] WantedBy=multi-user.target  => no arranca al reboot.
+#   - Restart=on-failure (no "always")               => si el proceso sale con
+#     código 0 (auto-apagado por inactividad), systemd NO lo relanza.
+#   - EnvironmentFile=/etc/michat.env                => config centralizada.
+#
+# Lo arranca PHP vía sudo michat-worker-control start (ver sudoers) o el timer
+# de wakeup; lo apaga el propio worker por idle-timeout o el panel admin.
+# =============================================================================
+[Unit]
+Description=MiChat Task Worker (on-demand)
+Documentation=file:///var/www/michat/docs/TASK.md
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=apache
+Group=apache
+WorkingDirectory=/var/www/michat
+EnvironmentFile=/etc/michat.env
+ExecStart=/usr/bin/php /var/www/michat/michat/bin/task_worker.php --loop
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Apagado cooperativo: SIGTERM y tiempo suficiente para terminar la tarea actual.
+KillSignal=SIGTERM
+TimeoutStopSec=120
+SendSIGKILL=yes
+
+# Recursos muy limitados en t3.micro (~912 MiB): techo duro de memoria/CPU.
+MemoryMax=160M
+CPUQuota=80%
+
+# Hardening defensivo.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/run/michat-task-worker
+
+# RuntimeDir donde el worker escribe su activity.json (estado/inactividad).
+RuntimeDirectory=michat-task-worker
+RuntimeDirectoryMode=0755
+
+[Install]
+# Deliberadamente VACÍO: este servicio NO debe habilitarse en multi-user.
+# Se gestiona exclusivamente bajo demanda.

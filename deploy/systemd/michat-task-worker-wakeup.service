@@ -1,0 +1,30 @@
+# =============================================================================
+# /etc/systemd/system/michat-task-worker-wakeup.service
+# Red de seguridad: si el worker está apagado y quedó trabajo pendiente
+# (p.ej. creado mientras PHP no pudo lanzar el servicio, o tras un reboot),
+# este oneshot procesa UN ciclo (--once) y termina. No deja procesos vivos.
+#
+# Se dispara desde michat-task-worker-wakeup.timer cada minuto.
+# Si el worker largo (--loop) ya está activo, task_worker.php --once detecta
+# la actividad reciente por activity.json y sale sin duplicar trabajo real
+# (además el claim usa FOR UPDATE SKIP LOCKED + leases, así que es idempotente).
+# =============================================================================
+[Unit]
+Description=MiChat Task Worker one-shot wakeup (safety net)
+After=mariadb.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=apache
+Group=apache
+WorkingDirectory=/var/www/michat
+EnvironmentFile=/etc/michat.env
+ExecStart=/usr/bin/php /var/www/michat/michat/bin/task_worker.php --once
+TimeoutStartSec=120
+MemoryMax=160M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/run/michat-task-worker
