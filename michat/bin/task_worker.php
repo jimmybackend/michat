@@ -41,36 +41,55 @@ if(isset($options['once'])){
 $max=isset($options['max-jobs'])?max(1,(int)$options['max-jobs']):null;
 if($max!==null){$worker->loop($max);exit(0);}
 
-// Modo --loop puro: bucle con autoapagado por inactividad configurable.
+// ======================================================================
+// CORRECCIÓN APLICADA AQUÍ: Modo --loop puro con autoapagado real.
+// ======================================================================
 // Sale con código 0 => Restart=on-failure NO lo relanza => 0 MB consumidos.
-$lastWorkedAt=time();
-$cycleSleep=max(5,$config->sleepSeconds); // sondeo de cola/BD cada >=5 s
-do{
- $activity->record(['worked'=>true,'mode'=>'loop','worker_id'=>$config->workerId]);
- try{
-  $worked=$worker->once();
- }catch(Throwable$e){
-  error_log('Task worker cycle failed: '.ChatTaskBridge::sanitizeError($e));
-  $worked=false;
- }
- if(!$keepRunning)break; // señal llegada durante once(): apagado cooperativo
- if($worked){
-  $lastWorkedAt=time();
-  continue; // hay trabajo: siguiente ciclo inmediato
- }
- $activity->record(['worked'=>false,'mode'=>'loop','worker_id'=>$config->workerId]);
- $idle=min(time()-$lastWorkedAt,$activity->getIdleSeconds());
- if($idle>=$lifecycleConfig->idleTimeoutSeconds&&!TaskWorkerWorkload::hasPendingWork($db_connection)){
-  fwrite(STDERR,sprintf("task_worker: %d s sin trabajo; autoapagado limpio.\n",$idle));
-  break;
- }
- usleep(200000); // reaccionar a SIGTERM en <=200 ms aunque el sleep sea mayor
- if(!$keepRunning)break;
- $remaining=$cycleSleep-($cycleSleep%1);
- for($i=0;$i<$remaining&&$keepRunning;$i++){sleep(1);}
-}while($keepRunning);
+$lastWorkedAt = time(); // VARIABLE CLAVE: Solo se actualiza cuando hay trabajo real
+$cycleSleep = max(5, $config->sleepSeconds); // sondeo de cola/BD cada >=5 s
+
+do {
+    try {
+        $worked = $worker->once();
+    } catch (Throwable $e) {
+        error_log('Task worker cycle failed: ' . ChatTaskBridge::sanitizeError($e));
+        $worked = false;
+    }
+
+    if (!$keepRunning) {
+        break; // señal llegada: apagado cooperativo
+    }
+
+    if ($worked) {
+        // ¡Hubo trabajo real! Resetear el contador de inactividad y registrar.
+        $lastWorkedAt = time();
+        $activity->record(['worked' => true, 'mode' => 'loop', 'worker_id' => $config->workerId]);
+        continue; // siguiente ciclo inmediato para procesar más si hay
+    }
+
+    // No hubo trabajo en este ciclo. Registramos estado inactivo para el panel de admin.
+    $activity->record(['worked' => false, 'mode' => 'loop', 'worker_id' => $config->workerId]);
+
+    // Calculamos inactividad basada ÚNICAMENTE en la última vez que hubo trabajo real.
+    $idleSeconds = time() - $lastWorkedAt;
+
+    if ($idleSeconds >= $lifecycleConfig->idleTimeoutSeconds && !TaskWorkerWorkload::hasPendingWork($db_connection)) {
+        fwrite(STDERR, sprintf("task_worker: %d s sin trabajo; autoapagado limpio (timeout: %d s).\n", $idleSeconds, $lifecycleConfig->idleTimeoutSeconds));
+        break; // Salimos del bucle para apagado graceful
+    }
+
+    // Lógica de espera respetando señales (SIGTERM)
+    usleep(200000); // reaccionar a SIGTERM en <=200 ms
+    if (!$keepRunning) break;
+
+    $remaining = (int)$cycleSleep;
+    for ($i = 0; $i < $remaining && $keepRunning; $i++) {
+        sleep(1);
+    }
+} while ($keepRunning);
 
 // El proceso termina SOLO cuando systemd se lo pida (stop manual o idle-timeout).
 // No invoca al helper de parada: eso requeriría sudo desde dentro del servicio
 // y systemd no permite matar su propia unidad desde su cgroup.
+$activity->record(['worked' => false, 'mode' => 'loop', 'worker_id' => $config->workerId, 'status' => 'exiting']);
 exit(0);
