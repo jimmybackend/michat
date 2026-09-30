@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# =============================================================================
+# michat-worker-control
+# Helper binario de arranque/parada bajo demanda del worker de MiChat.
+# Instalarse en: /usr/local/sbin/michat-worker-control (root:root 0755)
+#
+# Contrato EXACTO (validado también por la lista blanca de sudoers):
+#   michat-worker-control <start|stop|status> michat-task-worker.service
+#
+# Seguridad:
+#   - Acepta SOLO 2 argumentos. Nada de entrada arbitraria llega a systemctl.
+#   - La acción debe estar en la lista cerrada {start,stop,status}.
+#   - El servicio debe ser exactamente "michat-task-worker.service".
+#   - No usa eval, no interpola entrada sin validación.
+# =============================================================================
+set -euo pipefail
+
+IFS=$'\n' read -r -d '' -a HELP <<'EOF' || true
+Usage: michat-worker-control <start|stop|status> michat-task-worker.service
+EOF
+
+err() { printf '%s\n' "${HELP[0]}" >&2; exit 2; }
+
+# --- Validación estricta de arity -------------------------------------------
+if [ "$#" -ne 2 ]; then
+    err
+fi
+
+ACTION="$1"
+SERVICE="$2"
+
+# --- Lista cerrada de acciones ----------------------------------------------
+case "${ACTION}" in
+    start|stop|status) ;;
+    *) err ;;
+esac
+
+# --- Servicio exacto permitido ----------------------------------------------
+if [ "${SERVICE}" != "michat-task-worker.service" ]; then
+    err
+fi
+
+# --- Refuerzo: nunca operar como usuario no-root desde HTTP -----------------
+# systemd nos da la autoridad; solo verificaremos que systemctl exista.
+SYSTEMCTL="$(command -v systemctl || true)"
+if [ -z "${SYSTEMCTL}" ]; then
+    echo "systemctl no disponible" >&2
+    exit 3
+fi
+
+case "${ACTION}" in
+    start)
+        # No reiniciar innecesariamente si ya está activo.
+        if "${SYSTEMCTL}" is-active --quiet "${SERVICE}"; then
+            echo "active"
+            exit 0
+        fi
+        "${SYSTEMCTL}" start "${SERVICE}"
+        # Devolver el estado real tras el intento de arranque.
+        if "${SYSTEMCTL}" is-active --quiet "${SERVICE}"; then
+            echo "active"
+            exit 0
+        else
+            echo "activating-or-failed" >&2
+            exit 4
+        fi
+        ;;
+    stop)
+        if ! "${SYSTEMCTL}" is-active --quiet "${SERVICE}"; then
+            echo "inactive"
+            exit 0
+        fi
+        # SIGTERM cooperativo con gracia generosa (el worker termina su tarea).
+        "${SYSTEMCTL}" stop --timeout=90s "${SERVICE}"
+        echo "inactive"
+        ;;
+    status)
+        if "${SYSTEMCTL}" is-active --quiet "${SERVICE}"; then
+            echo "active"
+            exit 0
+        else
+            echo "inactive"
+            exit 1
+        fi
+        ;;
+esac

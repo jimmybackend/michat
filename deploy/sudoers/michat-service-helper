@@ -1,0 +1,20 @@
+# =============================================================================
+# /etc/sudoers.d/michat-service-helper
+# Lista blanca CERRADA para que el usuario "apache" (php-fpm/nginx) pueda
+# controlar EXCLUSIVAMENTE el worker de tareas de MiChat.
+#
+# Instalar con:
+#   install -o root -g root -m 0440 deploy/sudoers/michat-service-helper \
+#       /etc/sudoers.d/michat-service-helper
+#   visudo -cf /etc/sudoers.d/michat-service-helper   # SIEMPRE validar antes
+#
+# NO se usa NOPASSWD: ALL. Solo las tres líneas exactas de abajo.
+# El helper binario valida además los argumentos por su cuenta.
+# =============================================================================
+
+Defaults!/usr/local/sbin/michat-worker-control env_reset
+Defaults!/usr/local/sbin/michat-worker-control secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+apache ALL=(root) NOPASSWD: /usr/local/sbin/michat-worker-control start michat-task-worker.service
+apache ALL=(root) NOPASSWD: /usr/local/sbin/michat-worker-control stop michat-task-worker.service
+apache ALL=(root) NOPASSWD: /usr/local/sbin/michat-worker-control status michat-task-worker.service
