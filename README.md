@@ -312,6 +312,8 @@ mysql -u root -p "$DB_NAME" < adbbmis1_Cloud.sql
 php michat/bin/migrations.php baseline --profile=current-dump
 ```
 
+El dump consolidado **does not create or select a database**; hereda el `DB_NAME` elegido por el despliegue y debe importarse explícitamente en esa base, como muestra el comando anterior.
+
 Configure el entorno efectivo con DB y AWS. `.env` es opcional: en producción se puede inyectar configuración mediante Apache/PHP-FPM y systemd.
 
 Variables principales:
