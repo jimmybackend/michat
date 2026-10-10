@@ -22,12 +22,11 @@ foreach ([$policyPath,$prefsPath,$uiPath,$modalPath,$endpointPath,$chatJsPath,$r
 }
 
 require_once $policyPath;
-$check(ImageGenerationPolicy::DEFAULT_MODEL === 'amazon.titan-image-generator-v2:0', 'Titan Image v2 es fallback durable por defecto');
-$check(ImageGenerationPolicy::isAllowed('amazon.titan-image-generator-v2:0'), 'Titan Image v2 permitido');
-$check(ImageGenerationPolicy::isAllowed('amazon.nova-canvas-v1:0'), 'Nova Canvas permitido mientras siga disponible');
+$check(ImageGenerationPolicy::DEFAULT_MODEL === 'amazon.nova-canvas-v1:0', 'Nova Canvas es el generador predeterminado vigente');
+$check(!ImageGenerationPolicy::isAllowed('amazon.titan-image-generator-v2:0'), 'Titan Image v2 retirado no se permite');
+$check(ImageGenerationPolicy::isAllowed('amazon.nova-canvas-v1:0'), 'Nova Canvas permitido por la política vigente');
 $check(!ImageGenerationPolicy::isAllowed('amazon.nova-lite-v1:0'), 'modelo de comprensión no se acepta como generador');
 $check(ImageGenerationPolicy::maxPromptChars('amazon.nova-canvas-v1:0') === 1024, 'límite de prompt Nova Canvas protegido');
-$check(ImageGenerationPolicy::maxPromptChars('amazon.titan-image-generator-v2:0') === 512, 'límite de prompt Titan protegido');
 
 $prefs = (string)file_get_contents($prefsPath);
 $ui = (string)file_get_contents($uiPath);
@@ -38,7 +37,7 @@ $runtime = (string)file_get_contents($runtimePath);
 
 $check(str_contains($modal, "require __DIR__ . '/image_generation.php'"), 'Preferencias carga el bloque image_main');
 $check(str_contains($ui, 'aiImageGenerationModel') && str_contains($ui, 'aiImageGenerationActive'), 'UI permite elegir modelo y activar/desactivar');
-$check(str_contains($ui, 'Titan Image Generator v2') && str_contains($ui, 'Nova Canvas'), 'UI muestra los dos generadores soportados');
+$check(!str_contains($ui, 'Titan Image Generator v2') && str_contains($ui, 'Nova Canvas'), 'UI no ofrece Titan retirado y muestra Nova Canvas');
 $check(str_contains($prefs, "upsertUserOverride(\$userId, 'image_main'") && str_contains($prefs, 'csrf_token'), 'preferencia se persiste por usuario con CSRF');
 $check(str_contains($prefs, 'ensureImageGenerationGlobal') && str_contains($prefs, 'defaultGlobalConfig'), 'primer cambio crea configuración global idempotente');
 

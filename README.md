@@ -93,8 +93,8 @@ Por ahora, MiChat mantiene las capacidades generativas de chat, visión, imagen,
 
 ### Generación de imágenes — `image_main`
 
-- **Amazon Titan Image Generator v2**: modelo predeterminado más durable.
-- **Amazon Nova Canvas**: opción Legacy mientras permanezca disponible.
+- **Amazon Nova Canvas**: generador permitido por la política runtime vigente.
+- **Amazon Titan Image Generator v2**: retirado del selector y rechazado por la política de ejecución; preferencias históricas se migran a Nova Canvas al invocar.
 - generación inicial cerrada a 1024x1024;
 - modelo resuelto server-side desde `UserAIAgentConfigs`;
 - salida PNG privada en S3;
@@ -289,7 +289,7 @@ Nunca publiques `.env`, credenciales AWS/DB, dumps de producción ni datos priva
 ## Requisitos
 
 - PHP 8.1+; el proyecto se desarrolla para PHP 8.x.
-- MySQL 8.0.16+.
+- MySQL 8.0.16+ (`MySQL 8.0.16 or newer`); MariaDB no sustituye este contrato.
 - Composer 2.
 - extensiones PHP `mysqli`, `mbstring`, `curl`, `openssl`, `fileinfo` y JSON.
 - servidor web Apache o nginx + PHP-FPM.
@@ -311,6 +311,8 @@ mysql -u root -p -e "CREATE DATABASE \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLAT
 mysql -u root -p "$DB_NAME" < adbbmis1_Cloud.sql
 php michat/bin/migrations.php baseline --profile=current-dump
 ```
+
+El dump consolidado **does not create or select a database**; hereda el `DB_NAME` elegido por el despliegue y debe importarse explícitamente en esa base, como muestra el comando anterior.
 
 Configure el entorno efectivo con DB y AWS. `.env` es opcional: en producción se puede inyectar configuración mediante Apache/PHP-FPM y systemd.
 
