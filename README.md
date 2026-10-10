@@ -93,8 +93,8 @@ Por ahora, MiChat mantiene las capacidades generativas de chat, visión, imagen,
 
 ### Generación de imágenes — `image_main`
 
-- **Amazon Titan Image Generator v2**: modelo predeterminado más durable.
-- **Amazon Nova Canvas**: opción Legacy mientras permanezca disponible.
+- **Amazon Nova Canvas**: generador permitido por la política runtime vigente.
+- **Amazon Titan Image Generator v2**: retirado del selector y rechazado por la política de ejecución; preferencias históricas se migran a Nova Canvas al invocar.
 - generación inicial cerrada a 1024x1024;
 - modelo resuelto server-side desde `UserAIAgentConfigs`;
 - salida PNG privada en S3;
