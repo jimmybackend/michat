@@ -1,0 +1,159 @@
+/* Acerca de MiChat: usa exclusivamente el sistema de temas existente. */
+body.ui-theme .michat-about-open {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1050;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 7px 14px;
+  border: 1px solid var(--border) !important;
+  border-radius: 999px !important;
+  background: var(--bg2) !important;
+  color: var(--text) !important;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+body.ui-theme .michat-about-open:hover,
+body.ui-theme .michat-about-open:focus-visible {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  outline: none;
+}
+
+body.ui-theme .michat-about-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  overflow: auto;
+  padding: max(20px, 7vh) 15px;
+  background: rgba(0, 0, 0, .68);
+}
+
+body.ui-theme .michat-about-dialog {
+  width: min(100%, 580px);
+  margin: auto;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 18px);
+  background: var(--bg2);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+body.ui-theme .michat-about-dialog h3,
+body.ui-theme .michat-about-dialog h4,
+body.ui-theme .michat-about-dialog p,
+body.ui-theme .michat-about-dialog label,
+body.ui-theme .michat-about-dialog strong {
+  color: var(--text) !important;
+}
+
+body.ui-theme .michat-about-dialog a {
+  color: var(--accent) !important;
+}
+
+body.ui-theme .michat-about-dialog hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.25rem 0;
+}
+
+body.ui-theme .michat-about-close {
+  float: right;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+  background: var(--bg3) !important;
+  color: var(--text) !important;
+  cursor: pointer;
+}
+body.ui-theme .michat-about-close:hover,
+body.ui-theme .michat-about-close:focus-visible {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  outline: none;
+}
+
+body.ui-theme .michat-about-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0 0;
+}
+
+body.ui-theme .michat-about-button {
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+  background: var(--bg3) !important;
+  color: var(--text) !important;
+  font-weight: 600;
+  cursor: pointer;
+}
+body.ui-theme .michat-about-button:hover,
+body.ui-theme .michat-about-button:focus-visible {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  outline: none;
+}
+body.ui-theme .michat-about-button-primary {
+  border-color: var(--accent) !important;
+  background: var(--accent) !important;
+  color: var(--bg) !important;
+}
+body.ui-theme .michat-about-button:disabled {
+  opacity: .6;
+  cursor: wait;
+}
+
+body.ui-theme .michat-about-status {
+  margin-top: 12px;
+  color: var(--text) !important;
+}
+body.ui-theme .michat-about-details {
+  overflow-wrap: anywhere;
+  color: var(--text-soft) !important;
+}
+
+body.ui-theme .michat-about-password {
+  display: block;
+  width: 100%;
+  min-height: 42px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+  background: var(--bg) !important;
+  color: var(--text) !important;
+}
+body.ui-theme .michat-about-password:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), .16);
+  outline: none;
+}
+
+@media (max-width: 640px) {
+  body.ui-theme .michat-about-modal {
+    padding: 12px;
+  }
+  body.ui-theme .michat-about-dialog {
+    padding: 18px;
+    border-radius: 14px;
+  }
+  body.ui-theme .michat-about-open {
+    right: 12px;
+    bottom: 12px;
+  }
+  body.ui-theme .michat-about-actions {
+    display: grid;
+  }
+  body.ui-theme .michat-about-button {
+    width: 100%;
+  }
+}
