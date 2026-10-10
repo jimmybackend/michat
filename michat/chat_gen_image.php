@@ -54,6 +54,10 @@ if ($imageConfig && !aiAgentActive('image_main', true)) {
 }
 
 $modelId = aiAgentModel('image_main', ImageGenerationPolicy::DEFAULT_MODEL);
+// A persisted legacy preference must not keep invoking the retired Titan model.
+if ($modelId === ImageGenerationPolicy::TITAN_IMAGE_V2) {
+    $modelId = ImageGenerationPolicy::NOVA_CANVAS_V1;
+}
 if (!ImageGenerationPolicy::isAllowed($modelId)) {
     error_log('IMAGE_GENERATION_CONFIG: modelo no permitido: ' . $modelId);
     imageGenerationExit(['ok' => false, 'error' => 'El modelo configurado para imágenes no es compatible.'], 500);

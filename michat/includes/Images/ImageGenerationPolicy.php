@@ -11,12 +11,12 @@ final class ImageGenerationPolicy
 {
     public const TITAN_IMAGE_V2 = 'amazon.titan-image-generator-v2:0';
     public const NOVA_CANVAS_V1 = 'amazon.nova-canvas-v1:0';
-    public const DEFAULT_MODEL = self::TITAN_IMAGE_V2;
+    public const DEFAULT_MODEL = self::NOVA_CANVAS_V1;
 
     /** @return list<string> */
     public static function allowedModels(): array
     {
-        return [self::TITAN_IMAGE_V2, self::NOVA_CANVAS_V1];
+        return [self::NOVA_CANVAS_V1];
     }
 
     public static function isAllowed(string $modelId): bool
@@ -26,7 +26,7 @@ final class ImageGenerationPolicy
 
     public static function maxPromptChars(string $modelId): int
     {
-        return trim($modelId) === self::NOVA_CANVAS_V1 ? 1024 : 512;
+        return 1024;
     }
 
     /**
@@ -55,7 +55,7 @@ final class ImageGenerationPolicy
             'display_name' => 'Generación de imágenes',
             'description' => 'Genera imágenes desde texto con Amazon Bedrock y las guarda en el historial de MiChat.',
             'model_id' => self::DEFAULT_MODEL,
-            'fallback_model_id' => self::NOVA_CANVAS_V1,
+            'fallback_model_id' => null,
             'model_ladder_json' => json_encode(self::allowedModels(), JSON_UNESCAPED_SLASHES),
             'system_instruction' => 'Genera una imagen fiel a la solicitud del usuario. Prioriza composición clara, legibilidad visual y utilidad para ilustraciones, esquemas, diseños y material escolar.',
             'user_prompt_template' => '{{prompt}}',

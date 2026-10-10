@@ -78,7 +78,8 @@ if (!isset($db_connection) || !($db_connection instanceof mysqli)) {
 }
 
 $messageId = (int)($_GET['message_id'] ?? 0);
-$waitSecs = min(120, max(0, (int)($_GET['wait_secs'] ?? 0)));
+// Keep request duration well below nginx/PHP-FPM gateway timeouts.
+$waitSecs = min(5, max(0, (int)($_GET['wait_secs'] ?? 0)));
 if ($messageId <= 0) videoStatusExit(['ok' => false, 'error' => 'message_id inválido'], 400);
 
 // Ownership se resuelve antes de S3, Bedrock y cualquier UPDATE.

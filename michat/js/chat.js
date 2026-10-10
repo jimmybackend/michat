@@ -2500,7 +2500,7 @@ async function sendMessage() {
     }
     async function autoGenerateVideo(prompt) {
       setStatus('Iniciando video…');
-      const SERVER_WAIT_SECS = 120, MAX_WAIT_MS = 20 * 60 * 1000, COOLDOWN_MS = 1500, FETCH_TIMEOUT_MS = (SERVER_WAIT_SECS + 30) * 1000;
+      const SERVER_WAIT_SECS = 0, MAX_WAIT_MS = 20 * 60 * 1000, COOLDOWN_MS = 3000, FETCH_TIMEOUT_MS = 15000;
       const wait = (ms) => new Promise(res => setTimeout(res, ms));
       const normalize = (s) => String(s || '').toLowerCase();
       const isDone = (s) => ['completed','complete','succeeded','success','done'].includes(normalize(s));
