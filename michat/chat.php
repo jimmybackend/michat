@@ -1271,5 +1271,26 @@ role="progressbar" style="width: 0%">0%</div>
 })();
 </script>
 
+<!-- MiChat: información pública y actualizador sólo autorizado por backend -->
+<button id="michat-about-open" type="button" title="Acerca de MiChat" aria-label="Acerca de MiChat" style="position:fixed;right:20px;bottom:20px;z-index:1050;border:1px solid #6c757d;border-radius:25px;padding:7px 14px;background:#202830;color:white;cursor:pointer">ⓘ Acerca de</button>
+<section id="michat-about-modal" hidden role="dialog" aria-modal="true" aria-label="Acerca de MiChat" style="position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.72);overflow:auto;padding:7vh 15px">
+  <div style="max-width:580px;margin:auto;background:#20242b;color:#f2f2f2;border:1px solid #777;border-radius:12px;padding:22px">
+    <button id="michat-about-close" type="button" style="float:right" aria-label="Cerrar">✕</button>
+    <h3>Acerca de MiChat</h3>
+    <p>MiChat es una plataforma de conversación y automatización con IA, memoria, proyectos y capacidades multimodales sobre AWS.</p>
+    <p><strong>Proyecto:</strong> <a href="https://github.com/jimmybackend/michat" target="_blank" rel="noopener noreferrer">jimmybackend/michat</a></p>
+    <p>El código fuente está disponible públicamente para su estudio y contribución. MiChat es software libre distribuido bajo la licencia MIT. Puedes usarlo, estudiarlo, modificarlo y redistribuirlo respetando las condiciones del archivo LICENSE. Los servicios AWS requieren una cuenta propia y pueden generar costos.</p>
+    <hr style="border-color:#555">
+    <h4>Actualizaciones del sistema</h4>
+    <p>Únicamente el superusuario puede consultar e instalar actualizaciones. Nunca se ejecutan migraciones de MySQL automáticamente.</p>
+    <button id="michat-update-check" type="button">Buscar actualizaciones</button>
+    <p id="michat-update-status" role="status" style="margin-top:12px"></p>
+    <p id="michat-update-details" style="overflow-wrap:anywhere"></p>
+    <label for="michat-update-password">Contraseña actual de superusuario</label>
+    <input id="michat-update-password" type="password" autocomplete="current-password" style="display:block;width:100%;margin:8px 0;color:#111;padding:6px">
+    <button id="michat-update-apply" type="button" hidden>Actualizar ahora</button>
+  </div>
+</section>
+<script src="js/michat-updater.js"></script>
 </body>
 </html>
