@@ -289,7 +289,7 @@ Nunca publiques `.env`, credenciales AWS/DB, dumps de producción ni datos priva
 ## Requisitos
 
 - PHP 8.1+; el proyecto se desarrolla para PHP 8.x.
-- MySQL 8.0.16+.
+- MySQL 8.0.16+ (`MySQL 8.0.16 or newer`); MariaDB no sustituye este contrato.
 - Composer 2.
 - extensiones PHP `mysqli`, `mbstring`, `curl`, `openssl`, `fileinfo` y JSON.
 - servidor web Apache o nginx + PHP-FPM.
