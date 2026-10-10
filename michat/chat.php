@@ -1279,7 +1279,7 @@ role="progressbar" style="width: 0%">0%</div>
     <h3>Acerca de MiChat</h3>
     <p>MiChat es una plataforma de conversación y automatización con IA, memoria, proyectos y capacidades multimodales sobre AWS.</p>
     <p><strong>Proyecto:</strong> <a href="https://github.com/jimmybackend/michat" target="_blank" rel="noopener noreferrer">jimmybackend/michat</a></p>
-    <p>El código fuente está disponible públicamente para su estudio y contribución. Los derechos de uso y redistribución se rigen por el archivo LICENSE del repositorio, cuando corresponda. Los servicios AWS requieren una cuenta propia y pueden generar costos.</p>
+    <p>El código fuente está disponible públicamente para su estudio y contribución. MiChat es software libre distribuido bajo la licencia MIT. Puedes usarlo, estudiarlo, modificarlo y redistribuirlo respetando las condiciones del archivo LICENSE. Los servicios AWS requieren una cuenta propia y pueden generar costos.</p>
     <hr style="border-color:#555">
     <h4>Actualizaciones del sistema</h4>
     <p>Únicamente el superusuario puede consultar e instalar actualizaciones. Nunca se ejecutan migraciones de MySQL automáticamente.</p>
