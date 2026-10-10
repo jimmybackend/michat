@@ -18,8 +18,7 @@
         </div>
 
         <select id="aiImageGenerationModel" class="form-control form-control-sm">
-            <option value="amazon.titan-image-generator-v2:0">Amazon — Titan Image Generator v2 (recomendado)</option>
-            <option value="amazon.nova-canvas-v1:0">Amazon — Nova Canvas (Legacy · EOL 30/09/2026)</option>
+            <option value="amazon.nova-canvas-v1:0">Amazon — Nova Canvas</option>
         </select>
 
         <small class="text-muted">
@@ -54,10 +53,12 @@
             const response = await fetch(endpoint + '?action=get', { credentials: 'same-origin', cache: 'no-cache' });
             const data = await response.json();
             if (!response.ok || !data.ok) throw new Error(data.error || ('HTTP ' + response.status));
-            model.value = data.model_id || 'amazon.titan-image-generator-v2:0';
+            model.value = data.allowed_models && data.allowed_models.includes(data.model_id)
+                ? data.model_id
+                : 'amazon.nova-canvas-v1:0';
             active.checked = Number(data.is_active) === 1;
             status(data.source === 'builtin_fallback'
-                ? 'Titan Image Generator v2 está listo como valor predeterminado. El primer cambio se guardará en tu configuración.'
+                ? 'Nova Canvas está listo como valor predeterminado. El primer cambio se guardará en tu configuración.'
                 : 'Configuración efectiva cargada (' + data.source + ').', 'info');
         } catch (error) {
             console.error('image generation preferences load:', error);
