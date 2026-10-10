@@ -142,15 +142,27 @@ queue.push(chunkEvent({ contentStart: {
     audioType: 'SPEECH',
   },
 }}));
-for (let offset = 0; offset < audio.length; offset += 2048) {
-  const data = audio.subarray(offset, Math.min(audio.length, offset + 2048));
-  queue.push(chunkEvent({ audioInput: {
-    promptName,
-    contentName: audioContentName,
-    content: data.toString('base64'),
-  }}));
+// Nova Sonic requires microphone frames at approximately their real-time cadence.
+// Flooding a 30-second recording into the HTTP/2 stream in a single burst can
+// cause model stream failures or incomplete turn detection.
+async function streamRecordedAudio() {
+  const frameBytes = 1024; // 32 ms at 16 kHz, 16-bit mono.
+  const frameMs = 32;
+  const start = Date.now();
+  for (let offset = 0, frame = 0; offset < audio.length; offset += frameBytes, frame++) {
+    const data = audio.subarray(offset, Math.min(audio.length, offset + frameBytes));
+    queue.push(chunkEvent({ audioInput: {
+      promptName,
+      contentName: audioContentName,
+      content: data.toString('base64'),
+    }}));
+    const delay = start + (frame + 1) * frameMs - Date.now();
+    if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+    if (endSent) return;
+  }
+  queue.push(chunkEvent({ contentEnd: { promptName, contentName: audioContentName } }));
+  finishInputStream();
 }
-queue.push(chunkEvent({ contentEnd: { promptName, contentName: audioContentName } }));
 
 const client = new BedrockRuntimeClient({
   region,
@@ -202,6 +214,7 @@ const hardTimeout = setTimeout(() => {
 }, 90_000);
 
 try {
+  const audioTask = streamRecordedAudio();
   const response = await client.send(new InvokeModelWithBidirectionalStreamCommand({
     modelId,
     body: queue,
@@ -225,12 +238,12 @@ try {
         stage: generationStage(start),
         type: String(start.type || '').toUpperCase(),
       };
-      contentMeta.set(String(start.contentName || ''), currentContentMeta);
+      contentMeta.set(String(start.contentId || start.contentName || ''), currentContentMeta);
       continue;
     }
     if (ev.textOutput) {
       const out = ev.textOutput;
-      const meta = contentMeta.get(String(out.contentName || '')) || currentContentMeta || {};
+      const meta = contentMeta.get(String(out.contentId || out.contentName || '')) || currentContentMeta || {};
       const role = String(out.role || meta.role || '').toUpperCase();
       const stage = String(meta.stage || 'FINAL').toUpperCase();
       if (stage !== 'SPECULATIVE') {
@@ -255,10 +268,11 @@ try {
       continue;
     }
     if (ev.completionEnd) {
-      completed = true;
+      completed = String(ev.completionEnd.stopReason || 'END_TURN').toUpperCase() === 'END_TURN';
       finishInputStream();
     }
   }
+  await audioTask;
 } catch (error) {
   clearTimeout(hardTimeout);
   finishInputStream();
