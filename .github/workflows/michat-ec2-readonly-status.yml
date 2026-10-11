@@ -1,0 +1,53 @@
+name: MiChat EC2 read-only status
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  ec2-status:
+    if: github.repository == 'jimmybackend/michat'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate MiChat configuration
+        env:
+          ROLE_ARN: ${{ vars.MICHAT_AWS_ROLE_ARN }}
+          REGION: ${{ vars.MICHAT_AWS_REGION }}
+          INSTANCE_ID: ${{ vars.MICHAT_AWS_EC2_ID }}
+        run: |
+          test -n "$ROLE_ARN" || { echo "::error::Set MICHAT_AWS_ROLE_ARN"; exit 1; }
+          [[ "$REGION" =~ ^[a-z]{2}(-gov)?-[a-z]+-[0-9]+$ ]] || { echo "::error::Invalid MICHAT_AWS_REGION"; exit 1; }
+          [[ "$INSTANCE_ID" =~ ^i-[0-9a-f]{8,17}$ ]] || { echo "::error::Invalid MICHAT_AWS_EC2_ID"; exit 1; }
+      - name: Assume dedicated OIDC role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.MICHAT_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.MICHAT_AWS_REGION }}
+          role-session-name: MiChatReadOnly
+      - name: Check MiChat EC2 state and SSM registration
+        env:
+          AWS_REGION: ${{ vars.MICHAT_AWS_REGION }}
+          INSTANCE_ID: ${{ vars.MICHAT_AWS_EC2_ID }}
+        shell: bash
+        run: |
+          python3 -m pip -q install 'boto3>=1.35,<2'
+          python3 - <<'PY'
+          import os, boto3
+          session=boto3.Session(region_name=os.environ["AWS_REGION"])
+          instance_id=os.environ["INSTANCE_ID"]
+          reservations=session.client("ec2").describe_instances(InstanceIds=[instance_id])["Reservations"]
+          instances=[i for r in reservations for i in r["Instances"]]
+          if len(instances)!=1 or instances[0]["InstanceId"]!=instance_id:
+              raise SystemExit("MiChat EC2 not found for this identity")
+          state=instances[0]["State"]["Name"]
+          info=session.client("ssm").describe_instance_information(
+              Filters=[{"Key":"InstanceIds","Values":[instance_id]}]
+          )["InstanceInformationList"]
+          ping=info[0].get("PingStatus","Unknown") if info else "NotRegistered"
+          print(f"MICHAT_EC2_STATE={state}")
+          print(f"MICHAT_SSM_STATUS={ping}")
+          PY
