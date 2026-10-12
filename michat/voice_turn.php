@@ -161,7 +161,9 @@ stream_set_blocking($pipes[1], false);
 stream_set_blocking($pipes[2], false);
 $stdout = '';
 $stderr = '';
-$deadline = microtime(true) + 100.0;
+// Mantener el tiempo total por debajo del timeout habitual del proxy nginx.
+// Si Sonic no responde, devolver JSON controlado en vez de un 504 HTML.
+$deadline = microtime(true) + 45.0;
 $exitCode = null;
 while (true) {
     $stdout .= (string)stream_get_contents($pipes[1]);
@@ -188,8 +190,22 @@ if (($exitCode === null || $exitCode < 0) && $closeCode >= 0) $exitCode = $close
 $durationMs = max(0, (int)round((hrtime(true) - $startedAt) / 1_000_000));
 
 if ($exitCode !== 0) {
-    error_log('VOICE_SONIC_ERROR: ' . mb_substr(trim($stderr), 0, 1000));
-    voiceTurnExit(['ok' => false, 'error' => $exitCode === 124 ? 'El turno de voz excedió el tiempo máximo.' : 'Nova 2 Sonic no pudo completar el turno.'], 502);
+    $diagnostic = trim($stderr);
+    // Nunca devolver stderr crudo: puede contener detalles internos del SDK.
+    error_log('VOICE_SONIC_ERROR exit=' . $exitCode . ' duration_ms=' . $durationMs . ': ' . mb_substr($diagnostic, 0, 1500));
+    $publicError = 'Nova 2 Sonic no pudo completar el turno. Revisa el registro VOICE_SONIC_ERROR del servidor.';
+    $httpStatus = 502;
+    if ($exitCode === 124) {
+        $publicError = 'Nova 2 Sonic no respondió en 45 segundos. Intenta una grabación más corta.';
+        $httpStatus = 504;
+    } elseif (preg_match('/(AccessDenied|not authorized|Unauthorized|UnrecognizedClient)/i', $diagnostic)) {
+        $publicError = 'AWS rechazó el acceso a Nova 2 Sonic. Revisa permisos y habilitación del modelo.';
+    } elseif (preg_match('/(ValidationException|unsupported model|model identifier|resource not found|ResourceNotFound)/i', $diagnostic)) {
+        $publicError = 'Nova 2 Sonic no está disponible con la configuración actual de Bedrock. Revisa modelo y región.';
+    } elseif (preg_match('/(ENOTFOUND|ECONNREFUSED|ETIMEDOUT|TimeoutError|NetworkingError)/i', $diagnostic)) {
+        $publicError = 'No se pudo conectar con Bedrock para procesar la voz.';
+    }
+    voiceTurnExit(['ok' => false, 'error' => $publicError], $httpStatus);
 }
 
 $result = json_decode(trim($stdout), true);
