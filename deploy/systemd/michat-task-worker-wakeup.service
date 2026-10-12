@@ -28,3 +28,7 @@ PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
 ReadWritePaths=/run/michat-task-worker
+# El oneshot debe crear su runtime aunque el worker largo esté apagado.
+RuntimeDirectory=michat-task-worker
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
