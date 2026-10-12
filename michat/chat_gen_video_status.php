@@ -128,7 +128,7 @@ try {
     $s3 = Config::getS3();
     $bucket = (string)(new S3Manager())->getBucket();
     if ($bucket === '') throw new RuntimeException('Bucket S3 no configurado.');
-    $bedrock = Config::getBedrockRuntime(['http' => ['connect_timeout' => 10, 'timeout' => 60]]);
+    $bedrock = Config::getBedrockRuntime(['http' => ['connect_timeout' => 3, 'timeout' => 8]]);
 } catch (Throwable $e) {
     error_log('VIDEO_GENERATION_STATUS_INIT: ' . $e->getMessage());
     videoStatusExit(['ok' => false, 'error' => 'No se pudo inicializar S3/Bedrock para consultar el video.'], 500);
