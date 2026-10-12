@@ -6,12 +6,17 @@ declare(strict_types=1);
 const CONFIG = '/etc/michat/updater.json';
 function failUpdate(string $message, int $code=1): never { fwrite(STDERR,$message."\n"); exit($code); }
 function gitRun(array $cfg, array $args, array $allowed=[0]): array {
-    $cmd=array_merge(['/usr/sbin/runuser','-u',$cfg['repo_user'],'--','/usr/bin/git','-C',$cfg['repo_root']],$args);
+    // No permitir que git status/fetch deje bloqueado un worker web indefinidamente.
+    // timeout termina el árbol de la operación; --kill-after evita procesos resistentes a SIGTERM.
+    $seconds=($args[0]??'')==='fetch'?'60s':'30s';
+    $cmd=array_merge(['/usr/bin/timeout','--signal=TERM','--kill-after=5s',$seconds,
+        '/usr/sbin/runuser','-u',$cfg['repo_user'],'--','/usr/bin/git','-C',$cfg['repo_root']],$args);
     $p=proc_open($cmd,[0=>['file','/dev/null','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes,null,null,['bypass_shell'=>true]);
     if(!is_resource($p)) failUpdate('No se pudo ejecutar Git.');
     $out=stream_get_contents($pipes[1],131073); $err=stream_get_contents($pipes[2],32769);
     fclose($pipes[1]);fclose($pipes[2]);$code=proc_close($p);
     if(strlen((string)$out)>131072||strlen((string)$err)>32768) failUpdate('Salida de Git demasiado grande.');
+    if(in_array($code,[124,137],true)) failUpdate('Tiempo máximo agotado al ejecutar Git ('.$args[0].').',75);
     if(!in_array($code,$allowed,true)) failUpdate('Git rechazó la operación: '.substr(trim((string)$err),0,500),70);
     return ['code'=>$code,'out'=>trim((string)$out)];
 }
