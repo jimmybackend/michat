@@ -159,10 +159,16 @@ if ($canRuntimeReset) {
         <span class="settings-card-badge text-danger"><i class="fas fa-exclamation-triangle"></i> Zona peligrosa</span>
     </div>
     <p class="small text-muted mb-2">
-        Limpia las tablas de trabajo del chat, memoria temporal, RAG, trazas y Tasks.
-        Conserva usuarios, configuración de IA, preferencias, proyectos, almacenamiento S3,
-        memoria procedural y el histórico de uso de tokens.
+        Limpieza selectiva de chat, RAG, versiones de archivos y ejecuciones Tasks. Las tablas de Federación,
+        Office, S3, usuarios, proyectos, configuraciones y cualquier tabla nueva quedan fuera
+        por defecto. Las instrucciones guardadas sólo en mensajes o fuentes RAG también se perderán. La limpieza se bloquea ante dependencias externas o tareas existentes.
     </p>
+    <div class="mb-3" id="runtimeCleanupGroups">
+        <label class="d-block"><input type="checkbox" value="chat"> Chat y conversaciones</label>
+        <label class="d-block"><input type="checkbox" value="rag"> RAG y embeddings</label>
+        <label class="d-block"><input type="checkbox" value="tasks"> Tasks y ejecuciones</label>
+        <label class="d-block"><input type="checkbox" value="files"> Historial de versiones de archivos</label>
+    </div>
     <p class="small text-danger mb-3">
         Esta operación no se puede deshacer. Antes de ejecutarla se hará una simulación y se mostrará cuántas tablas serán limpiadas.
     </p>
@@ -181,10 +187,12 @@ if ($canRuntimeReset) {
 
     const csrfToken = <?= json_encode((string)($_SESSION['csrf_token'] ?? ''), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 
-    async function resetRequest(mode) {
+    const groupContainer = document.getElementById('runtimeCleanupGroups');
+    async function resetRequest(mode, groups) {
         const body = new URLSearchParams();
         body.set('csrf_token', csrfToken);
         body.set('truncate_mode', mode);
+        body.set('cleanup_groups', groups.join(','));
         if (mode === 'confirm') body.set('confirm_text', 'RESET_RUNTIME_DATA');
 
         const response = await fetch('truncate.php', {
@@ -209,7 +217,9 @@ if ($canRuntimeReset) {
         button.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Revisando…';
 
         try {
-            const preview = await resetRequest('dry_run');
+            const groups = Array.from(groupContainer.querySelectorAll('input:checked'), el => el.value);
+            if (!groups.length) { window.alert('Selecciona al menos un módulo.'); return; }
+            const preview = await resetRequest('dry_run', groups);
             const resetCount = Array.isArray(preview.tablas) ? preview.tablas.length : 0;
             const preserved = Array.isArray(preview.preservadas) ? preview.preservadas.join(', ') : '';
             const message =
@@ -221,7 +231,7 @@ if ($canRuntimeReset) {
             if (!window.confirm('CONFIRMACIÓN FINAL: se eliminarán los datos runtime. ¿Continuar?')) return;
 
             button.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Limpiando…';
-            const result = await resetRequest('confirm');
+            const result = await resetRequest('confirm', groups);
             window.alert(result.message || 'Datos runtime limpiados correctamente.');
             window.location.reload();
         } catch (error) {
