@@ -324,7 +324,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <meta name="csrf-token" content="<?php echo htmlspecialchars($_SESSION['csrf_token'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
 <link rel="stylesheet" href="css/chat2.css" />
 <link rel="stylesheet" href="css/design-system.css" />
-<link rel="stylesheet" href="css/michat-about.css" />
+<link rel="stylesheet" href="css/michat-about.css?v=20261021-2" />
 </head>
 <body class="ui-theme theme-neon-green theme-light vision-normal ascii-on">
 <input type="hidden" id="chatUserId" value="<?= (int)$_SESSION['user_id'] ?>">
