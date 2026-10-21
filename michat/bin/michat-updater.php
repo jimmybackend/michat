@@ -40,8 +40,8 @@ function state(array $cfg,bool $fetch): array {
     $safe=$branch==='main'&&$behind>0&&$ahead===0&&$tracked===''&&$ff
         &&$dependencyChanges===''&&$dependenciesReady;
     return ['ok'=>true,'branch'=>$branch,'local_commit'=>$local,'remote_commit'=>$upstream,'behind'=>$behind,'ahead'=>$ahead,
-        'dirty'=>$tracked!=='','dirty_files'=>$tracked===''?[]:array_slice(explode("\\n",$tracked),0,25),
-        'untracked_files'=>$untracked===''?[]:array_slice(explode("\\n",$untracked),0,25),
+        'dirty'=>$tracked!=='','dirty_files'=>$tracked===''?[]:array_slice(explode("\n",$tracked),0,25),
+        'untracked_files'=>$untracked===''?[]:array_slice(explode("\n",$untracked),0,25),
         'dependency_changes'=>$dependencyChanges!=='' ,'dependencies_ready'=>$dependenciesReady,
         'update_available'=>$behind>0,'can_apply'=>$safe,
         'can_apply_with_stash'=>false,
