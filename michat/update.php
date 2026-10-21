@@ -20,7 +20,7 @@ try {
   if($method!=='POST')updaterResponse(405,['ok'=>false,'error'=>'Método no permitido']);
   CsrfGuard::assertSessionToken((string)($_POST['csrf_token']??''));
   $action=(string)($_POST['action']??'');
-  if(!in_array($action,['apply','apply-stash'],true))updaterResponse(422,['ok'=>false,'error'=>'Acción no permitida']);
+  if(!in_array($action,['apply'],true))updaterResponse(422,['ok'=>false,'error'=>'Acción no permitida']);
   $password=(string)($_POST['current_password']??'');
   $stmt=$db_connection->prepare("SELECT password FROM Users WHERE id=? AND system_role='superadmin' AND userstatus='Activo' LIMIT 1");
   if(!$stmt)throw new RuntimeException('No se pudo validar la cuenta.');

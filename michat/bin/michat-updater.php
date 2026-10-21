@@ -27,16 +27,24 @@ function state(array $cfg,bool $fetch): array {
     $branch=gitRun($cfg,['rev-parse','--abbrev-ref','HEAD'])['out'];
     $local=gitRun($cfg,['rev-parse','HEAD'])['out'];
     $upstream=gitRun($cfg,['rev-parse','origin/main'])['out'];
-    // Agrupa directorios no versionados (vendor/node_modules) en vez de emitir cada archivo.
-    // Se mantienen visibles los cambios tracked y los directorios untracked para bloquear una aplicación insegura.
-    $dirty=gitRun($cfg,['status','--porcelain=v1','--untracked-files=normal'])['out'];
+    // Los paquetes instalados no son cambios de código. No mover ni borrar untracked.
+    // Las modificaciones versionadas (incluido composer.lock) sí bloquean el despliegue.
+    $tracked=gitRun($cfg,['status','--porcelain=v1','--untracked-files=no'])['out'];
+    $untracked=gitRun($cfg,['ls-files','--others','--exclude-standard','--directory'])['out'];
+    $dirty=$tracked;
+    $dependencyChanges=gitRun($cfg,['diff','--name-only','HEAD','origin/main','--','composer.json','composer.lock','vendor/autoload.php'])['out'];
+    $dependenciesReady=is_file($cfg['repo_root'].'/vendor/composer/autoload_real.php');
     $behind=(int)gitRun($cfg,['rev-list','--count','HEAD..origin/main'])['out'];
     $ahead=(int)gitRun($cfg,['rev-list','--count','origin/main..HEAD'])['out'];
     $ff=gitRun($cfg,['merge-base','--is-ancestor','HEAD','origin/main'],[0,1])['code']===0;
+    $safe=$branch==='main'&&$behind>0&&$ahead===0&&$tracked===''&&$ff
+        &&$dependencyChanges===''&&$dependenciesReady;
     return ['ok'=>true,'branch'=>$branch,'local_commit'=>$local,'remote_commit'=>$upstream,'behind'=>$behind,'ahead'=>$ahead,
-        'dirty'=>$dirty!=='','dirty_files'=>array_slice(explode("\n",$dirty),0,25),
-        'update_available'=>$behind>0,'can_apply'=>$branch==='main'&&$behind>0&&$ahead===0&&$dirty===''&&$ff,
-        'can_apply_with_stash'=>$branch==='main'&&$behind>0&&$ahead===0&&$dirty!==''&&$ff,
+        'dirty'=>$tracked!=='','dirty_files'=>$tracked===''?[]:array_slice(explode("\n",$tracked),0,25),
+        'untracked_files'=>$untracked===''?[]:array_slice(explode("\n",$untracked),0,25),
+        'dependency_changes'=>$dependencyChanges!=='' ,'dependencies_ready'=>$dependenciesReady,
+        'update_available'=>$behind>0,'can_apply'=>$safe,
+        'can_apply_with_stash'=>false,
         'checked_at'=>gmdate(DATE_ATOM)];
 }
 if(!function_exists('posix_geteuid')||posix_geteuid()!==0)failUpdate('El helper requiere root.',77);
@@ -47,24 +55,18 @@ if($cfg['repo_root']!=='/var/www/michat'||!is_dir($cfg['repo_root'].'/.git'))fai
 if(!preg_match('/^[a-z_][a-z0-9_-]*[$]?$/i',$cfg['repo_user']))failUpdate('Usuario Git inválido.',77);
 $action=(string)($argv[1]??'');
 if($action==='probe'){echo json_encode(['ok'=>true,'action'=>'probe'])."\n";exit;}
-if(!in_array($action,['check','apply','apply-stash'],true))failUpdate('Acción no permitida.',64);
+if(!in_array($action,['check','apply'],true))failUpdate('Acción no permitida.',64);
 $lock=fopen('/run/lock/michat-updater.lock','c');
 if(!$lock||!flock($lock,LOCK_EX|LOCK_NB))failUpdate('Otra actualización está en curso.',75);
 $before=state($cfg,true);
 if($action==='check'){echo json_encode($before,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)."\n";exit;}
 if(!$before['update_available']||$before['branch']!=='main'||$before['ahead']>0)failUpdate('No existe actualización fast-forward segura.',77);
-if(!$before['can_apply']&&!($action==='apply-stash'&&$before['can_apply_with_stash']))failUpdate('Cambios locales o historial divergente; actualización rechazada.',77);
-$stash=false;
-if($before['dirty']){
-    $label='michat-web-update-'.gmdate('Ymd-His').'-'.substr($before['local_commit'],0,12);
-    gitRun($cfg,['stash','push','--include-untracked','-m',$label]);
-    $stash=true;
-    if(state($cfg,false)['dirty'])failUpdate('El árbol no quedó limpio después de stash.',77);
-}
+if(!$before['can_apply']) failUpdate('Actualización manual requerida: cambios versionados, dependencias o historial no seguro.',77);
+// No se usa git stash: vendor/ y node_modules/ deben permanecer instalados.
 gitRun($cfg,['merge','--ff-only','origin/main']);
 $after=state($cfg,false);
-if($after['behind']!==0||$after['dirty'])failUpdate('Git terminó en un estado inesperado.',70);
-$after['updated']=true;$after['previous_commit']=$before['local_commit'];$after['stash_created']=$stash;
+if($after['behind']!==0||$after['dirty']||!$after['dependencies_ready'])failUpdate('Git terminó en un estado inesperado.',70);
+$after['updated']=true;$after['previous_commit']=$before['local_commit'];$after['stash_created']=false;
 $after['needs_attention']=true;
-$after['message']='Código actualizado. Verifica dependencias, migraciones y reinicia michat-task-worker.service de forma controlada; no se reiniciaron servicios ni modificó MySQL automáticamente.';
+$after['message']='Código Git actualizado sin mover dependencias locales. Verifica la aplicación y el worker. Si hay cambios de dependencias, el actualizador exige despliegue manual. No se reiniciaron servicios ni modificó MySQL.';
 echo json_encode($after,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)."\n";

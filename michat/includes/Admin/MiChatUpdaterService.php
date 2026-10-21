@@ -3,7 +3,7 @@ declare(strict_types=1);
 final class MiChatUpdaterService {
     private const HELPER='/usr/local/sbin/michat-updater';
     public function execute(string $action): array {
-        if(!in_array($action,['check','apply','apply-stash'],true))throw new InvalidArgumentException('Acción no permitida.');
+        if(!in_array($action,['check','apply'],true))throw new InvalidArgumentException('Acción no permitida.');
         if(!is_executable(self::HELPER))throw new RuntimeException('Instala primero el helper con michat/bin/install_michat_updater.sh.');
         $p=proc_open(['/usr/bin/sudo','-n',self::HELPER,$action],[0=>['file','/dev/null','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes,null,null,['bypass_shell'=>true]);
         if(!is_resource($p))throw new RuntimeException('No se pudo iniciar el updater.');

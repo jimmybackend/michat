@@ -16,17 +16,18 @@ check.addEventListener('click',async()=>{
  try{
   const j=await read(await fetch('update.php',{credentials:'same-origin',cache:'no-store'}));
   details.textContent='Rama: '+j.branch+' | Instalado: '+j.local_commit.slice(0,12)+' | Disponible: '+j.remote_commit.slice(0,12)+' | Pendientes: '+j.behind;
-  if(j.dirty)details.textContent+=' | Cambios locales: '+(j.dirty_files||[]).join(', ');
-  action=j.can_apply?'apply':j.can_apply_with_stash?'apply-stash':'';
+  if(j.dirty)details.textContent+=' | Cambios de código: '+(j.dirty_files||[]).join(', ');
+  if(j.dependency_changes||!j.dependencies_ready)details.textContent+=' | Dependencias requieren revisión manual';
+  action=j.can_apply?'apply':'';
   apply.hidden=!action;
-  apply.textContent=action==='apply-stash'?'Guardar cambios y actualizar':'Actualizar ahora';
-  show(!j.update_available?'MiChat está actualizado.':action?'Actualización disponible.':'Revisión manual requerida: no se forzará Git.');
+  apply.textContent='Actualizar ahora';
+  show(!j.update_available?'MiChat está actualizado.':action?'Actualización disponible.':'Revisión manual requerida: cambios locales, dependencias o historial no seguro. No se utilizará stash.');
  }catch(e){show(e.message);}
  finally{check.disabled=false;}
 });
 apply.addEventListener('click',async()=>{
  if(!action||!password.value){show('Se requiere la contraseña de superusuario.');return;}
- const message=action==='apply-stash'?'Los cambios locales quedarán en stash y NO serán restaurados automáticamente. ¿Continuar?':'¿Actualizar MiChat desde origin/main?';
+ const message='¿Actualizar código de MiChat desde origin/main sin mover dependencias?';
  if(!window.confirm(message))return;
  apply.disabled=true;show('Aplicando actualización…');
  try{
