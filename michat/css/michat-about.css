@@ -1,7 +1,11 @@
 /* Acerca de MiChat: usa exclusivamente el sistema de temas existente. */
 /* Acceso a Acerca de dentro de Preferencias > General, nunca flotante. */
 body.ui-theme .michat-about-open {
-  position: static;
+  position: static !important;
+  inset: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  z-index: auto !important;
   display: inline-flex;
   align-items: center;
   gap: 6px;
