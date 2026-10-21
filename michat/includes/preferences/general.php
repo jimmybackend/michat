@@ -41,6 +41,15 @@
 
     <section class="settings-card mb-0">
         <div class="settings-card-heading">
+            <div><span class="settings-card-kicker">Información</span><h6>Acerca de MiChat</h6></div>
+        </div>
+        <div class="settings-action-row">
+            <button id="michat-about-open" class="michat-about-open" type="button" title="Acerca de MiChat" aria-label="Acerca de MiChat" aria-haspopup="dialog">ⓘ Acerca de</button>
+        </div>
+    </section>
+
+    <section class="settings-card mb-0">
+        <div class="settings-card-heading">
             <div><span class="settings-card-kicker">Sesión</span><h6>Cuenta</h6></div>
         </div>
         <div class="settings-action-row">

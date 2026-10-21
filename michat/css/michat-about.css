@@ -1,19 +1,16 @@
 /* Acerca de MiChat: usa exclusivamente el sistema de temas existente. */
+/* Acceso a Acerca de dentro de Preferencias > General, nunca flotante. */
 body.ui-theme .michat-about-open {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-  z-index: 1050;
+  position: static;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   min-height: 38px;
   padding: 7px 14px;
   border: 1px solid var(--border) !important;
-  border-radius: 999px !important;
-  background: var(--bg2) !important;
+  border-radius: 10px !important;
+  background: var(--bg3) !important;
   color: var(--text) !important;
-  box-shadow: var(--shadow);
   cursor: pointer;
 }
 body.ui-theme .michat-about-open:hover,
@@ -145,10 +142,6 @@ body.ui-theme .michat-about-password:focus {
   body.ui-theme .michat-about-dialog {
     padding: 18px;
     border-radius: 14px;
-  }
-  body.ui-theme .michat-about-open {
-    right: 12px;
-    bottom: 12px;
   }
   body.ui-theme .michat-about-actions {
     display: grid;
