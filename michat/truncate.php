@@ -46,12 +46,15 @@ try {
     // Lista cerrada: tablas nuevas, Federación, Office, S3 y configuración nunca se limpian automáticamente.
     // No incluir reglas de recurrencia, proyectos ni propuestas de trabajo persistentes.
     $allowedGroups = [
-        'chat' => ['ChatActivityEvents', 'ChatMessages', 'ChatSessions'],
-        'rag' => ['ChunkEmbeddings', 'EmbeddingJobs', 'SourceChunks'],
+        'chat' => ['ChatActivityEvents', 'ChatMessages', 'ChatSessions', 'SessionContextBlocks', 'PhaseCache', 'PromptCompilations', 'MemoryWriteEvents'],
+        'rag' => ['ChunkEmbeddings', 'EmbeddingJobs', 'SourceChunks', 'ProjectSources'],
+        'files' => ['FileVersions'],
         'tasks' => [
             'PostTaskContinuations', 'TaskArtifacts', 'TaskDependencies', 'TaskEvents',
             'TaskExecutions', 'TaskPlanRevisions', 'TaskPlanRevisionSteps',
             'TaskReplanRequests', 'Tasks', 'TaskSteps', 'ToolCalls',
+            'TaskRecurrenceOccurrences', 'ProjectAutonomyCycles',
+            'ProjectAutonomyCycleTasks', 'ProjectAutonomyReservations',
         ],
     ];
     $requested = $_POST['cleanup_groups'] ?? '';
