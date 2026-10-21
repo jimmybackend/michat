@@ -21,7 +21,7 @@ os.chmod(tmp,0o600)
 os.replace(tmp,'/etc/michat/updater.json')
 PY
 chown root:root /etc/michat/updater.json
-printf '%s ALL=(root) NOPASSWD: %s probe, %s check, %s apply, %s apply-stash\n' "$PHP_USER" "$TARGET" "$TARGET" "$TARGET" > /etc/sudoers.d/michat-updater
+printf '%s ALL=(root) NOPASSWD: %s probe, %s check, %s apply\n' "$PHP_USER" "$TARGET" "$TARGET" "$TARGET" > /etc/sudoers.d/michat-updater
 chmod 0440 /etc/sudoers.d/michat-updater
 visudo -cf /etc/sudoers.d/michat-updater
 runuser -u "$PHP_USER" -- sudo -n "$TARGET" probe
