@@ -1273,7 +1273,7 @@ role="progressbar" style="width: 0%">0%</div>
 </script>
 
 <!-- MiChat: información pública y actualizador sólo autorizado por backend -->
-<button id="michat-about-open" class="michat-about-open" type="button" title="Acerca de MiChat" aria-label="Acerca de MiChat" aria-haspopup="dialog">ⓘ Acerca de</button>
+
 <section id="michat-about-modal" class="michat-about-modal" hidden role="dialog" aria-modal="true" aria-labelledby="michat-about-title">
   <div class="michat-about-dialog">
     <button id="michat-about-close" class="michat-about-close" type="button" aria-label="Cerrar">✕</button>
