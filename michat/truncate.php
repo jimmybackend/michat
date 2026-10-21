@@ -43,50 +43,84 @@ try {
         throw new RuntimeException('reset_confirmation_invalid');
     }
 
-    /*
-     * Conserva el comportamiento histórico de truncate.php, sustituyendo el
-     * privilegio mágico user_id=1 por system_role=superadmin/system.reset.
-     * Se añaden únicamente tablas durables incorporadas después: migraciones,
-     * auditoría y política de autonomía del proyecto.
-     */
-    $preserveRequested = [
-        'Users',
-        'TokenUsage',
-        'FileS3',
-        'S3Folders',
-        'Projects',
-        'UserAIAgentConfigs',
-        'UserPreferences',
-        'UserProceduralMemory',
-        'UserPipelineFeatures',
-        'SchemaMigrations',
-        'AccessControl',
-        'ProjectAutonomyPolicies',
+    // Lista cerrada: tablas nuevas, Federación, Office, S3 y configuración nunca se limpian automáticamente.
+    // No incluir reglas de recurrencia, proyectos ni propuestas de trabajo persistentes.
+    $allowedGroups = [
+        'chat' => ['ChatActivityEvents', 'ChatMessages', 'ChatSessions'],
+        'rag' => ['ChunkEmbeddings', 'EmbeddingJobs', 'SourceChunks'],
+        'tasks' => [
+            'PostTaskContinuations', 'TaskArtifacts', 'TaskDependencies', 'TaskEvents',
+            'TaskExecutions', 'TaskPlanRevisions', 'TaskPlanRevisionSteps',
+            'TaskReplanRequests', 'Tasks', 'TaskSteps', 'ToolCalls',
+        ],
     ];
+    $requested = $_POST['cleanup_groups'] ?? '';
+    $groups = array_values(array_unique(array_filter(explode(',', (string)$requested))));
+    sort($groups, SORT_STRING);
+    if (!$groups || array_diff($groups, array_keys($allowedGroups))) {
+        throw new InvalidArgumentException('cleanup_groups_invalid');
+    }
 
     $schemaRow = $db_connection->query('SELECT DATABASE() AS db')->fetch_assoc();
     $schema = trim((string)($schemaRow['db'] ?? ''));
     if ($schema === '') throw new RuntimeException('database_not_selected');
 
     $stmt = $db_connection->prepare(
-        "SELECT TABLE_NAME
-         FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA=? AND TABLE_TYPE='BASE TABLE'
-         ORDER BY TABLE_NAME"
+        "SELECT TABLE_NAME FROM information_schema.TABLES
+         WHERE TABLE_SCHEMA=? AND TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME"
     );
     if (!$stmt) throw new RuntimeException('table_catalog_unavailable');
     $stmt->bind_param('s', $schema);
     if (!$stmt->execute()) throw new RuntimeException('table_catalog_query_failed');
-    $tables = array_map(
-        static fn(array $row): string => (string)$row['TABLE_NAME'],
-        $stmt->get_result()->fetch_all(MYSQLI_ASSOC)
-    );
+    $tables = array_column($stmt->get_result()->fetch_all(MYSQLI_ASSOC), 'TABLE_NAME');
     $stmt->close();
 
-    $preserve = array_values(array_intersect($preserveRequested, $tables));
-    $reset = array_values(array_diff($tables, $preserve));
-    sort($preserve, SORT_STRING);
+    $allow = [];
+    foreach ($groups as $group) {
+        foreach ($allowedGroups[$group] as $table) $allow[$table] = true;
+    }
+    $reset = array_values(array_intersect($tables, array_keys($allow)));
+    $preserve = array_values(array_diff($tables, $reset));
     sort($reset, SORT_STRING);
+    sort($preserve, SORT_STRING);
+    if (!$reset) throw new RuntimeException('cleanup_no_matching_tables');
+
+    // Nunca vaciar una tabla referenciada por otra que se conservará.
+    $fkStmt = $db_connection->prepare(
+        "SELECT TABLE_NAME, REFERENCED_TABLE_NAME
+         FROM information_schema.KEY_COLUMN_USAGE
+         WHERE TABLE_SCHEMA=? AND REFERENCED_TABLE_SCHEMA=?
+           AND REFERENCED_TABLE_NAME IS NOT NULL"
+    );
+    if (!$fkStmt) throw new RuntimeException('cleanup_fk_catalog_unavailable');
+    $fkStmt->bind_param('ss', $schema, $schema);
+    if (!$fkStmt->execute()) throw new RuntimeException('cleanup_fk_catalog_query_failed');
+    $fkRows = $fkStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $fkStmt->close();
+    $protectedReferences = [];
+    foreach ($fkRows as $fk) {
+        $child = (string)$fk['TABLE_NAME'];
+        $parent = (string)$fk['REFERENCED_TABLE_NAME'];
+        if (in_array($parent, $reset, true) && !in_array($child, $reset, true)) {
+            $protectedReferences[] = "$child -> $parent";
+        }
+    }
+    if ($protectedReferences) {
+        throw new RuntimeException('cleanup_fk_protected: '.implode(', ',array_slice(array_unique($protectedReferences),0,8)));
+    }
+
+    // Congelar la selección entre simulación y confirmación en la sesión superadmin.
+    $fingerprint = hash('sha256', $schema."\\n".implode(',', $groups)."\\n".implode(',', $reset));
+    if ($mode === 'dry_run') {
+        $_SESSION['michat_cleanup_preview'] = ['fingerprint'=>$fingerprint,'time'=>time()];
+    } else {
+        $preview = $_SESSION['michat_cleanup_preview'] ?? [];
+        unset($_SESSION['michat_cleanup_preview']);
+        if (!is_array($preview) || !hash_equals((string)($preview['fingerprint']??''), $fingerprint)
+            || time() - (int)($preview['time']??0) > 300) {
+            throw new RuntimeException('cleanup_preview_required');
+        }
+    }
 
     if ($mode === 'dry_run') {
         truncateExit([
@@ -94,9 +128,18 @@ try {
             'mode' => 'dry_run',
             'message' => 'Simulación completada. No se modificó la base de datos.',
             'database' => $schema,
+            'grupos' => $groups,
             'tablas' => $reset,
             'preservadas' => $preserve,
         ]);
+    }
+
+    // No interrumpir ejecuciones ni tareas todavía pendientes.
+    if (in_array('tasks', $groups, true)) {
+        $busy = $db_connection->query('SELECT COUNT(*) AS n FROM Tasks');
+        if (!$busy || (int)($busy->fetch_assoc()['n'] ?? 0) > 0) {
+            throw new RuntimeException('cleanup_tasks_not_empty_manual_review_required');
+        }
     }
 
     $lockName = 'michat:web_runtime_reset';
@@ -136,6 +179,7 @@ try {
         'event' => 'runtime_data_web_reset',
         'actor_user_id' => $userId,
         'system_role' => $authorization->roleForActiveUser($userId),
+        'cleanup_groups' => $groups,
         'deleted_tables' => $reset,
         'preserved_tables' => $preserve,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -154,6 +198,7 @@ try {
         'mode' => 'confirm',
         'message' => 'Datos runtime limpiados correctamente.',
         'database' => $schema,
+        'grupos' => $groups,
         'tablas' => $reset,
         'preservadas' => $preserve,
     ]);
