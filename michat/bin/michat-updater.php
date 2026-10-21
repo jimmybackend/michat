@@ -27,7 +27,9 @@ function state(array $cfg,bool $fetch): array {
     $branch=gitRun($cfg,['rev-parse','--abbrev-ref','HEAD'])['out'];
     $local=gitRun($cfg,['rev-parse','HEAD'])['out'];
     $upstream=gitRun($cfg,['rev-parse','origin/main'])['out'];
-    $dirty=gitRun($cfg,['status','--porcelain=v1','--untracked-files=all'])['out'];
+    // Agrupa directorios no versionados (vendor/node_modules) en vez de emitir cada archivo.
+    // Se mantienen visibles los cambios tracked y los directorios untracked para bloquear una aplicación insegura.
+    $dirty=gitRun($cfg,['status','--porcelain=v1','--untracked-files=normal'])['out'];
     $behind=(int)gitRun($cfg,['rev-list','--count','HEAD..origin/main'])['out'];
     $ahead=(int)gitRun($cfg,['rev-list','--count','origin/main..HEAD'])['out'];
     $ff=gitRun($cfg,['merge-base','--is-ancestor','HEAD','origin/main'],[0,1])['code']===0;
