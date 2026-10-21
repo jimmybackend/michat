@@ -159,14 +159,15 @@ if ($canRuntimeReset) {
         <span class="settings-card-badge text-danger"><i class="fas fa-exclamation-triangle"></i> Zona peligrosa</span>
     </div>
     <p class="small text-muted mb-2">
-        Limpieza selectiva de chat, RAG y ejecuciones Tasks. Las tablas de Federación,
+        Limpieza selectiva de chat, RAG, versiones de archivos y ejecuciones Tasks. Las tablas de Federación,
         Office, S3, usuarios, proyectos, configuraciones y cualquier tabla nueva quedan fuera
-        por defecto. La limpieza se bloquea ante dependencias externas o tareas existentes.
+        por defecto. Las instrucciones guardadas sólo en mensajes o fuentes RAG también se perderán. La limpieza se bloquea ante dependencias externas o tareas existentes.
     </p>
     <div class="mb-3" id="runtimeCleanupGroups">
         <label class="d-block"><input type="checkbox" value="chat"> Chat y conversaciones</label>
         <label class="d-block"><input type="checkbox" value="rag"> RAG y embeddings</label>
         <label class="d-block"><input type="checkbox" value="tasks"> Tasks y ejecuciones</label>
+        <label class="d-block"><input type="checkbox" value="files"> Historial de versiones de archivos</label>
     </div>
     <p class="small text-danger mb-3">
         Esta operación no se puede deshacer. Antes de ejecutarla se hará una simulación y se mostrará cuántas tablas serán limpiadas.
