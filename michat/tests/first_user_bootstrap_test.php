@@ -40,9 +40,18 @@ $check(str_contains($reset,'hard_reset_requires_development_or_test_environment'
 
 $check(is_file($root.'/michat/truncate.php'),'superadmin web runtime cleanup endpoint exists');
 $check(str_contains($truncate,"assertAllowed(\$userId, 'system.reset')")&&str_contains($truncate,'ChatIdentity::resolveUserId'),'web cleanup authorizes the authenticated user by system.reset permission');
-$check(str_contains($truncate,"'TokenUsage'")&&str_contains($truncate,"'UserAIAgentConfigs'")&&str_contains($truncate,"'UserPreferences'")&&str_contains($truncate,"'UserPipelineFeatures'")&&str_contains($truncate,"'Projects'"),'web cleanup preserves token usage and durable configuration');
+$check(str_contains($truncate, '$allowedGroups')&&str_contains($truncate, 'array_intersect($tables, array_keys($allow))')&&!str_contains($truncate, 'array_diff($tables, $preserve)'), 'runtime cleanup uses explicit allowlist rather than deleting every non-preserved table');
 $check(str_contains($truncate,"'dry_run'")&&str_contains($truncate,"'RESET_RUNTIME_DATA'")&&str_contains($truncate,"'csrf_token'")&&str_contains($truncate,'runtime_data_web_reset'),'web cleanup requires preview, explicit confirmation, CSRF and audit');
 $check(str_contains($administration,'$canRuntimeReset')&&str_contains($administration,"allows(\$runtimeResetUserId, 'system.reset')")&&str_contains($administration,'adminTruncateTables'),'administration UI exposes runtime cleanup only when system.reset is allowed');
 $check(!preg_match('/(?:user_id|userId)[^\n]{0,50}(?:===|==)\s*1/',$auth.$provision.$first.$bootstrapExisting.$user.$reset.$truncate.$chat),'administration contains no magic user-id privilege');
 
+$helper=(string)file_get_contents($root.'/michat/bin/michat-updater.php');
+$installer=(string)file_get_contents($root.'/michat/bin/install_michat_updater.sh');
+$updateJs=(string)file_get_contents($root.'/michat/js/michat-updater.js');
+$updateApi=(string)file_get_contents($root.'/michat/update.php');
+$updateService=(string)file_get_contents($root.'/michat/includes/Admin/MiChatUpdaterService.php');
+$check(!str_contains($helper, "'stash','push'")&&!str_contains($helper, "'apply-stash'"),'updater never stashes deployed dependencies');
+$check(!str_contains($installer, 'apply-stash')&&!str_contains($updateJs, 'apply-stash')&&!str_contains($updateApi, 'apply-stash')&&!str_contains($updateService, 'apply-stash'),'apply-stash is not exposed through installer, browser or PHP');
+$check(str_contains($helper, "'--untracked-files=no'")&&str_contains($helper, "'dependencies_ready'")&&str_contains($helper, "'dependency_changes'"),'updater protects tracked changes and dependency upgrades');
+$check(str_contains($chat, 'michat-updater.js?v='),'updater JS uses a cache-busting URL');
 echo"Result: {$passed} passed, {$failed} failed\n";exit($failed?1:0);
