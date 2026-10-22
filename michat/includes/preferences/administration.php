@@ -222,9 +222,12 @@ if ($canRuntimeReset) {
             const preview = await resetRequest('dry_run', groups);
             const resetCount = Array.isArray(preview.tablas) ? preview.tablas.length : 0;
             const preserved = Array.isArray(preview.preservadas) ? preview.preservadas.join(', ') : '';
+            const excluded = preview.excluidas_por_fk || {};
+            const excludedList = Object.entries(excluded).map(([table, refs]) => table + ' (' + refs.join('; ') + ')');
             const message =
                 `Se limpiarán ${resetCount} tablas de runtime.\n\n` +
                 `Se conservarán: ${preserved}.\n\n` +
+                (excludedList.length ? `PROTEGIDAS POR FK (NO SE LIMPIARÁN):\n${excludedList.join('\n')}\n\n` : '') +
                 '¿Deseas continuar?';
 
             if (!window.confirm(message)) return;

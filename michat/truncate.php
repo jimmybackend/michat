@@ -100,20 +100,31 @@ try {
     if (!$fkStmt->execute()) throw new RuntimeException('cleanup_fk_catalog_query_failed');
     $fkRows = $fkStmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $fkStmt->close();
-    $protectedReferences = [];
-    foreach ($fkRows as $fk) {
-        $child = (string)$fk['TABLE_NAME'];
-        $parent = (string)$fk['REFERENCED_TABLE_NAME'];
-        if (in_array($parent, $reset, true) && !in_array($child, $reset, true)) {
-            $protectedReferences[] = "$child -> $parent";
+    // Reducir el plan de manera conservadora: nunca TRUNCATE de una tabla
+    // referenciada por una tabla preservada. Repetir porque las exclusiones
+    // pueden proteger a su vez otras tablas (dependencias transitivas).
+    $excluded = [];
+    do {
+        $changed = false;
+        foreach ($fkRows as $fk) {
+            $child = (string)$fk['TABLE_NAME'];
+            $parent = (string)$fk['REFERENCED_TABLE_NAME'];
+            if (in_array($parent, $reset, true) && !in_array($child, $reset, true)) {
+                $excluded[$parent][] = "$child -> $parent";
+                $reset = array_values(array_diff($reset, [$parent]));
+                $changed = true;
+            }
         }
-    }
-    if ($protectedReferences) {
-        throw new RuntimeException('cleanup_fk_protected: '.implode(', ',array_slice(array_unique($protectedReferences),0,8)));
-    }
+    } while ($changed);
+    foreach ($excluded as &$reasons) $reasons = array_values(array_unique($reasons));
+    unset($reasons);
+    ksort($excluded, SORT_STRING);
+    $preserve = array_values(array_diff($tables, $reset));
+    sort($preserve, SORT_STRING);
+    if (!$reset) throw new RuntimeException('cleanup_all_tables_fk_protected');
 
     // Congelar la selección entre simulación y confirmación en la sesión superadmin.
-    $fingerprint = hash('sha256', $schema."\\n".implode(',', $groups)."\\n".implode(',', $reset));
+    $fingerprint = hash('sha256', $schema."\\n".implode(',', $groups)."\\n".implode(',', $reset)."\\n".json_encode($excluded));
     if ($mode === 'dry_run') {
         $_SESSION['michat_cleanup_preview'] = ['fingerprint'=>$fingerprint,'time'=>time()];
     } else {
@@ -134,6 +145,7 @@ try {
             'grupos' => $groups,
             'tablas' => $reset,
             'preservadas' => $preserve,
+            'excluidas_por_fk' => $excluded,
         ]);
     }
 
@@ -185,6 +197,7 @@ try {
         'cleanup_groups' => $groups,
         'deleted_tables' => $reset,
         'preserved_tables' => $preserve,
+        'excluded_by_fk' => $excluded,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
     $audit = $db_connection->prepare(
@@ -199,11 +212,12 @@ try {
     truncateExit([
         'ok' => true,
         'mode' => 'confirm',
-        'message' => 'Datos runtime limpiados correctamente.',
+        'message' => $excluded ? 'Limpieza parcial completada; se conservaron tablas protegidas por claves foráneas.' : 'Datos runtime limpiados correctamente.',
         'database' => $schema,
         'grupos' => $groups,
         'tablas' => $reset,
         'preservadas' => $preserve,
+        'excluidas_por_fk' => $excluded,
     ]);
 } catch (InvalidArgumentException $e) {
     truncateExit(['ok' => false, 'error' => $e->getMessage()], 400);
