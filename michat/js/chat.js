@@ -2451,7 +2451,9 @@ async function sendMessage() {
             } else if (action === 'gen_video') {
                 await autoGenerateVideo(improved);
             } else {
-                await selectSession(currentSessionId);
+                // La respuesta ya está en el DOM mediante pushLocal().
+                // No volver a cargar el historial completo después del AJAX.
+                renderSessionsList();
             }
 
             if (jRespond.usage) {
@@ -2475,7 +2477,7 @@ async function sendMessage() {
                 });
             }
             updateMemoryPipelineStatus(jCompile);
-            await selectSession(currentSessionId);
+            renderSessionsList();
         }
 
         if (el.input) { el.input.value = ''; resizeChatInput(); }
