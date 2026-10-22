@@ -100,6 +100,7 @@
     let currentSessionId = null;
     let currentProjectId = null;
     let sessions = [];
+    let sessionsRequestSerial = 0;
     let projects = [];
     let projectSources = [];
     let isSending = false;
@@ -1172,23 +1173,28 @@ function wireCodeCopyButtons(container) {
   });
 }
 async function loadSessions() {
+  const requestSerial = ++sessionsRequestSerial;
   setStatus('Cargando sesiones…');
   try {
     const qs = new URLSearchParams();
-    const q = (el.sbChatSearch && el.sbChatSearch.value.trim()) || (el.search && el.search.value.trim()) || '';
-    if (q) qs.set('q', q);
+    // Siempre pedir el listado completo. El filtro de texto es exclusivamente
+    // visual: no puede borrar las otras sesiones ni cambiar los datos cargados.
     if (el.showArchived && el.showArchived.checked) qs.set('archived', '1');
     const uid = getUserId();
     if (uid) qs.set('user_id', uid);
     const r = await fetch(`${API.sessions}?${qs.toString()}`, { credentials: 'same-origin' });
     const j = toJSONorThrow(await r.text(), r.status, 'La API de sesiones');
     if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+    if (requestSerial !== sessionsRequestSerial) return;
     sessions = Array.isArray(j.sessions) ? j.sessions : [];
     renderSessionsList();
   } catch (e) {
     console.error(e);
-    const target = el.sbChatList || el.sessionsList;
-    if (target) target.innerHTML = `<div class="text-danger small">${esc(e.message)}</div>`;
+    // No reemplazar el listado existente por un error temporal.
+    if (requestSerial === sessionsRequestSerial && sessions.length === 0) {
+      const target = el.sbChatList || el.sessionsList;
+      if (target) target.innerHTML = `<div class="text-danger small">${esc(e.message)}</div>`;
+    }
   } finally {
     setStatus('');
   }
@@ -1226,8 +1232,14 @@ function groupFreeSessionsByDate(list) {
 function renderSessionsList() {
   const targetList = el.sbChatList || el.sessionsList;
   if (!targetList) return;
-  const freeSessions = sessions.filter(s => !s.project_id && !s.project_id_);
-  const projectSessions = sessions.filter(s => s.project_id || s.project_id_);
+  const search = (el.sbChatSearch?.value || '').trim().toLocaleLowerCase();
+  const displayedSessions = search
+    ? sessions.filter(s => String(s.title || '').toLocaleLowerCase().includes(search)
+        || String(s.id ?? s.id_ ?? '').includes(search)
+        || Number(s.id ?? s.id_) === Number(currentSessionId))
+    : sessions;
+  const freeSessions = displayedSessions.filter(s => !s.project_id && !s.project_id_);
+  const projectSessions = displayedSessions.filter(s => s.project_id || s.project_id_);
   const renderItem = (s) => {
     const sid = s.id || s.id_;
     const title = esc(s.title || `Sesión #${sid}`);
@@ -1386,7 +1398,7 @@ function renderSessionsList() {
       const sessionSearch = el.sbChatSearch || el.search;
       if (sessionSearch && sessionSearch.value.trim()) {
         sessionSearch.value = '';
-        await loadSessions();
+        renderSessionsList();
       } else {
         renderSessionsList();
       }
@@ -3318,7 +3330,7 @@ if (btnIndexPending) {
         }
       });
     }
-    if (el.sbChatSearch) el.sbChatSearch.addEventListener('input', () => loadSessions());
+    if (el.sbChatSearch) el.sbChatSearch.addEventListener('input', () => renderSessionsList());
     if (el.sbNewProject) el.sbNewProject.addEventListener('click', openProjectManager);
     if (el.sbManageProjects) el.sbManageProjects.addEventListener('click', openProjectManager);
     if (el.btnGenImg) {
