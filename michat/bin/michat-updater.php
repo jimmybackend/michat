@@ -20,6 +20,17 @@ function gitRun(array $cfg, array $args, array $allowed=[0]): array {
     if(!in_array($code,$allowed,true)) failUpdate('Git rechazó la operación: '.substr(trim((string)$err),0,500),70);
     return ['code'=>$code,'out'=>trim((string)$out)];
 }
+function changedPaths(array $cfg,array $args): array {
+    $out=gitRun($cfg,$args)['out'];
+    return $out===''?[]:array_values(array_filter(explode("\n",$out),'strlen'));
+}
+function safeLocalChanges(array $cfg,array $trackedPaths): bool {
+    // Sólo se admiten estos cambios locales de Composer, si origin/main NO los cambia.
+    $allowed=['composer.lock','vendor/autoload.php'];
+    if(array_diff($trackedPaths,$allowed))return false;
+    $remotePaths=changedPaths($cfg,['diff','--name-only','HEAD','origin/main']);
+    return array_intersect($trackedPaths,$remotePaths)===[];
+}
 function state(array $cfg,bool $fetch): array {
     $remote=gitRun($cfg,['remote','get-url','origin'])['out'];
     if(!in_array($remote,['https://github.com/jimmybackend/michat.git','https://github.com/jimmybackend/michat','git@github.com:jimmybackend/michat.git','ssh://git@github.com/jimmybackend/michat.git'],true)) failUpdate('Origen Git no autorizado.',77);
@@ -32,15 +43,19 @@ function state(array $cfg,bool $fetch): array {
     $tracked=gitRun($cfg,['status','--porcelain=v1','--untracked-files=no'])['out'];
     $untracked=gitRun($cfg,['ls-files','--others','--exclude-standard','--directory'])['out'];
     $dirty=$tracked;
+    $trackedPaths=changedPaths($cfg,['diff','--name-only','HEAD']);
+    // Los cambios staged también deben ser rechazados; no desplegar sobre index pendiente.
+    $stagedPaths=changedPaths($cfg,['diff','--cached','--name-only']);
+    $localSafe=$stagedPaths===[]&&safeLocalChanges($cfg,$trackedPaths);
     $dependencyChanges=gitRun($cfg,['diff','--name-only','HEAD','origin/main','--','composer.json','composer.lock','vendor/autoload.php'])['out'];
     $dependenciesReady=is_file($cfg['repo_root'].'/vendor/composer/autoload_real.php');
     $behind=(int)gitRun($cfg,['rev-list','--count','HEAD..origin/main'])['out'];
     $ahead=(int)gitRun($cfg,['rev-list','--count','origin/main..HEAD'])['out'];
     $ff=gitRun($cfg,['merge-base','--is-ancestor','HEAD','origin/main'],[0,1])['code']===0;
-    $safe=$branch==='main'&&$behind>0&&$ahead===0&&$tracked===''&&$ff
+    $safe=$branch==='main'&&$behind>0&&$ahead===0&&$localSafe&&$ff
         &&$dependencyChanges===''&&$dependenciesReady;
     return ['ok'=>true,'branch'=>$branch,'local_commit'=>$local,'remote_commit'=>$upstream,'behind'=>$behind,'ahead'=>$ahead,
-        'dirty'=>$tracked!=='','dirty_files'=>$tracked===''?[]:array_slice(explode("\n",$tracked),0,25),
+        'dirty'=>$tracked!=='','local_changes_safe'=>$localSafe,'dirty_files'=>$tracked===''?[]:array_slice(explode("\n",$tracked),0,25),
         'untracked_files'=>$untracked===''?[]:array_slice(explode("\n",$untracked),0,25),
         'dependency_changes'=>$dependencyChanges!=='' ,'dependencies_ready'=>$dependenciesReady,
         'update_available'=>$behind>0,'can_apply'=>$safe,
@@ -61,11 +76,11 @@ if(!$lock||!flock($lock,LOCK_EX|LOCK_NB))failUpdate('Otra actualización está e
 $before=state($cfg,true);
 if($action==='check'){echo json_encode($before,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)."\n";exit;}
 if(!$before['update_available']||$before['branch']!=='main'||$before['ahead']>0)failUpdate('No existe actualización fast-forward segura.',77);
-if(!$before['can_apply']) failUpdate('Actualización manual requerida: cambios versionados, dependencias o historial no seguro.',77);
+if(!$before['can_apply']) failUpdate('Actualización manual requerida: archivos locales incompatibles, dependencias o historial no seguro.',77);
 // No se usa git stash: vendor/ y node_modules/ deben permanecer instalados.
 gitRun($cfg,['merge','--ff-only','origin/main']);
 $after=state($cfg,false);
-if($after['behind']!==0||$after['dirty']||!$after['dependencies_ready'])failUpdate('Git terminó en un estado inesperado.',70);
+if($after['behind']!==0||!$after['local_changes_safe']||!$after['dependencies_ready'])failUpdate('Git terminó en un estado inesperado.',70);
 $after['updated']=true;$after['previous_commit']=$before['local_commit'];$after['stash_created']=false;
 $after['needs_attention']=true;
 $after['message']='Código Git actualizado sin mover dependencias locales. Verifica la aplicación y el worker. Si hay cambios de dependencias, el actualizador exige despliegue manual. No se reiniciaron servicios ni modificó MySQL.';

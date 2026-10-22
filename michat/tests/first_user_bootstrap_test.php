@@ -54,4 +54,7 @@ $check(!str_contains($helper, "'stash','push'")&&!str_contains($helper, "'apply-
 $check(!str_contains($installer, 'apply-stash')&&!str_contains($updateJs, 'apply-stash')&&!str_contains($updateApi, 'apply-stash')&&!str_contains($updateService, 'apply-stash'),'apply-stash is not exposed through installer, browser or PHP');
 $check(str_contains($helper, "'--untracked-files=no'")&&str_contains($helper, "'dependencies_ready'")&&str_contains($helper, "'dependency_changes'"),'updater protects tracked changes and dependency upgrades');
 $check(str_contains($chat, 'michat-updater.js?v='),'updater JS uses a cache-busting URL');
+$updater=(string)file_get_contents($root.'/michat/bin/michat-updater.php');
+$check(str_contains($updater, "'composer.lock','vendor/autoload.php'")&&str_contains($updater, "'diff','--name-only','HEAD','origin/main'")&&str_contains($updater, "'diff','--cached','--name-only'"),'web updater only tolerates local Composer files unchanged by upstream, never staged edits');
+$check(!str_contains($updater, "'stash','push'"),'web updater does not stash installed dependencies');
 echo"Result: {$passed} passed, {$failed} failed\n";exit($failed?1:0);
