@@ -122,6 +122,20 @@ try {
     $preserve = array_values(array_diff($tables, $reset));
     sort($preserve, SORT_STRING);
     if (!$reset) throw new RuntimeException('cleanup_all_tables_fk_protected');
+    // No anunciar limpieza de chat como exitosa dejando sesiones o mensajes.
+    // Hasta poder desvincular de forma segura reglas y memorias persistentes,
+    // cancelar ANTES de cualquier TRUNCATE en vez de ejecutar uno parcial.
+    if (in_array('chat', $groups, true)) {
+        $core = array_values(array_intersect(['ChatMessages', 'ChatSessions'], $tables));
+        $blockedCore = array_values(array_diff($core, $reset));
+        if ($blockedCore) {
+            $reasons = [];
+            foreach ($blockedCore as $table) {
+                $reasons[] = $table . ': ' . implode('; ', $excluded[$table] ?? []);
+            }
+            throw new RuntimeException('cleanup_chat_requires_dependency_resolution: '.implode(' | ', $reasons));
+        }
+    }
 
     // Congelar la selección entre simulación y confirmación en la sesión superadmin.
     $fingerprint = hash('sha256', $schema."\\n".implode(',', $groups)."\\n".implode(',', $reset)."\\n".json_encode($excluded));
