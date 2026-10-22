@@ -354,14 +354,44 @@ function idx_extract_xlsx(string $tmp, string &$extractor, string &$error): stri
         $out[] = "--- Hoja {$sheetLabel} ---";
 
         $rows = preg_split('/<\/row>/s', $xml);
+        $rowNumber = 0;
 
         foreach ($rows as $rowXml) {
-            if (trim($rowXml) === '') continue;
+            if (!preg_match('/<row\b([^>]*)>/s', $rowXml, $rowTag)) continue;
+
+            $rowNumber++;
+            if (preg_match('/\br="([0-9]+)"/', $rowTag[1], $rowRef)) {
+                $rowNumber = (int)$rowRef[1];
+            }
 
             $cells = [];
+            $nextColumn = 1;
 
             if (preg_match_all('/<c(?:\s[^>]*)?>(?:.*?)<\/c>|<c(?:\s[^>]*)?\/>/s', $rowXml, $cellMatches)) {
                 foreach ($cellMatches[0] as $cellXml) {
+                    // XLSX stores sparse cells: use the original address instead of
+                    // collapsing populated cells into consecutive positions.
+                    if (preg_match('/<c\b[^>]*\br="([A-Z]+)([0-9]+)"/i', $cellXml, $cellRef)) {
+                        $column = strtoupper($cellRef[1]);
+                        $address = $column . $cellRef[2];
+                        $columnIndex = 0;
+                        for ($j = 0, $length = strlen($column); $j < $length; $j++) {
+                            $columnIndex = $columnIndex * 26 + ord($column[$j]) - 64;
+                        }
+                        $nextColumn = $columnIndex + 1;
+                    } else {
+                        // Some producers omit a cell reference. Count even empty
+                        // cells to keep the positional fallback aligned.
+                        $columnIndex = $nextColumn++;
+                        $column = '';
+                        while ($columnIndex > 0) {
+                            $columnIndex--;
+                            $column = chr(65 + $columnIndex % 26) . $column;
+                            $columnIndex = intdiv($columnIndex, 26);
+                        }
+                        $address = $column . $rowNumber;
+                    }
+
                     $value = '';
 
                     if (preg_match('/t="s"/', $cellXml) && preg_match('/<v>(.*?)<\/v>/s', $cellXml, $vM)) {
@@ -376,7 +406,7 @@ function idx_extract_xlsx(string $tmp, string &$extractor, string &$error): stri
                     }
 
                     $value = trim($value);
-                    if ($value !== '') $cells[] = $value;
+                    if ($value !== '') $cells[] = $address . ': ' . $value;
                 }
             }
 
