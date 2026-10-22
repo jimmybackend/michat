@@ -861,7 +861,7 @@ role="progressbar" style="width: 0%">0%</div>
 <!-- Preferencias primero: expone chatPreferencesReady/modelo antes de crear sesiones. -->
 <script src="js/user_preferences.js"></script>
 <!-- chat.js administra sesiones/proyectos y exporta window.chatUtils. -->
-<script src="js/chat.js?v=20261022-sidebar-search"></script>
+<script src="js/chat.js?v=20261022-stable-sidebar"></script>
 <script src="js/context-viewer.js"></script> 
 <script src="js/ai-data-control.js"></script>
 <!-- Módulos que dependen de chat.js -->
