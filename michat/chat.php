@@ -1294,6 +1294,6 @@ role="progressbar" style="width: 0%">0%</div>
     <input id="michat-update-password" class="michat-about-password" type="password" autocomplete="current-password">
   </div>
 </section>
-<script src="js/michat-updater.js?v=20261021-95"></script>
+<script src="js/michat-updater.js?v=20261022-focus"></script>
 </body>
 </html>

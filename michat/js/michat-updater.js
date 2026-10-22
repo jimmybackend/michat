@@ -8,8 +8,33 @@ const password=document.getElementById('michat-update-password');
 let action='';
 const csrf=()=>document.querySelector('meta[name="csrf-token"]')?.content||'';
 function show(s){result.textContent=s;}
-open.addEventListener('click',()=>{modal.hidden=false;});
-document.getElementById('michat-about-close')?.addEventListener('click',()=>{modal.hidden=true;});
+// Preferencias usa un modal Bootstrap con focus trap. Mientras siga abierto,
+// Bootstrap devuelve el foco a Preferencias e impide teclear en este input.
+const settingsModal=document.getElementById('settings-modal');
+let restoreSettings=false;
+function showAbout(){
+ modal.hidden=false;
+ password.disabled=false;
+ requestAnimationFrame(()=>password.focus());
+}
+open.addEventListener('click',()=>{
+ const settingsOpen=!!(settingsModal&&settingsModal.classList.contains('show'));
+ restoreSettings=settingsOpen;
+ if(settingsOpen&&window.jQuery){
+  window.jQuery(settingsModal).one('hidden.bs.modal',showAbout).modal('hide');
+ }else{
+  showAbout();
+ }
+});
+function closeAbout(){
+ modal.hidden=true;
+ if(restoreSettings&&settingsModal&&window.jQuery){
+  restoreSettings=false;
+  window.jQuery(settingsModal).modal('show');
+ }
+}
+document.getElementById('michat-about-close')?.addEventListener('click',closeAbout);
+modal.addEventListener('keydown',e=>{if(e.key==='Escape')closeAbout();});
 async function read(response){const j=await response.json();if(!response.ok||!j.ok)throw new Error(j.error||'HTTP '+response.status);return j;}
 check.addEventListener('click',async()=>{
  check.disabled=true;show('Consultando GitHub…');apply.hidden=true;
