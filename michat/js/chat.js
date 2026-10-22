@@ -1227,13 +1227,14 @@ function renderSessionsList() {
   const targetList = el.sbChatList || el.sessionsList;
   if (!targetList) return;
   const freeSessions = sessions.filter(s => !s.project_id && !s.project_id_);
+  const projectSessions = sessions.filter(s => s.project_id || s.project_id_);
   const renderItem = (s) => {
     const sid = s.id || s.id_;
     const title = esc(s.title || `Sesión #${sid}`);
     const meta = formatSessionMeta(s.updated_at || s.created_at || '');
     const isArchived = s.archived || s.status === 'archived';
     const badge = isArchived ? `<span class="badge badge-secondary ml-1" style="font-size:0.6rem;">arch</span>` : '';
-    const active = (sid === currentSessionId) ? ' active' : '';
+    const active = (Number(sid) === Number(currentSessionId)) ? ' active' : '';
     return `<div class="sb-item${active}" data-id="${sid}" title="${esc(title)}">
       <div class="d-flex justify-content-between align-items-center">
         <span class="text-truncate sb-item-title" style="max-width: 70%;">${esc(title)} ${badge}</span>
@@ -1254,7 +1255,12 @@ function renderSessionsList() {
         ${arr.map(renderItem).join('')}
       `).join('')
     : `<div class="text-muted small">Sin chats libres</div>`;
-  targetList.innerHTML = items;
+  // Las conversaciones de proyecto también deben permanecer junto a las demás
+  // en el panel de conversaciones cuando se seleccionan.
+  const projectItems = projectSessions.length
+    ? '<div class="sb-group-label">Chats de proyectos</div>' + projectSessions.map(renderItem).join('')
+    : '';
+  targetList.innerHTML = items + projectItems;
   targetList.querySelectorAll('.sb-item').forEach(item => {
     item.addEventListener('click', (ev) => {
       if (ev.target.closest('.js-rename,.js-archive,.js-restore')) return;
@@ -1377,6 +1383,8 @@ function renderSessionsList() {
         await discardEmptySession(previousSessionId, { silent:true, keepCurrent:true });
       }
       currentSessionId = id;
+      // Actualiza la selección inmediatamente y conserva la lista de sesiones.
+      renderSessionsList();
       syncTraceExplorerButton();
       const s = sessions.find(x => x.id === id);
       if (el.title) el.title.textContent = s ? (s.title || `Sesión #${id}`) : `Sesión #${id}`;
