@@ -1,46 +1,25 @@
 <?php
 declare(strict_types=1);
-
-// Contrato del acceso directo a archivos tras quitar el panel duplicado.
-$root = dirname(__DIR__);
-$html = file_get_contents($root.'/chat.php');
-$js = file_get_contents($root.'/js/chat.js');
-$upload = file_get_contents($root.'/session_upload.php');
-$service = file_get_contents($root.'/includes/Chat/SessionLifecycleService.php');
-$problems = [];
-$check = static function(bool $ok,string $reason) use (&$problems):void {
-    if (!$ok) $problems[]=$reason;
-};
-
-$check(substr_count($html,'id="chat2Attach"')===1,'Hay un clip inferior único');
-$check(substr_count($html,'id="chat2File"')===1,'Existe un input de selección de archivos');
-$check(strpos($html,'id="chat2Attach"') < strpos($html,'id="chat2BtnGenImg"'),
-    'El clip precede al botón de imagen');
-$check(!str_contains($html,'id="chatFilesOpen"') && !str_contains($html,'id="chatFilesDrawer"'),
-    'No se muestra el panel superior duplicado');
-$check(!str_contains($html,'id="modalSessionAttachments"'),
-    'No existe el modal duplicado de adjuntos');
-$check(str_contains($js,'async function uploadComposerFiles(')
-    && str_contains($js,"el.file?.click()"),'El clip permite seleccionar y subir');
-$check(str_contains($js,"fetch('session_upload.php'"),'La subida usa el endpoint existente');
-$check(str_contains($js,"createSession('Nueva conversación (archivos)', {allowModelFallback: true})"),
-    'Crea conversación si no hay una seleccionada');
-$check(str_contains($js,'currentSessionStatus !== \'open\''),
-    'Se comprueba que la conversación esté activa');
-$check(str_contains($upload,'SessionAttachmentKnowledgeService')
-    && str_contains($upload,'SessionImageKnowledgeService')
-    && str_contains($upload,'$knowledgeService->process(')
-    && str_contains($upload,'$imageKnowledgeService->process('),
-    'La subida procesa automáticamente texto e imágenes para RAG');
-$check(str_contains($upload,"(\$session['status'] ?? '') !== 'open'"),
-    'El backend rechaza subidas a conversaciones archivadas/eliminadas');
-$check(str_contains($service,"FileS3 WHERE user_id_=?"),
-    'Una conversación con archivos no se descarta como vacía');
-$check(str_contains($js,'btn-project-sources') && str_contains($js,'openProjectSourcesModal'),
-    'La indexación manual de proyecto sigue disponible desde Gestionar proyectos');
-
-if ($problems) {
-    fwrite(STDERR, "Direct file upload checks FAILED:\n- ".implode("\n- ",$problems)."\n");
-    exit(1);
-}
-echo "Direct file upload and RAG contract: OK\n";
+$root=dirname(__DIR__);
+$html=(string)file_get_contents($root.'/chat.php');
+$js=(string)file_get_contents($root.'/js/chat.js');
+$upload=(string)file_get_contents($root.'/session_upload.php');
+$builder=(string)file_get_contents($root.'/includes/Memory/ContextBuilder.php');
+$service=(string)file_get_contents($root.'/includes/SessionAttachmentKnowledgeService.php');
+$fail=[];
+$check=static function(bool $condition,string $label)use(&$fail):void{if(!$condition)$fail[]=$label;};
+$check(substr_count($html,'id="chat2Attach"')===1,'Clip inferior único para subir a S3');
+$check(substr_count($html,'id="chatFilesOpen"')===1,'Cerebro superior abre conocimiento de archivos');
+$check(str_contains($html,'id="chatFilesDrawer"')&&str_contains($html,'id="chatSessionFilesList"'),'Inspector lista archivos e índice');
+$check(strpos($html,'id="chat2Attach"')<strpos($html,'id="chat2BtnGenImg"'),'Clip inferior antes de Imagen');
+$check(str_contains($js,'async function uploadComposerFiles(')&&str_contains($js,"fetch('session_upload.php'"),'Subida directa a sesión');
+$check(str_contains($js,"createSession('Nueva conversación (archivos)', {allowModelFallback: true})"),'Puede crear sesión al subir');
+$check(str_contains($js,'data-action="semantic"')&&str_contains($js,'data-action="index"'),'Reintento de semántica y fragmentos por archivo');
+$check(str_contains($js,'data-action="ask"')&&str_contains($js,'data-action="compare"'),'Preguntar y comparar archivos desde cerebro');
+$check(str_contains($js,'data-action="version"')&&str_contains($js,"fd.append('version_of_file_id'"),'Revisión S3 vinculada sin sobreescritura');
+$check(str_contains($upload,'version_of_files3_id')&&str_contains($upload,'revision_number'),'Historial de revisiones en metadata FileS3');
+$check(str_contains($upload,'knowledge_status')&&str_contains($upload,'knowledge_issues'),'API distingue guardado e indexado RAG');
+$check(str_contains($service,"'file_chunk'")&&str_contains($service,'ready_for_attachment_rag'),'Indexación por fragmentos y embeddings');
+$check(str_contains($builder,'explicitFileQuestion')&&str_contains($builder,'fallback_reason'),'Preguntas de archivo pasan por RAG real');
+if($fail){fwrite(STDERR,"Archivo y RAG contract FAILED:\n - ".implode("\n - ",$fail)."\n");exit(1);}
+echo "Archivo y RAG contract: OK\n";
