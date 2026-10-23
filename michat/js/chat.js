@@ -1414,7 +1414,12 @@ function renderSessionsList() {
         el.input.disabled = isArchived || isDeleted;
         el.input.placeholder = isDeleted ? 'Recupera la conversación para continuar' : isArchived ? 'Restaura la conversación para escribir' : 'Escribe tu mensaje...';
       }
-      if (el.send) el.send.disabled = isArchived || isDeleted;
+      const readOnly = isArchived || isDeleted;
+      if (el.send) el.send.disabled = readOnly;
+      // La vista de auditoría no debe ofrecer edición, adjuntos ni nuevas generaciones.
+      for (const control of [el.rename, el.attach, el.file, el.btnGenImg, el.btnGenVid, el.btnSonic, el.attachmentsAdd]) {
+        if (control) control.disabled = readOnly;
+      }
     }
     async function changeSessionStatus(id, api, label, confirmation) {
       if (isSending) {
