@@ -717,7 +717,7 @@ function idx_extract_sqlite(string $tmp, string &$extractor, string &$error): st
             $expr = [];
             foreach ($selected as $col) {
                 $q = '"' . str_replace('"', '""', $col) . '"';
-                $expr[] = 'substr(CAST(' . $q . ' AS TEXT),1,1500) AS ' . $q;
+                $expr[] = 'substr(CAST(' . $q . ' AS TEXT),1,1501) AS ' . $q;
             }
             $rows = $db->query('SELECT ' . implode(',', $expr) . ' FROM ' . $quoted . ' LIMIT 41');
             if (!$rows) { $partial = true; continue; }
@@ -728,6 +728,10 @@ function idx_extract_sqlite(string $tmp, string &$extractor, string &$error): st
                 foreach ($selected as $col) {
                     $v = $row[$col] ?? null;
                     $v = $v === null ? 'NULL' : (string)$v;
+                    if (mb_strlen($v) > 1500) {
+                        $partial = true;
+                        $v = mb_substr($v, 0, 1500);
+                    }
                     $v = idx_normalize_extracted_text($v);
                     if ($v !== '') $values[] = $col . '=' . $v;
                 }
