@@ -310,6 +310,8 @@ DB_NAME=michat
 mysql -u root -p -e "CREATE DATABASE \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
 mysql -u root -p "$DB_NAME" < adbbmis1_Cloud.sql
 php michat/bin/migrations.php baseline --profile=current-dump
+php michat/bin/migrations.php status
+php michat/bin/migrations.php apply
 ```
 
 El dump consolidado **does not create or select a database**; hereda el `DB_NAME` elegido por el despliegue y debe importarse explícitamente en esa base, como muestra el comando anterior.
@@ -451,3 +453,14 @@ MIT License. Consulta `LICENSE`.
 ## Disclaimer
 
 MiChat es software open source para desarrollo, experimentación e integración de sistemas asistidos por IA. Los modelos pueden producir resultados incorrectos. Cada despliegue es responsable de validar contenido generado, asegurar credenciales, configurar IAM/S3/DB correctamente y revisar cambios producidos por IA antes de utilizarlos en producción.
+
+
+## Índice documental central y worker recuperable (Fase 13)
+
+El motor nuevo se activa de forma explícita con `MICHAT_DOCUMENT_KNOWLEDGE_ENABLED=1`, después de aplicar la migración aditiva `fase13_document_knowledge` mediante el runner. El perfil histórico `current-dump` sigue registrando sus 14 migraciones originales y deja esta migración pendiente para `apply`. En una instalación existente, revisar primero `status` y su historial; no volver a importar el dump ni ejecutar un baseline sobre historia existente.
+
+La subida guarda S3 y encola extracción/chunks/embeddings; un mismo archivo/revisión se reutiliza entre conversaciones autorizadas. El CLI `php michat/bin/document_knowledge_worker.php --max-batches=12` procesa lotes finitos, con leases, checkpoints y reintentos. Sin activar el flag se conserva la ruta anterior. Los archivos de systemd en `deploy/systemd/michat-document-worker.*` son ejemplos para revisión e instalación por el operador; no se instalan al actualizar Git.
+
+Operación, límites, rollback y pruebas: [docs/central-document-queue.md](docs/central-document-queue.md).
+
+La validación real de este incremento confirmó Fase 13 desde el baseline actual. La ruta histórica post-Fase10D → Fase 11B tiene un bloqueo previo de llave foránea documentado en el informe; no se certifica ni se fuerza esa actualización modificando migraciones publicadas.

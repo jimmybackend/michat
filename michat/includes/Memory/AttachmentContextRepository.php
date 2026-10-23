@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/DocumentAccessRepository.php';
 require_once __DIR__ . '/AttachmentEvidence.php';
+require_once dirname(__DIR__).'/Documents/CentralDocumentIndex.php';
 
 final class AttachmentContextRepository
 {
@@ -13,7 +14,9 @@ final class AttachmentContextRepository
 
     public function hasContext(int $userId, int $sessionId): bool
     {
-        if (!$this->access->session($userId, $sessionId)) return false;
+        $session=$this->access->session($userId,$sessionId);
+        if (!$session) return false;
+        if ((new CentralDocumentIndex($this->db))->sources($userId,$sessionId,$session)) return true;
         $s = $this->db->prepare("SELECT id_ FROM SessionContextBlocks WHERE session_id_=? AND block_type IN ('file','file_chunk') LIMIT 1");
         if (!$s) return false;
         $s->bind_param('i', $sessionId); $s->execute();
@@ -35,16 +38,28 @@ final class AttachmentContextRepository
         preg_match_all('/["“]([^"”]+)["”]/u',$queryText,$quoted);
         $requestedNames = array_values(array_filter(array_map('mb_strtolower',$quoted[1]), static fn($name)=>in_array(strtolower(pathinfo($name,PATHINFO_EXTENSION)),array_merge(idx_text_extensions(),idx_extractable_extensions(),['jpg','jpeg','png','webp','gif']),true)));
         if (preg_match('/busca|referenci/iu',$queryText)) $requestedNames=[];
-        $last = 0; $best = []; $files = []; $revisions = []; $started = microtime(true);
+        $central=new CentralDocumentIndex($this->db);
+        $centralSources=$central->sources($userId,$sessionId,$session);
+        $passes=array_merge([null],array_values($centralSources));
+        $completeScan=true;
+        $last = 0; $best = []; $files = []; $revisions = [];
+        foreach ($centralSources as $source) $revisions[$source['s3_key'].':'.$source['source_etag']]=true;
+        $started = microtime(true);
+        foreach ($passes as $centralSource) {
+        $last=0;
         do {
+          if ($centralSource===null) {
             $s = $this->db->prepare("SELECT id_,block_type,content_preview,s3_path,source_ids,embedding_json,embedding_model FROM SessionContextBlocks WHERE session_id_=? AND id_>? AND block_type IN ('file','file_chunk') ORDER BY id_ LIMIT 200");
             if (!$s) throw new RuntimeException('No se pudo recuperar conocimiento');
             $s->bind_param('ii', $sessionId, $last); $s->execute(); $r = $s->get_result();
-            $count = $r->num_rows;
-            while ($row = $r->fetch_assoc()) {
+            $batch=$r->fetch_all(MYSQLI_ASSOC);$s->close();
+          } else { $batch=$central->rows($centralSource,$last); }
+            $count=count($batch);
+            foreach ($batch as $row) {
                 $last = (int)$row['id_'];
                 $meta = json_decode((string)$row['source_ids'], true) ?: [];
                 $fileId = (int)($meta['files3_id'] ?? 0);
+                if ($centralSource===null && $row['block_type']==='file_chunk' && isset($centralSources[$fileId])) continue;
                 if (!array_key_exists($fileId, $files)) $files[$fileId] = $this->access->file($userId, $fileId);
                 $file = $files[$fileId];
                 if (!$file || idx_build_s3_key($file) !== $row['s3_path']) continue;
@@ -58,12 +73,11 @@ final class AttachmentContextRepository
                 $vec = $row['embedding_model'] === $model ? json_decode((string)$row['embedding_json'], true) : null;
                 $cos = AttachmentEvidence::cosine($queryVector, is_array($vec) ? $vec : null);
                 if ($mode !== 'always' && $lex <= 0 && ($cos === null || $cos < $threshold)) continue;
-                $row['score'] = max($lex, $cos ?? 0) + 0.1 * $lex;
+                $row['score'] = min(1.0,max($lex, $cos ?? 0) + 0.1 * $lex);
                 $row['lexical_score'] = $lex; $row['semantic_score'] = $cos;
                 $row['filename'] = $file['Nombre'];
                 $best[] = $row;
             }
-            $s->close();
             usort($best, static fn($a,$b) => ($b['score'] <=> $a['score']) ?: ($a['id_'] <=> $b['id_']));
             // Keep candidates per source for multi-document comparisons.
             $perFile = []; $best = array_values(array_filter($best, static function($row) use (&$perFile, $top) {
@@ -71,27 +85,34 @@ final class AttachmentContextRepository
                 return $perFile[$key] <= $top;
             }));
             if (count($best) > 500) $best = array_slice(AttachmentEvidence::diversify($best, 500), 0, 500);
-            if (microtime(true) - $started > 10 && $count === 200) {
+            if (microtime(true) - $started > 10) {
                 $t['limitation'] = 'Búsqueda parcial por presupuesto de tiempo; refine la consulta.';
-                break;
+                $completeScan=false;break 2;
             }
         } while ($count === 200);
-        $t['scan_complete'] = $count < 200;
+        }
+        $t['scan_complete'] = $completeScan;
         $selected = AttachmentEvidence::diversify($best, $top);
         // Adjacent source chunks complete split clauses without expanding to the whole file.
-        $seen = array_fill_keys(array_map(static fn($r)=>(int)$r['id_'],$selected),true);
+        $seen = array_fill_keys(array_map(static fn($r)=>($r['source_table']??'SessionContextBlocks').':'.$r['id_'],$selected),true);
         foreach ($selected as $anchor) {
             if (count($seen) >= 24) break;
             $meta = json_decode((string)$anchor['source_ids'],true) ?: [];
             if ($anchor['block_type'] !== 'file_chunk' || empty($meta['chunk'])) continue;
             $next = (int)$meta['chunk'] + 1;
-            $q = $this->db->prepare("SELECT id_,block_type,content_preview,s3_path,source_ids FROM SessionContextBlocks WHERE session_id_=? AND s3_path=? AND block_type='file_chunk' AND CAST(JSON_UNQUOTE(JSON_EXTRACT(source_ids,'$.chunk')) AS UNSIGNED)=? ORDER BY id_ LIMIT 1");
-            if (!$q) continue;
-            $q->bind_param('isi',$sessionId,$anchor['s3_path'],$next);$q->execute();$neighbor=$q->get_result()->fetch_assoc();$q->close();
-            if (!$neighbor || isset($seen[(int)$neighbor['id_']])) continue;
+            if (($anchor['source_table']??'')==='DocumentKnowledgeChunks') {
+                $neighbor=$central->neighbor($anchor['central_source'],$next);
+            } else {
+                $q = $this->db->prepare("SELECT id_,block_type,content_preview,s3_path,source_ids FROM SessionContextBlocks WHERE session_id_=? AND s3_path=? AND block_type='file_chunk' AND CAST(JSON_UNQUOTE(JSON_EXTRACT(source_ids,'$.chunk')) AS UNSIGNED)=? ORDER BY id_ LIMIT 1");
+                if (!$q) continue;
+                $q->bind_param('isi',$sessionId,$anchor['s3_path'],$next);$q->execute();$neighbor=$q->get_result()->fetch_assoc();$q->close();
+            }
+            if (!$neighbor) continue;
+            $identity=($neighbor['source_table']??'SessionContextBlocks').':'.$neighbor['id_'];
+            if (isset($seen[$identity])) continue;
             $other=json_decode((string)$neighbor['source_ids'],true) ?: [];
             if (($other['files3_id']??null)!==($meta['files3_id']??null) || ($other['source_etag']??null)!==($meta['source_etag']??null)) continue;
-            $seen[(int)$neighbor['id_']]=true;
+            $seen[$identity]=true;
             $selected[]=array_merge($anchor,$neighbor,['score'=>$anchor['score']*0.9,'lexical_score'=>0,'semantic_score'=>null]);
         }
         $items = []; $parts = []; $chars = 0;
@@ -103,8 +124,9 @@ final class AttachmentContextRepository
             $meta = json_decode((string)$row['source_ids'], true) ?: [];
             $parts[] = $citation . "\n" . $content; $chars += mb_strlen(end($parts)) + 2;
             $metadata = ['session_id'=>$sessionId,'files3_id'=>(int)($meta['files3_id'] ?? 0),'filename'=>$row['filename'],'mode'=>$mode,'citation'=>$citation,'locator'=>$meta['locator'] ?? [],'truncated'=>!empty($meta['truncated']),'scan_complete'=>$t['scan_complete']];
-            $items[] = new ContextItem('SessionContextBlocks',(int)$row['id_'],$row['block_type'],'session_attachment',$content,(float)$row['score'],null,$metadata);
-            $t['selected'][] = ['block_id'=>(int)$row['id_'],'block_type'=>$row['block_type'],'filename'=>$row['filename'],'content'=>$content,'score'=>$row['score'],'lexical_score'=>$row['lexical_score'],'semantic_score'=>$row['semantic_score'],'citation'=>$citation];
+            if (($row['source_table']??'')==='DocumentKnowledgeChunks') $metadata['evidence_url']='session_attachment_viewer.php?session_id='.$sessionId.'&central_chunk_id='.(int)$row['id_'];
+            $items[] = new ContextItem($row['source_table']??'SessionContextBlocks',(int)$row['id_'],$row['block_type'],'session_attachment',$content,(float)$row['score'],null,$metadata);
+            $t['selected'][] = ['block_id'=>(int)$row['id_'],'source_table'=>$row['source_table']??'SessionContextBlocks','block_type'=>$row['block_type'],'filename'=>$row['filename'],'content'=>$content,'score'=>$row['score'],'lexical_score'=>$row['lexical_score'],'semantic_score'=>$row['semantic_score'],'citation'=>$citation];
         }
         $context = implode("\n\n", $parts);
         return ['context'=>$context,'items'=>$items,'telemetry'=>$t];

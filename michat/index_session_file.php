@@ -43,7 +43,9 @@ try {
         ? $imageService->process($userId, $sessionId, $fileId)
         : (new SessionAttachmentKnowledgeService($db_connection))->process($userId, $sessionId, $fileId);
     indexSessionFileExit($result + [
-        'mensaje' => $isImage
+        'mensaje' => !empty($result['queued'])
+            ? 'Documento en cola. El worker continuará la extracción y los embeddings por lotes; revisa su progreso en este panel.'
+            : ($isImage
             ? (!empty($result['embedding_ready'])
                 ? 'Imagen analizada y embedding visual listo para RAG.'
                 : 'Imagen analizada. El embedding pendiente puede reintentarse desde Mantenimiento.')
@@ -53,7 +55,7 @@ try {
                 ? 'Archivo indexado, semántica procesada y vectores disponibles para RAG.'
                 : (!empty($result['index']['ok'])
                     ? 'Fragmentos guardados; los embeddings pueden estar pendientes en Mantenimiento.'
-                    : 'La indexación no se completó; revisa el estado del archivo.'))),
+                    : 'La indexación no se completó; revisa el estado del archivo.')))),
     ]);
 } catch (InvalidArgumentException $e) {
     indexSessionFileExit(['ok'=>false,'error'=>$e->getMessage()], 400);

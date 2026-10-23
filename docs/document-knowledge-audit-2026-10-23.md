@@ -1,5 +1,7 @@
 # MiChat / ArcadeCloud: auditoría y primer incremento verificable
 
+Actualización posterior: el índice central y la cola recuperable se implementan en [central-document-queue.md](central-document-queue.md). Los límites y pendientes de este informe describen el estado del primer incremento, previo a Fase 13.
+
 Fecha: 2026-10-23. Base auditada: `477731c5dcfa030d5b612fc716951fec45ccae70`.
 
 **La misión universal todavía no está terminada.** Este cambio corrige el acceso a evidencia documental y permite vincular archivos propios de Drive. No constituye certificación de producción ni de cobertura integral de documentos grandes. No se desplegó en EC2 y no se modificó MySQL de producción.

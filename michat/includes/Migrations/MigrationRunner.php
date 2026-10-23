@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 final class MigrationRunner
 {
-    public const VERSION='fase12b6-v1';
+    public const VERSION='fase13-documents-v1';
 
     public function __construct(
         private MigrationCatalog $catalog,
@@ -174,6 +174,7 @@ final class MigrationRunner
             'fase12b_4_ai_scope_default_reconciliation'=>false,
             'fase12b_5_mysql_generated_column_compatibility'=>false,
             'fase12b_6_system_role_authorization'=>false,
+            'fase13_document_knowledge'=>array_reduce(['DocumentKnowledgeSources','DocumentKnowledgeChunks','DocumentKnowledgeJobs','DocumentKnowledgeEvents'],fn($found,$table)=>$found||$this->tableExists($table),false),
             default=>true,
         };
         if($postStatePresent)throw new RuntimeException('PARTIAL/UNKNOWN STATE: pending migration has target structures; OPERATOR RECONCILIATION REQUIRED for '.$id);

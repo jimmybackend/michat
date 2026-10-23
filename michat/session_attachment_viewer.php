@@ -485,7 +485,9 @@ if (!$session) {
         const container = document.getElementById('inspector-content');
         
         try {
-            const response = await fetch(`session_attachment_inspector.php?session_id=${sessionId}`, {
+            const params = new URLSearchParams(window.location.search);
+            params.set('session_id', String(sessionId));
+            const response = await fetch('session_attachment_inspector.php?' + params.toString(), {
                 credentials: 'same-origin',
                 cache: 'no-cache'
             });
@@ -675,6 +677,11 @@ if (!$session) {
             });
         }
         
+        if (data.central_pagination) {
+            html += '<p>Los contadores corresponden a los fragmentos mostrados en esta página.</p>';
+            if (data.central_pagination.has_more) html += `<a class="btn-inspector" href="session_attachment_viewer.php?session_id=${sessionId}&central_after=${Number(data.central_pagination.next_after)}">Siguiente página de fragmentos</a>`;
+            if (new URLSearchParams(window.location.search).has('central_after')) html += `<a class="btn-inspector" href="session_attachment_viewer.php?session_id=${sessionId}">Volver al inicio</a>`;
+        }
         container.innerHTML = html;
     }
     

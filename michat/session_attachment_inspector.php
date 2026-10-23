@@ -105,7 +105,7 @@ try {
     
     // Validar que la sesión pertenece al usuario
     $stmt = $db_connection->prepare("
-        SELECT id_, user_id_, title
+        SELECT id_, user_id_, title, meta
         FROM ChatSessions
         WHERE id_ = ? AND user_id_ = ?
         LIMIT 1
@@ -272,6 +272,22 @@ try {
     
     $stmt->close();
     
+    $centralPagination=null;
+    if (getenv('MICHAT_DOCUMENT_KNOWLEDGE_ENABLED')==='1') {
+        require_once __DIR__.'/includes/Documents/CentralDocumentIndex.php';
+        $centralIndex=new CentralDocumentIndex($db_connection);
+        $sources=$centralIndex->sources($userId,$sessionId,$session);
+        $centralIds=array_keys($sources);
+        $blocks=array_values(array_filter($blocks,static fn($b)=>$b['block_type']!=='file_chunk'||!in_array((int)($b['files3_id']??0),$centralIds,true)));
+        $page=$centralIndex->inspect($sources,max(0,(int)($_GET['central_after']??0)),max(0,(int)($_GET['central_chunk_id']??0)));
+        $centralPagination=['has_more'=>$page['has_more'],'next_after'=>$page['next_after'],'scope'=>'central_chunks_this_page'];
+        foreach($page['rows'] as $centralRow) {
+            $meta=json_decode($centralRow['source_ids'],true);$source=$centralRow['central_source'];
+            $vector=json_decode((string)$centralRow['embedding_json'],true);$has=is_array($vector)&&count($vector)>0;
+            $blocks[]=['id'=>'DKC:'.$centralRow['id_'],'source_table'=>'DocumentKnowledgeChunks','block_type'=>'file_chunk','content_preview'=>$centralRow['content_preview'],'s3_path'=>$centralRow['s3_path'],'filename'=>$source['Nombre'],'files3_id'=>(int)$source['files3_id'],'chunk_info'=>['current'=>$meta['chunk'],'total'=>$meta['total']],'locator'=>$meta['locator'],'token_count'=>(int)ceil(mb_strlen($centralRow['content_preview'])/4),'has_embedding'=>$has&&($currentEmbeddingModel===''||$currentEmbeddingModel===$centralRow['embedding_model']),'has_any_embedding'=>$has,'stale_embedding'=>$has&&$currentEmbeddingModel!==''&&$currentEmbeddingModel!==$centralRow['embedding_model'],'embedding_dimensions'=>$has?count($vector):0,'embedding_model'=>$centralRow['embedding_model'],'created_at'=>$source['created_at']];
+        }
+    }
+
     // Agrupar por archivo (s3_path)
     $grouped = [];
     foreach ($blocks as $block) {
@@ -326,6 +342,7 @@ try {
         'ok' => true,
         'session_id' => $sessionId,
         'session_title' => $session['title'] ?? 'Sesión #' . $sessionId,
+        'central_pagination'=>$centralPagination,
         'current_embedding_model' => $currentEmbeddingModel !== '' ? $currentEmbeddingModel : null,
         'stats' => [
             'total_files' => count($files),
