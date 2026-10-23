@@ -20,9 +20,9 @@ foreach(SqlMigrationExecutor::splitStatements($migration) as $statement) $db->qu
 $checks=0;
 function queueCheck(bool $ok,string $label): void { global $checks;$checks++;if(!$ok)throw new RuntimeException($label);echo "PASS $label\n"; }
 $runtime=new class implements DocumentKnowledgeRuntime {
-    public string $etag='"v1"';public string $model='fixture-model';public string $text='';public bool $fail=false;public int $extractCalls=0;public int $embedCalls=0;public bool $partial=false;
+    public string $etag='"v1"';public string $model='fixture-model';public string $text='';public bool $fail=false;public int $extractCalls=0;public int $embedCalls=0;public bool $partial=false;public bool $ocrPending=false;
     public function describe(array $file): array { return ['ETag'=>$this->etag,'ContentLength'=>strlen($this->text)]; }
-    public function extract(array $file): array { $this->extractCalls++;return ['content'=>$this->text,'source_etag'=>$this->etag,'source_sha256'=>hash('sha256',$this->text),'truncated'=>$this->partial,'extractor'=>'fixture-utf8']; }
+    public function extract(array $file): array { $this->extractCalls++;if($this->ocrPending)throw new PdfOcrPendingException('OCR pendiente');return ['content'=>$this->text,'source_etag'=>$this->etag,'source_sha256'=>hash('sha256',$this->text),'truncated'=>$this->partial,'extractor'=>'fixture-utf8']; }
     public function embeddingModel(int $userId): string { return $this->model; }
     public function embed(int $userId,string $content,string $expectedModel): array { $this->embedCalls++;if($this->fail)throw new RuntimeException('Simulated Bedrock failure');return ['embedding'=>[1.0,0.0],'inputTokens'=>10]; }
 };
@@ -135,5 +135,15 @@ queueCheck($repo->job($oversizeId)['status']==='failed'&&(int)$repo->job($oversi
 $runtime->etag='"locked-v5"';$runtime->text='texto de prueba';$locked=$service->enqueue(1,1,1);
 $db->query("UPDATE FileS3 SET AccessType='secure' WHERE id_=1");$service->tick($locked['central_job_id']);
 queueCheck($repo->job($locked['central_job_id'])['status']==='failed','Worker revalidates Drive access before external processing');
+$repo->write("UPDATE FileS3 SET AccessType='normal' WHERE id_=1");
+$runtime->etag='"ocr-wait"';$runtime->text='[Página 1] Texto OCR final';$runtime->ocrPending=true;
+$ocr=$service->enqueue(1,1,1);$ocrId=$ocr['central_job_id'];$service->tick($ocrId);
+$wait=$repo->job($ocrId);
+queueCheck($wait['status']==='retry'&&(int)$wait['failure_count']===0,'Pending OCR releases lease without consuming the failure budget');
+$runtime->ocrPending=false;$repo->write('UPDATE DocumentKnowledgeJobs SET available_at=UTC_TIMESTAMP() WHERE id_=?','i',$ocrId);$service->tick($ocrId);
+queueCheck($repo->job($ocrId)['phase']==='chunks','OCR completion resumes the same job and extraction checkpoint');
+$runtime->etag='"ocr-expired"';$runtime->ocrPending=true;$expired=$service->enqueue(1,1,1);$expiredId=$expired['central_job_id'];
+$repo->write('UPDATE DocumentKnowledgeJobs SET created_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 7 HOUR) WHERE id_=?','i',$expiredId);$service->tick($expiredId);
+queueCheck($repo->job($expiredId)['status']==='failed','OCR pending beyond six hours stops explicitly instead of waiting forever');
 putenv('MICHAT_DOCUMENT_KNOWLEDGE_ENABLED');$db->close();
 echo "Central document queue MariaDB: $checks checks passed\n";

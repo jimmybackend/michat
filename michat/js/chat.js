@@ -1767,6 +1767,9 @@ async function processSessionFileAction(endpoint, fileId, label, btn) {
     return;
   }
 
+  const sid=currentSessionId;
+  const file=sessionAttachments.find(file=>Number(file.files3_id || file.id)===Number(fileId));
+  const driveIndex=endpoint===FILE_ENDPOINTS.indexFile && file?.drive_linked;
   const originalHtml = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
@@ -1774,7 +1777,8 @@ async function processSessionFileAction(endpoint, fileId, label, btn) {
   try {
     const fd = new FormData();
     fd.append('file_id',    String(fileId));
-    fd.append('session_id', String(currentSessionId));
+    fd.append('session_id', String(sid));
+    if(driveIndex){await changeDriveKnowledge(null,'token',sid);fd.append('csrf',driveKnowledgeCsrf);endpoint='drive_file_analysis.php';}
 
     const r = await fetch(endpoint, {
       method: 'POST',
@@ -1786,22 +1790,22 @@ async function processSessionFileAction(endpoint, fileId, label, btn) {
     try { j = await r.json(); }
     catch (err) { throw new Error('Respuesta inválida (HTTP ' + r.status + ')'); }
 
+    if(Number(currentSessionId)!==Number(sid))return;
+    if(j.pending){showToast(label,esc(j.error || 'OCR en proceso'),'info');return;}
     if (!r.ok || j.ok === false) {
       throw new Error(j.error || j.mensaje || ('HTTP ' + r.status));
     }
 
-    showToast(label, j.mensaje || 'Proceso completado.', 'success');
+    showToast(label, esc(j.mensaje || j.message || 'Proceso completado.'), j.warnings?.length?'warning':'success');
 
-    // Refrescar la lista de archivos para que el contador quede consistente
-    if (currentSessionId) {
-      await loadSessionAttachments(currentSessionId);
-    }
+
   } catch (e) {
     console.error(e);
-    showToast('⚠️ Error', e.message, 'danger');
+    showToast('⚠️ Error', esc(e.message), 'danger');
   } finally {
     btn.disabled = false;
     btn.innerHTML = originalHtml;
+    if(Number(currentSessionId)===Number(sid))await loadSessionAttachments(sid);
   }
 }
 
@@ -4070,11 +4074,12 @@ function updateKnowledgePipelineSummary(files, error = '') {
     return;
   }
   const ragReady = files.filter(file => !file.extraction_partial && (file.index_status === 'indexed' || (file.semantic_type === 'visual_summary' && file.semantic_status === 'ready'))).length;
+  const textReady = files.filter(file => Number(file.chunks_total || 0)>0).length;
   const semanticReady = files.filter(file => file.semantic_status === 'ready').length;
   const chunks = files.reduce((n, file) => n + Math.max(0, Number(file.chunks_total || 0)), 0);
   const embeddedChunks = files.reduce((n, file) => n + Math.max(0, Number(file.chunks_with_embedding || 0)), 0);
   const pending = files.filter(file => file.index_status !== 'indexed' || file.semantic_status !== 'ready').length;
-  label.textContent = files.length + ' archivo(s) · ' + ragReady + ' con RAG listo · '
+  label.textContent = files.length + ' archivo(s) · ' + textReady + ' con texto consultable · ' + ragReady + ' con RAG listo · '
     + semanticReady + ' con semántica lista · ' + embeddedChunks + '/' + chunks
     + ' fragmentos con embedding del modelo activo'
     + (pending ? ' · ' + pending + ' requieren revisión o reintento' : ' · proceso completo para los archivos compatibles');
@@ -4204,10 +4209,11 @@ async function loadSessionAttachments(sessionId) {
           </div>
 
           <div class="chat-session-file-index-state" style="font-size:.62rem; margin:.2rem 0; display:flex; gap:.25rem; flex-wrap:wrap;">
-            ${file.index_status === 'queued' ? '<span class="badge badge-info">Procesamiento en cola / en curso</span>' : file.index_status === 'processing_failed' ? '<span class="badge badge-danger">Fallo de procesamiento · reintentar</span>' : file.index_status === 'extraction_partial' ? '<span class="badge badge-warning">Extracción parcial · consultar con límites</span>' : file.index_status === 'indexed' ? '<span class="badge badge-success">RAG listo</span>' : file.index_status === 'embedding_disabled' ? '<span class="badge badge-secondary">Embeddings desactivados</span>' : file.index_status === 'processing' ? '<span class="badge badge-warning">Embedding pendiente</span>' : file.index_status === 'stale_embedding' ? '<span class="badge badge-danger">Reindexar · modelo cambió</span>' : file.chunks_total > 0 ? '<span class="badge badge-warning">Chunks sin vector</span>' : '<span class="badge badge-secondary">Sin indexar</span>'}
+            ${file.analysis_attempt?.status === 'ocr_pending' ? '<span class="badge badge-info">OCR en proceso · reintentar</span>' : file.analysis_attempt?.status === 'failed' && !file.chunks_total && !file.semantic_exists ? '<span class="badge badge-danger">Extracción no disponible</span>' : file.index_status === 'queued' ? '<span class="badge badge-info">Procesamiento en cola / en curso</span>' : file.index_status === 'processing_failed' ? '<span class="badge badge-danger">Fallo de procesamiento · reintentar</span>' : file.index_status === 'extraction_partial' ? '<span class="badge badge-warning">Extracción parcial · consultar con límites</span>' : file.index_status === 'indexed' ? '<span class="badge badge-success">RAG listo</span>' : file.index_status === 'embedding_disabled' ? (file.chunks_total>0?'<span class="badge badge-info">Texto disponible · embeddings desactivados</span>':'<span class="badge badge-secondary">Embeddings desactivados · comprobar extracción</span>') : file.index_status === 'processing' ? '<span class="badge badge-warning">Embedding pendiente</span>' : file.index_status === 'stale_embedding' ? '<span class="badge badge-danger">Reindexar · modelo cambió</span>' : file.chunks_total > 0 ? '<span class="badge badge-info">Texto disponible · embeddings pendientes</span>' : file.semantic_exists ? '<span class="badge badge-info">Resumen disponible · sin fragmentos literales</span>' : '<span class="badge badge-secondary">Vinculado · contenido pendiente</span>'}
             ${file.semantic_status === 'ready' ? '<span class="badge badge-info">Semántica lista</span>' : file.semantic_status === 'embedding_disabled' ? '<span class="badge badge-secondary">Semántica sin vector</span>' : file.semantic_status === 'pending_embedding' ? '<span class="badge badge-warning">Semántica pendiente</span>' : file.semantic_status === 'stale_embedding' ? '<span class="badge badge-danger">Semántica requiere nuevo embedding</span>' : ''}
           </div>
 
+          ${file.analysis_attempt?.message ? `<div class="chat-session-file-meta" role="status">${esc(file.analysis_attempt.message)} ${(file.analysis_attempt.warnings || []).map(esc).join(' ')}</div>` : ''}
           ${file.central_knowledge ? `<div class="chat-session-file-meta">Fase: ${esc(({extract:'Extracción',chunks:'Generación de fragmentos',embeddings:'Embeddings'})[file.central_knowledge.job?.phase] || '')} · ${Number(file.central_knowledge.chunks_done || 0)}/${Number(file.central_knowledge.chunks_total || 0)} chunks · ${Number(file.central_knowledge.extracted_chars || 0)} caracteres ${file.central_knowledge.job?.error_message ? ' · ' + esc(file.central_knowledge.job.error_message) : ''}</div>` : ''}
           <div class="chat-session-file-actions">
             <button type="button" class="chat-file-action" title="Ver archivo"
@@ -4407,7 +4413,8 @@ function openSessionAttachmentsManager(forceOpen = false) {
           fd.append('file_id', String(a.files3_id || a.id));
           fd.append('session_id', String(currentSessionId));
           try {
-            const r = await fetch(FILE_ENDPOINTS.indexFile,{method:'POST',credentials:'same-origin',body:fd});
+            if(a.drive_linked){await changeDriveKnowledge(null,'token',currentSessionId);fd.append('csrf',driveKnowledgeCsrf);}
+            const r = await fetch(a.drive_linked?'drive_file_analysis.php':FILE_ENDPOINTS.indexFile,{method:'POST',credentials:'same-origin',body:fd});
             const j = await r.json();
             if(!r.ok || !j.ok) throw new Error(j.error || 'HTTP '+r.status);
             ok++;
@@ -4904,6 +4911,7 @@ async function searchDriveMetadata(more) {
   finally { driveSearchBusy=false; if(submit) submit.disabled=false;if(next) next.disabled=false; }
 }
 async function selectDriveAnalysis(file,button,searchSession) {
+  file={...file,id_:file.id_ || file.files3_id || file.id,Nombre:file.Nombre || file.filename};
   if (searchSession!==currentSessionId && !(searchSession===null && currentSessionId===driveAutoCreatedSessionId)) return;
   const output=driveNode('driveKnowledgeAnalysis');button.disabled=true;
   try {
@@ -4917,18 +4925,24 @@ async function selectDriveAnalysis(file,button,searchSession) {
     const body=new URLSearchParams({session_id:sid,file_id:file.id_,csrf:driveKnowledgeCsrf});
     const response=await fetch('drive_file_analysis.php',{method:'POST',credentials:'same-origin',body});
     const data=await response.json();
+    if (data.pending) {
+      button.textContent='Revisar resultado OCR';
+      if(output) output.textContent=data.error;
+      return;
+    }
     if(!response.ok || !data.ok) throw new Error(data.error || 'No se pudo analizar');
     if(sid!==currentSessionId) return;
     if(output) {
-      output.textContent=(data.reused?'Análisis reutilizado sin volver a analizar el original.':'Análisis creado y JSON guardado junto al original.')
-        +'\nArchivo: '+data.filename+'\nCobertura: '+data.coverage+'\nInteracciones guardadas: '+data.interaction_count+'\n\n'+data.summary+'\n';
+      output.textContent=(data.message || (data.reused?'Análisis reutilizado.':'Contenido preparado.'))
+        +'\nArchivo: '+data.filename+'\nFragmentos disponibles: '+Number(data.chunks || 0)+'\nCobertura: '+data.coverage
+        +'\nJSON: '+(data.sidecar_saved?'guardado':'no guardado')+'\n'+(data.warnings || []).join('\n')+'\n\n'+(data.summary || 'Sin resumen semántico. Puedes preguntar sobre los fragmentos extraídos.')+'\n';
       const download=document.createElement('a');download.className='btn btn-sm btn-outline-secondary';
       download.textContent='Descargar JSON guardado';download.href='drive_file_analysis.php?'+new URLSearchParams({session_id:sid,file_id:file.id_,action:'download'});
-      output.append(download);
+      if (data.sidecar_saved) output.append(download);
     }
-    button.textContent='Archivo analizado';await loadSessionAttachments(sid);
+    button.textContent=data.chunks?'Texto disponible para consultar':'Descripción disponible';
   } catch(error) {if(output) output.textContent=error.message;}
-  finally {button.disabled=false;}
+  finally {button.disabled=false;if(currentSessionId) await loadSessionAttachments(currentSessionId);}
 }
 async function changeDriveKnowledge(fileId, action, sid) {
   if (!driveKnowledgeCsrf) {

@@ -51,10 +51,10 @@ $bad=false;try{(new DashboardStatisticsService($db))->month(1,'2026-13');}catch(
 
 class SidecarMissing extends RuntimeException { public function getAwsErrorCode():string{return 'NoSuchKey';} }
 $s3=new class {
-    public array $objects=['Data/a.pdf'=>['body'=>'original-bytes','etag'=>'"original-v1"']]; public array $writes=[];public bool $outage=false;
+    public array $objects=['Data/a.pdf'=>['body'=>'original-bytes','etag'=>'"original-v1"']]; public array $writes=[];public bool $outage=false;public bool $failWrites=false;
     public function headObject(array $r):array {if($this->outage)throw new RuntimeException('S3 unavailable');$o=$this->objects[$r['Key']]??throw new SidecarMissing();return ['ETag'=>$o['etag'],'ContentLength'=>strlen($o['body'])];}
     public function getObject(array $r):array { $o=$this->objects[$r['Key']]??throw new SidecarMissing();if(isset($r['IfMatch'])&&$r['IfMatch']!==$o['etag'])throw new RuntimeException('PreconditionFailed');return ['Body'=>$o['body']]; }
-    public function putObject(array $r):array { $old=$this->objects[$r['Key']]??null;if(($r['IfNoneMatch']??'')==='*'&&$old)throw new RuntimeException('PreconditionFailed');if(isset($r['IfMatch'])&&($old['etag']??null)!==$r['IfMatch'])throw new RuntimeException('PreconditionFailed');$this->objects[$r['Key']]=['body'=>$r['Body'],'etag'=>'"'.hash('sha256',$r['Body']).'"'];$this->writes[]=$r;return []; }
+    public function putObject(array $r):array { if($this->failWrites)throw new RuntimeException('Sidecar writes denied');$old=$this->objects[$r['Key']]??null;if(($r['IfNoneMatch']??'')==='*'&&$old)throw new RuntimeException('PreconditionFailed');if(isset($r['IfMatch'])&&($old['etag']??null)!==$r['IfMatch'])throw new RuntimeException('PreconditionFailed');$this->objects[$r['Key']]=['body'=>$r['Body'],'etag'=>'"'.hash('sha256',$r['Body']).'"'];$this->writes[]=$r;return []; }
 };
 $store=new AnalysisSidecarStore($s3,'test-bucket');$analyzeCalls=0;
 $analyzer=function(int $user,int $session,int $file) use($db,$s3,&$analyzeCalls) {
@@ -62,7 +62,13 @@ $analyzer=function(int $user,int $session,int $file) use($db,$s3,&$analyzeCalls)
     $meta=json_encode(['files3_id'=>1,'source_etag'=>$s3->objects[$key]['etag'],'semantic_model'=>'fixture-model','extractor'=>'fixture-pdf','truncated'=>true]);
     $s=$db->prepare("INSERT INTO SessionContextBlocks(session_id_,block_type,content_preview,s3_path,source_ids) VALUES (?,'file',?,?,?)");$s->bind_param('isss',$session,$text,$key,$meta);$s->execute();$s->close();
 };
-$service=new DriveAnalysisService($db,$store,$analyzer);
+$indexCalls=0;
+$indexer=function(int $user,int $session,int $file) use($db,$s3,&$indexCalls) {
+    $indexCalls++;$text='El importe del convenio es 41837 y dura tres años.';$key='Data/a.pdf';
+    $meta=json_encode(['files3_id'=>1,'filename'=>'contrato.pdf','source_etag'=>$s3->objects[$key]['etag'],'chunk'=>1,'total'=>1,'locator'=>['page'=>2],'truncated'=>false]);
+    $s=$db->prepare("INSERT INTO SessionContextBlocks(session_id_,block_type,content_preview,s3_path,source_ids) VALUES (?,'file_chunk',?,?,?)");$s->bind_param('isss',$session,$text,$key,$meta);$s->execute();$s->close();
+};
+$service=new DriveAnalysisService($db,$store,$analyzer,$indexer);
 $result=$service->analyze(1,1,1);$file=(new DocumentAccessRepository($db))->file(1,1);$sidecar=AnalysisSidecarStore::key($file);
 checkDrive(!$result['reused']&&$analyzeCalls===1&&isset($s3->objects[$sidecar]),'Explicit selection analyzes and writes a private standard sibling JSON');
 checkDrive($result['coverage']==='partial','Partial summary coverage is retained in JSON and UI result');
@@ -70,9 +76,9 @@ checkDrive(dirname($sidecar)==='Data'&&$s3->objects['Data/a.pdf']['body']==='ori
 checkDrive(!isset($s3->writes[0]['ACL'])&&$s3->writes[0]['IfNoneMatch']==='*','No public ACL and first write is conditional');
 $again=$service->analyze(1,2,1);
 checkDrive($again['reused']&&$analyzeCalls===1,'Second conversation reuses JSON without extractor/model call');
-checkDrive((int)$db->query('SELECT COUNT(*) n FROM SessionContextBlocks WHERE session_id_=2')->fetch_assoc()['n']===1,'Cached summary becomes usable context in the selected second conversation');
+checkDrive((int)$db->query('SELECT COUNT(*) n FROM SessionContextBlocks WHERE session_id_=2')->fetch_assoc()['n']===2,'Cached summary becomes usable context in the selected second conversation');
 $service->analyze(1,2,1);
-checkDrive((int)$db->query('SELECT COUNT(*) n FROM SessionContextBlocks WHERE session_id_=2')->fetch_assoc()['n']===1,'Repeated imports are idempotent');
+checkDrive((int)$db->query('SELECT COUNT(*) n FROM SessionContextBlocks WHERE session_id_=2')->fetch_assoc()['n']===2,'Repeated imports are idempotent');
 $denied=false;try{$service->analyze(2,3,1);}catch(Throwable){$denied=true;}checkDrive($denied&&$analyzeCalls===1,'Cross-owner analysis denied before S3/AI work');
 $db->query("UPDATE FileS3 SET AccessType='secure' WHERE id_=1");$denied=false;try{$service->analyze(1,2,1);}catch(Throwable){$denied=true;}checkDrive($denied,'Source locking revokes reuse of cached JSON');$db->query("UPDATE FileS3 SET AccessType='normal' WHERE id_=1");
 $db->query("INSERT INTO ChatMessages(id_,session_id_,user_id_,role,content_type,content,model_id) VALUES (11,2,1,'user','text','¿Qué dice de impuestos?','fixture'),(12,2,1,'assistant','text','Respuesta con evidencia [SCB:1]','fixture')");
@@ -89,18 +95,32 @@ checkDrive(count($service->recordTurn(1,2,11,12,$bundle))===1,'Answer from a sta
 $service->analyze(1,1,1);checkDrive($analyzeCalls===2&&count($store->read($file)['document']['revisions'])===2,'New source revision gets fresh analysis while old JSON history is retained');
 $state=$store->read($file);$huge=$state['analysis'];$huge['summary']=str_repeat('x',AnalysisSidecarStore::MAX_BYTES);
 $denied=false;try{$store->write($file,$state,$huge);}catch(RuntimeException){$denied=true;}checkDrive($denied,'JSON resource limit fails visibly without dropping history');
-$s3->outage=true;$denied=false;try{$service->analyze(1,1,1);}catch(RuntimeException){$denied=true;}checkDrive($denied&&$analyzeCalls===2,'S3 outage is not mistaken for absent cache and does not trigger another model call');$s3->outage=false;
+$s3->outage=true;$failed=$service->analyze(1,1,1);checkDrive(!$failed['ok']&&$analyzeCalls===2,'S3 outage is not mistaken for absent cache and does not trigger another model call');$s3->outage=false;
 $db->query("UPDATE ChatSessions SET meta='{}' WHERE id_=2");$denied=false;try{$service->analyze(1,2,1);}catch(Throwable){$denied=true;}checkDrive($denied,'Removing Drive link revokes cached analysis access');
 checkDrive(count($s3->objects)>=2&&!array_filter($s3->writes,fn($r)=>$r['Key']==='Data/a.pdf'),'Every write targets sidecar, never the original');
+// Restore the Drive link and exercise lexical retrieval from the cached original fragments.
+$db->query("UPDATE ChatSessions SET meta=JSON_SET(meta,'$.knowledge_file_ids',JSON_ARRAY(1)) WHERE id_=2");
+require_once dirname(__DIR__).'/includes/Memory/ContextItem.php';
+require_once dirname(__DIR__).'/includes/Memory/AttachmentContextRepository.php';
+$GLOBALS['AI_AGENT_CONFIGS']=['embedding_main'=>['is_active'=>0,'model_id'=>'fixture']];
+$indexBefore=$indexCalls;$service->analyze(1,2,1);
+checkDrive($indexCalls===$indexBefore,'JSON reuses original chunks without another extraction');
 require_once dirname(__DIR__).'/includes/Drive/BedrockMetadataPlanner.php';
 preg_match('/CREATE TABLE IF NOT EXISTS `UserAIAgentConfigs` \(.*?\) ENGINE=.*?;/s',$schema,$m);
 $db->query(str_replace(['CREATE TABLE IF NOT EXISTS','utf8mb4_0900_ai_ci','VIRTUAL NOT NULL'],['CREATE TEMPORARY TABLE','utf8mb4_unicode_ci','VIRTUAL'],$m[0]));
 $db->query("INSERT INTO UserAIAgentConfigs(scope,user_id_,agent_key,display_name,model_id,is_active) VALUES ('global',NULL,'chat_main','Chat','amazon.nova-micro-v1:0',1)");
 class Config {
-    public static object $runtime;
+    public static object $runtime;public static object $s3;
+    public static function getS3():object{return self::$s3;}
+    public static function getBucket():string{return 'test-bucket';}
     public static function getBedrockRuntime():object{return self::$runtime;}
 }
 Config::$runtime=new class {public array $calls=[];public string $text='{"terms":["contrato"],"extensions":["pdf"]}';public function converse(array $args):array{$this->calls[]=$args;return ['output'=>['message'=>['content'=>[['text'=>$this->text]]]],'usage'=>['inputTokens'=>23,'outputTokens'=>8]];}};
+Config::$s3=$s3;
+$evidence=(new AttachmentContextRepository($db,null))->retrieve(1,2,'41837','rag',null,null);
+checkDrive(str_contains($evidence['context'],'41837')&&str_contains($evidence['context'],'página 2'),'Selected cached file yields literal evidence and its real page without embeddings');
+$availability=(new FileKnowledgeState($db))->availability(1,2);
+checkDrive($availability[0]['status']==='text_ready','Persisted status distinguishes text ready from mere Drive linking');
 $planner=new BedrockMetadataPlanner($db,1,1);$realPlan=$planner('busca contratos PDF');
 checkDrive($realPlan['extensions']===['pdf']&&count(Config::$runtime->calls)===1,'Actual Bedrock planner normalizes structured filters with configured model');
 $call=Config::$runtime->calls[0];checkDrive($call['messages'][0]['content'][0]['text']==='busca contratos PDF'&&!str_contains(json_encode($call),'original-bytes'),'Planner sends query and filter contract, never source bytes or catalog rows');
@@ -108,4 +128,24 @@ checkDrive((int)$db->query("SELECT COUNT(*) n FROM TokenUsage WHERE session_id_=
 Config::$runtime->text='not JSON';$bad=false;try{$planner('another request');}catch(Throwable){$bad=true;}checkDrive($bad,'Invalid model output cannot become executable SQL or hidden fallback filters');
 checkDrive((int)$db->query("SELECT COUNT(*) n FROM TokenUsage WHERE session_id_=1 AND phase='scout' AND input_tokens=23")->fetch_assoc()['n']===2,'Even an invalid planner response retains its usage record');
 $bad=false;try{(new BedrockMetadataPlanner($db,2,1))('private');}catch(Throwable){$bad=true;}checkDrive($bad&&count(Config::$runtime->calls)===2,'Planner rejects a foreign conversation before calling the model');
+// A summary or cache failure must not erase literal evidence.
+$s3->objects['Data/a.pdf']['etag']='"original-v3"';$s3->failWrites=true;
+$unavailableSummary=static function(){throw new RuntimeException('La semántica está desactivada');};
+$robust=new DriveAnalysisService($db,$store,$unavailableSummary,$indexer);$prepared=$robust->analyze(1,2,1);
+checkDrive($prepared['ok']&&$prepared['chunks']===1&&!$prepared['semantic_available']&&!$prepared['sidecar_saved'],'Summary and JSON write failures preserve a successful literal index');
+$evidence=(new AttachmentContextRepository($db,null))->retrieve(1,2,'41837','rag',null,null);
+checkDrive(str_contains($evidence['context'],'41837')&&str_contains($evidence['context'],'página 2'),'The selected file is answerable despite unavailable summary and JSON');
+$s3->failWrites=false;
+$db->query("UPDATE ChatSessions SET meta=JSON_SET(meta,'$.knowledge_file_ids',JSON_ARRAY(1,5)) WHERE id_=2");
+(new FileKnowledgeState($db))->save(1,2,5,['status'=>'ocr_pending','message'=>'OCR del PDF en proceso.']);
+require_once dirname(__DIR__).'/includes/Memory/bootstrap.php';
+$builder=new ContextBuilder($db,null);
+$features=['procedural_memory_read'=>false,'project_memory_read'=>false,'session_memory_read'=>false,'question_memory_read'=>false,'project_rag'=>false,'attachment_rag'=>true,'context_ranking'=>true];
+$bundle=$builder->build(new MemoryRoute(['intent'=>'code_project','use_attachment_context'=>false]),['stage'=>'respond','user_id'=>1,'session_id'=>2,'query_text'=>'Clasifica el proyecto','original_query_text'=>'Qué dice el archivo "contrato.pdf" sobre 41837','pipeline_features'=>$features]);
+checkDrive(str_contains($bundle->block('attachment_context_block'),'41837')&&str_contains($bundle->block('attachment_context_block'),'página 2'),'Real ContextBuilder keeps original filename and includes cited evidence despite a rewritten code route');
+checkDrive(FileKnowledgeState::unavailableReply($bundle)===null,'Valid recovered content is never replaced by a missing-file diagnostic');
+$empty=$builder->build(new MemoryRoute(['intent'=>'code_project']),['stage'=>'respond','user_id'=>1,'session_id'=>2,'query_text'=>'Analiza el archivo "contrato.xlsx"','pipeline_features'=>$features]);
+$diagnostic=FileKnowledgeState::unavailableReply($empty);
+checkDrive($diagnostic!==null&&str_contains($diagnostic,'está vinculado')&&str_contains($diagnostic,'OCR')&&!str_contains($diagnostic,'no tengo acceso'),'Missing content produces the actual persisted processing state, not a false access denial');
+checkDrive(!str_contains($diagnostic,'contrato.pdf'),'A named file diagnostic does not confuse it with another linked file');
 echo "Drive metadata, dashboard and analysis real MariaDB: $checks checks passed\n";

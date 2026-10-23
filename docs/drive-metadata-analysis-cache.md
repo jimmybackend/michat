@@ -19,7 +19,7 @@ Desde 🧠 → **Ver en ArcadeCloud · Buscar archivos** se abre un modal. La b�
 
 ## Selección y análisis
 
-**Seleccionar y analizar** vincula el FileS3 autorizado a la conversación; si no existe conversación se crea una con el procedimiento actual. Solo entonces se consulta S3. Primero se busca el JSON correspondiente a la revisión actual. Si ya existe, se importa su resumen generado sin descargar/extraer de nuevo el original ni volver a invocar el resumidor o embeddings. Si no existe, se reutiliza un resumen verificable ya guardado en ese chat o se llama al servicio semántico/visual existente y se guarda el resultado.
+**Seleccionar y analizar** vincula el FileS3 autorizado a la conversación; si no existe conversación se crea una con el procedimiento actual. Solo entonces se consulta S3. Primero se busca el JSON correspondiente a la revisión actual. Si ya existe, se importa su resumen generado sin descargar/extraer de nuevo el original ni volver a invocar el resumidor o embeddings. Si no existe, primero se prepara el índice literal y se intenta el resumen por separado. Un fallo de resumen o JSON conserva los fragmentos válidos. Véase [la corrección de preparación y OCR](selected-file-evidence-and-ocr.md).
 
 La cobertura del resumen mantiene el límite y las omisiones declarados por el extractor. Un resumen parcial no equivale a lectura íntegra. Los resúmenes reutilizados entran como bloques `file`: las citas los identifican como resúmenes generados, sin inventar páginas o líneas. Para recuperar citas literales y fragmentos originales siguen disponibles las acciones de indexación explícita del panel. Este cambio no añade OCR ni nuevos formatos.
 
@@ -43,7 +43,7 @@ Las escrituras usan un lock por usuario/archivo y condiciones S3 If-Match / If-N
 
 No hay migraciones, despliegue, cambios IAM ni cambios en vendor/composer. Tras actualizar el checkout por el procedimiento operativo habitual, PHP debe tener la configuración DB/AWS actual, acceso al original y permiso de escritura sobre su objeto JSON auxiliar. La versión de chat.js depende de su hash y cambia automáticamente.
 
-Los JSON ocupan S3 y producen operaciones de lectura/escritura. No hay sincronización automática del auxiliar al mover/eliminar archivos desde otro sistema: la búsqueda en la ubicación nueva puede necesitar un análisis nuevo; el objeto anterior se conserva. No se realizan limpiezas destructivas. Si falla el guardado de una interacción, la respuesta permanece en ChatMessages y se informa el fallo; no se afirma que el JSON quedó actualizado ni hay un nuevo worker de reparación automática. El usuario puede descargar el JSON para inspeccionarlo; no contiene embeddings ni el texto íntegro extraído.
+Los JSON ocupan S3 y producen operaciones de lectura/escritura. No hay sincronización automática del auxiliar al mover/eliminar archivos desde otro sistema: la búsqueda en la ubicación nueva puede necesitar un análisis nuevo; el objeto anterior se conserva. No se realizan limpiezas destructivas. Si falla el guardado de una interacción, la respuesta permanece en ChatMessages y se informa el fallo; no se afirma que el JSON quedó actualizado ni hay un nuevo worker de reparación automática. El usuario puede descargar el JSON para inspeccionarlo; ahora puede incluir fragmentos originales con localizadores, sin embeddings.
 
 ## Validación
 

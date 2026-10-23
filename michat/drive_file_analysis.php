@@ -24,7 +24,9 @@ try {
         || !hash_equals($_SESSION['document_link_csrf'],(string)$_POST['csrf'])) {
         http_response_code(403);echo json_encode(['ok'=>false,'error'=>'Acceso denegado']);exit;
     }
-    echo json_encode(DriveAnalysisService::production($db_connection)->analyze($user,$session,$file),JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE);
+    $result=DriveAnalysisService::production($db_connection)->analyze($user,$session,$file);
+    if (empty($result['ok'])) http_response_code(!empty($result['pending'])?202:422);
+    echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE);
 } catch (Throwable $e) {
     error_log('drive_analysis: '.$e->getMessage());http_response_code(422);
     echo json_encode(['ok'=>false,'error'=>'No se pudo completar o guardar el análisis. Revisa permisos, configuración del modelo y el registro del servidor; no se marcó como terminado.'],JSON_INVALID_UTF8_SUBSTITUTE|JSON_UNESCAPED_UNICODE);

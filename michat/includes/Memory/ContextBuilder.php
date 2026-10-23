@@ -47,7 +47,7 @@ final class ContextBuilder
         $userId = (int)($request['user_id'] ?? 0);
         $sessionId = (int)($request['session_id'] ?? 0);
         $projectId = (int)($request['project_id'] ?? 0);
-        $queryText = trim((string)($request['query_text'] ?? ''));
+        $queryText = trim((string)($request['original_query_text'] ?? $request['query_text'] ?? ''));
         $attachmentMode = ((string)($request['attachment_mode'] ?? 'rag') === 'always') ? 'always' : 'rag';
         // "¿Qué dice el archivo?", "compara los PDFs", "explica Auth.php"...
         // No depender del clasificador de intención para recuperar adjuntos
@@ -92,6 +92,11 @@ final class ContextBuilder
 
         $bundle = new ContextBundle();
         $bundle->setRequests($memoryRoute->contextRequests($stage));
+        require_once dirname(__DIR__).'/Drive/FileKnowledgeState.php';
+        $availability=$stage==='respond' && $explicitFileQuestion ? (new FileKnowledgeState($this->db))->availability($userId,$sessionId,$queryText) : [];
+        $bundle->setTelemetry('file_availability',['explicit_question'=>$explicitFileQuestion,'retrieval_enabled'=>$features['attachment_rag'],'files'=>$availability]);
+        if ($availability) $bundle->setBlock('attachment_availability_block',"[ESTADO VERIFICADO DE ARCHIVOS VINCULADOS; NO ES CONTENIDO DEL ORIGINAL]\n".json_encode($availability,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE)."\nEl vínculo existe. Si faltan fragmentos, explica el estado de extracción; no afirmes que el archivo no está adjunto ni inventes contenido.");
+
         $startedAt = microtime(true);
 
         // -------------------------------------------------------------
@@ -431,6 +436,7 @@ final class ContextBuilder
         );
 
         $attachmentContext = $this->formatAttachmentItems($bundle->selectedItems('attachments'));
+        $attachmentContext=trim($bundle->block('attachment_availability_block')."\n\n".$attachmentContext);
         $bundle->setBlock(
             'attachment_context_block',
             $attachmentContext !== ''
