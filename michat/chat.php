@@ -592,11 +592,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
         <button id="chat2BtnGenVid" class="btn btn-sm btn-outline-primary" title="Generar video" aria-label="Generar video"><i class="fas fa-film"></i></button>
         <button id="chat2BtnSonic" class="btn btn-sm btn-outline-secondary" title="Voz" aria-label="Voz"><i class="fas fa-microphone"></i></button>
       </div>
-      <div class="btn-group chat-composer-code-tools" role="group" aria-label="Herramientas de proyecto">
-        <button class="btn btn-sm btn-outline-info" data-tool="grep" title="Buscar texto" aria-label="Buscar texto"><i class="fas fa-search"></i></button>
-        <button class="btn btn-sm btn-outline-info" data-tool="view" title="Ver código" aria-label="Ver código"><i class="fas fa-eye"></i></button>
-        <button class="btn btn-sm btn-outline-info" data-tool="str_replace" title="Editar código" aria-label="Editar código"><i class="fas fa-exchange-alt"></i></button>
-        <button class="btn btn-sm btn-outline-info" data-tool="search" title="Búsqueda semántica" aria-label="Búsqueda semántica"><i class="fas fa-brain"></i></button>
+      <div class="btn-group chat-composer-code-tools" role="group" aria-label="Pruebas y deshacer cambios">
         <button class="btn btn-sm btn-outline-success" id="btnRunTestsManual" title="Ejecutar tests del proyecto" aria-label="Ejecutar tests"><i class="fas fa-vial"></i></button>
         <button class="btn btn-sm btn-outline-warning" id="btnRollbackEdit" title="Deshacer última edición" aria-label="Deshacer última edición"><i class="fas fa-undo-alt"></i></button>
       </div>
@@ -891,7 +887,7 @@ role="progressbar" style="width: 0%">0%</div>
 <!-- Preferencias primero: expone chatPreferencesReady/modelo antes de crear sesiones. -->
 <script src="js/user_preferences.js"></script>
 <!-- chat.js administra sesiones/proyectos y exporta window.chatUtils. -->
-<script src="js/chat.js?v=20261023-file-drawer"></script>
+<script src="js/chat.js?v=20261023-remove-placeholder-tools"></script>
 <script src="js/context-viewer.js"></script> 
 <script src="js/ai-data-control.js"></script>
 <!-- Módulos que dependen de chat.js -->
