@@ -92,11 +92,6 @@
       sourcesCount: $('#chat2SourcesCount'),
       sourcesAdd: $('#chat2SourcesAdd'),
       sourcesRefresh: $('#chat2SourcesRefresh'),
-      attachmentsPanel: $('#chat2AttachmentsPanel'),
-      attachmentsList: $('#chat2AttachmentsList'),
-      attachmentsCount: $('#chat2AttachmentsCount'),
-      attachmentsAdd: $('#chat2AttachmentsAdd'),
-      attachmentsRefresh: $('#chat2AttachmentsRefresh'),
       sbSessionFiles: $('#chatSessionFilesList'),
       chatFilesCount: $('#chatFilesCount'),
       fileDrawer: $('#chatFilesDrawer'),
@@ -1513,7 +1508,7 @@ function renderSessionsList() {
       const readOnly = isArchived || isDeleted;
       if (el.send) el.send.disabled = readOnly;
       // La vista de auditoría no debe ofrecer edición, adjuntos ni nuevas generaciones.
-      for (const control of [el.rename, el.attach, el.file, el.btnGenImg, el.btnGenVid, el.btnSonic, el.attachmentsAdd]) {
+      for (const control of [el.rename, el.file, el.btnGenImg, el.btnGenVid, el.btnSonic]) {
         if (control) control.disabled = readOnly;
       }
     }
@@ -4109,11 +4104,9 @@ async function uploadSessionFiles() {
     }
     if (statusEl) statusEl.textContent = '¡Completado!';
     if (successMsg) {
-      let msg = `${j.uploaded.length} archivo(s) subido(s) correctamente.`;
-      if (j.errors && j.errors.length > 0) {
-        msg += `<br><small class="text-warning">${j.errors.length} error(es): ${j.errors.join(', ')}</small>`;
-      }
-      successMsg.innerHTML = msg;
+      const uploaded = Array.isArray(j.uploaded) ? j.uploaded.length : 0;
+      const errors = Array.isArray(j.errors) ? j.errors.length : 0;
+      successMsg.textContent = `${uploaded} archivo(s) subido(s).` + (errors ? ` ${errors} con error.` : '');
     }
     if (result) result.classList.remove('d-none');
     // Mantener el mismo panel abierto; archivos y estado RAG se refrescan por AJAX.
@@ -4160,14 +4153,6 @@ function openSessionAttachmentsManager(forceOpen = false) {
   upload.scrollIntoView({block:'nearest',behavior:'smooth'});
   document.getElementById('sessionFilesInput')?.focus();
 }
-  if (el.attachmentsAdd) {
-    el.attachmentsAdd.addEventListener('click', () => openSessionAttachmentsManager(true));
-  }
-  if (el.attachmentsRefresh) {
-    el.attachmentsRefresh.addEventListener('click', () => {
-      if (currentSessionId) loadSessionAttachments(currentSessionId);
-    });
-  }
   // ✅ INSPECTOR DE ADJUNTOS
     const btnInspector = document.getElementById('btnAttachmentInspector');
     if (btnInspector) {
