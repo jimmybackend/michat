@@ -1667,7 +1667,7 @@ const CODE_EXTS = ['php','phtml','inc','js','mjs','cjs','jsx','ts','tsx','css','
   'html','htm','json','xml','yaml','yml','ini','conf','cfg','txt','md','markdown','sql',
   'sh','bash','zsh','bat','cmd','ps1','py','rb','java','c','h','cpp','hpp','cs','go','rs',
   'swift','kt','kts','vue','csv','tsv','log','srt','vtt','env','gitignore','htaccess'];
-const INDEXABLE_SESSION_EXTS = new Set([...CODE_EXTS, 'pdf','docx','dotx','xlsx','xlsm','xltx','xltm','pptx','ppsx','odt','ods','odp','rtf','epub','doc','xls','ppt']);
+const INDEXABLE_SESSION_EXTS = new Set([...CODE_EXTS, 'pdf','docx','dotx','xlsx','xlsm','xltx','xltm','pptx','ppsx','odt','ods','odp','rtf','epub','doc','xls','ppt','db','sqlite','sqlite3','jsonl','ndjson','toml','properties','dbml']);
 
 
 function getFileExt(name) {
