@@ -4608,6 +4608,21 @@ window.chatUtils = {
     showToast: showToast,
     getCurrentProjectId: getCurrentProjectId,
     getCurrentSessionId: getCurrentSessionId,
+    // Un turno de voz ya se persistió en PHP. Agregar únicamente los dos
+    // mensajes nuevos mediante AJAX, sin reconstruir todo el historial.
+    appendVoiceTurn: function(data) {
+        const sid = Number(data && data.session_id || 0);
+        if (!sid || sid !== Number(currentSessionId)) return false;
+        const userText = String(data.user_transcript || '').trim();
+        const assistantText = String(data.assistant_transcript || '').trim();
+        if (!userText || !assistantText) return false;
+        const userId = Number(data.user_message_id || 0);
+        const assistantId = Number(data.assistant_message_id || 0);
+        if (assistantId && el.messages.querySelector('[data-message-id="' + assistantId + '"]')) return true;
+        pushLocal('user', userText, { message_id: userId, session_id: sid });
+        pushLocal('assistant', assistantText, { message_id: assistantId, session_id: sid });
+        return true;
+    },
     getUserId: getUserId,
     fmtDate: fmtDate,
     buildS3Url: buildS3Url,
