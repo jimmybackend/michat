@@ -6,6 +6,7 @@ const child = require('child_process');
 const root = path.resolve(__dirname, '..');
 const browser = fs.readFileSync(path.join(root, 'js/chat-voice.js'), 'utf8');
 const page = fs.readFileSync(path.join(root, 'chat.php'), 'utf8');
+const voiceEndpoint = fs.readFileSync(path.join(root, 'voice_turn.php'), 'utf8');
 const sonic = fs.readFileSync(path.join(root, 'voice/sonic_turn.mjs'), 'utf8');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'voice/package.json'), 'utf8'));
 
@@ -18,6 +19,15 @@ function check(ok, label) {
 
 check(browser.includes("#chat2BtnSonic"), 'cliente enlaza el botón de micrófono existente');
 check(page.includes('js/chat-voice.js?v='), 'chat.php incluye el controlador del micrófono');
+check(!page.includes('id="btnRunTestsManual"') && !page.includes('id="btnRollbackEdit"'),
+      'tubo de ensayo y deshacer ya no aparecen en el compositor');
+check(!page.includes('js/run-tests.js') && !page.includes('js/rollback-edit.js'),
+      'scripts de controles retirados no se cargan en el chat');
+check(voiceEndpoint.includes('SONIC_NODE_DEPENDENCIES') &&
+      voiceEndpoint.includes('SONIC_AWS_ACCESS') &&
+      voiceEndpoint.includes('SONIC_INCOMPLETE_STREAM'),
+      'el servidor clasifica errores de Sonic de forma segura');
+check(browser.includes('data.error_code'), 'el cliente muestra el código de diagnóstico seguro');
 check(browser.includes('appendVoiceTurn?.(data)'), 'voz agrega mensajes nuevos sin recargar el historial');
 check(browser.includes('navigator.mediaDevices.getUserMedia'), 'cliente solicita micrófono mediante API segura');
 check(browser.includes('downsample') && browser.includes('setInt16'), 'cliente convierte audio a PCM 16 kHz/16-bit');

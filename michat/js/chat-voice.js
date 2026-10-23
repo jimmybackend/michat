@@ -218,7 +218,11 @@
       body.append('audio', new Blob([raw], { type: 'audio/lpcm' }), 'voice.pcm');
       const response = await fetch('voice_turn.php', { method: 'POST', credentials: 'same-origin', body });
       const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.error || ('HTTP ' + response.status));
+      if (!response.ok || !data.ok) {
+        const code = typeof data.error_code === 'string' && /^[A-Z0-9_]+$/.test(data.error_code)
+          ? ' [' + data.error_code + ']' : '';
+        throw new Error((data.error || ('HTTP ' + response.status)) + code);
+      }
       const usage = data.usage || {};
       const usageNode = $('#chat2Usage');
       if (usageNode) usageNode.textContent = `Voz: ${Number(usage.input_tokens || 0)} in / ${Number(usage.output_tokens || 0)} out · ${Number(usage.total_tokens || 0)} tokens`;

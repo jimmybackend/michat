@@ -592,10 +592,6 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
         <button id="chat2BtnGenVid" class="btn btn-sm btn-outline-primary" title="Generar video" aria-label="Generar video"><i class="fas fa-film"></i></button>
         <button id="chat2BtnSonic" class="btn btn-sm btn-outline-secondary" title="Voz" aria-label="Voz"><i class="fas fa-microphone"></i></button>
       </div>
-      <div class="btn-group chat-composer-code-tools" role="group" aria-label="Pruebas y deshacer cambios">
-        <button class="btn btn-sm btn-outline-success" id="btnRunTestsManual" title="Ejecutar tests del proyecto" aria-label="Ejecutar tests"><i class="fas fa-vial"></i></button>
-        <button class="btn btn-sm btn-outline-warning" id="btnRollbackEdit" title="Deshacer última edición" aria-label="Deshacer última edición"><i class="fas fa-undo-alt"></i></button>
-      </div>
     </div>
     <button id="chat2Send" class="btn btn-primary chat-composer-send" aria-label="Enviar mensaje">
       <i class="fas fa-paper-plane"></i><span class="chat-send-label">Enviar</span>
@@ -889,12 +885,12 @@ role="progressbar" style="width: 0%">0%</div>
 <!-- chat.js administra sesiones/proyectos y exporta window.chatUtils. -->
 <script src="js/chat.js?v=20261023-remove-placeholder-tools"></script>
 <!-- El micrófono utiliza Nova 2 Sonic: cargar su controlador tras chat.js. -->
-<script src="js/chat-voice.js?v=20261023-voice-mic-fix"></script>
+<script src="js/chat-voice.js?v=20261023-sonic-diagnostics"></script>
 <script src="js/context-viewer.js"></script> 
 <script src="js/ai-data-control.js"></script>
 <!-- Módulos que dependen de chat.js -->
-<script src="js/run-tests.js"></script>
-<script src="js/rollback-edit.js"></script>
+
+
 <script src="js/sincronizar.js"></script>
 <script src="js/estilo.js"></script>
 <script src="js/sidebar-responsive.js"></script>

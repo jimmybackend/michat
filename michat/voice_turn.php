@@ -192,21 +192,42 @@ $durationMs = max(0, (int)round((hrtime(true) - $startedAt) / 1_000_000));
 
 if ($exitCode !== 0) {
     $diagnostic = trim($stderr);
-    // Nunca devolver stderr crudo: puede contener detalles internos del SDK.
-    error_log('VOICE_SONIC_ERROR exit=' . $exitCode . ' duration_ms=' . $durationMs . ': ' . mb_substr($diagnostic, 0, 1500));
-    $publicError = 'Nova 2 Sonic no pudo completar el turno. Revisa el registro VOICE_SONIC_ERROR del servidor.';
+    // Nunca enviar stderr a los navegadores: puede incluir datos de AWS.
+    // Clasificar el error en el servidor para no ocultar causas conocidas
+    // detrás del mismo mensaje genérico.
+    $errorCode = 'SONIC_RUNTIME';
+    $publicError = 'Nova 2 Sonic no pudo completar el turno. Consulta VOICE_SONIC_ERROR en el servidor.';
     $httpStatus = 502;
     if ($exitCode === 124) {
-        $publicError = 'Nova 2 Sonic no respondió en 45 segundos. Intenta una grabación más corta.';
+        $errorCode = 'SONIC_TIMEOUT';
+        $publicError = 'Nova 2 Sonic no respondió en 45 segundos. Prueba con una grabación más corta.';
         $httpStatus = 504;
-    } elseif (preg_match('/(AccessDenied|not authorized|Unauthorized|UnrecognizedClient)/i', $diagnostic)) {
-        $publicError = 'AWS rechazó el acceso a Nova 2 Sonic. Revisa permisos y habilitación del modelo.';
-    } elseif (preg_match('/(ValidationException|unsupported model|model identifier|resource not found|ResourceNotFound)/i', $diagnostic)) {
-        $publicError = 'Nova 2 Sonic no está disponible con la configuración actual de Bedrock. Revisa modelo y región.';
-    } elseif (preg_match('/(ENOTFOUND|ECONNREFUSED|ETIMEDOUT|TimeoutError|NetworkingError)/i', $diagnostic)) {
+    } elseif (preg_match('/ERR_MODULE_NOT_FOUND|Cannot find package|Cannot find module|MODULE_NOT_FOUND/i', $diagnostic)) {
+        $errorCode = 'SONIC_NODE_DEPENDENCIES';
+        $publicError = 'Faltan dependencias Node.js del módulo de voz. Revisa michat\/voice\/node_modules.';
+        $httpStatus = 503;
+    } elseif (preg_match('/AccessDenied|not authorized|Unauthorized|UnrecognizedClient|InvalidSignature|ExpiredToken/i', $diagnostic)) {
+        $errorCode = 'SONIC_AWS_ACCESS';
+        $publicError = 'AWS rechazó la invocación de Nova 2 Sonic. Revisa IAM, acceso al modelo y región.';
+        $httpStatus = 403;
+    } elseif (preg_match('/ValidationException|unsupported model|model identifier|ResourceNotFound|UnknownOperation/i', $diagnostic)) {
+        $errorCode = 'SONIC_MODEL_CONFIGURATION';
+        $publicError = 'Bedrock rechazó la configuración de Nova 2 Sonic. Revisa el modelo, la región y los eventos.';
+    } elseif (preg_match('/ThrottlingException|ServiceQuotaExceeded/i', $diagnostic)) {
+        $errorCode = 'SONIC_QUOTA';
+        $publicError = 'AWS limitó temporalmente los turnos de voz. Revisa cuotas de Bedrock.';
+        $httpStatus = 429;
+    } elseif (preg_match('/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|TimeoutError|NetworkingError|EAI_AGAIN/i', $diagnostic)) {
+        $errorCode = 'SONIC_NETWORK';
         $publicError = 'No se pudo conectar con Bedrock para procesar la voz.';
+        $httpStatus = 503;
+    } elseif (preg_match('/No final (user|assistant) transcription|did not complete the turn/i', $diagnostic)) {
+        $errorCode = 'SONIC_INCOMPLETE_STREAM';
+        $publicError = 'Nova 2 Sonic terminó sin completar la transcripción. Prueba con una frase corta y revisa el streaming.';
     }
-    voiceTurnExit(['ok' => false, 'error' => $publicError], $httpStatus);
+    error_log('VOICE_SONIC_ERROR code=' . $errorCode . ' exit=' . $exitCode
+        . ' duration_ms=' . $durationMs . ': ' . mb_substr($diagnostic, 0, 1500));
+    voiceTurnExit(['ok' => false, 'error' => $publicError, 'error_code' => $errorCode], $httpStatus);
 }
 
 $result = json_decode(trim($stdout), true);
