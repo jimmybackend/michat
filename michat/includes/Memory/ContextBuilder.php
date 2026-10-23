@@ -252,7 +252,9 @@ final class ContextBuilder
         // Si la pregunta habla expresamente de un archivo y el modelo de
         // embeddings falló o todavía está pendiente, recuperar de forma
         // determinista los fragmentos YA extraídos. No inventar contenido.
-        $effectiveAttachmentMode = ($explicitFileQuestion && empty($queryVector)) ? 'always' : $attachmentMode;
+        $compareRequest = $explicitFileQuestion && (bool)preg_match('/compar\\w*|diferenci\\w*|entre (?:dos|ambos)/iu', $queryText);
+        $effectiveAttachmentMode = ($compareRequest || ($explicitFileQuestion && empty($queryVector)))
+            ? 'always' : $attachmentMode;
         if ($hasAttachments && ($effectiveAttachmentMode === 'always' || !empty($queryVector))) {
             $attachmentResult = $this->attachmentRepo->retrieve(
                 $userId,
