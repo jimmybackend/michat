@@ -3605,10 +3605,13 @@ if (btnIndexPending) {
         }
         const issues = Array.isArray(data.knowledge_issues) ? data.knowledge_issues : [];
         const pending = Math.max(0, Number(data.embedding_pending || 0));
+        const truncated = (Array.isArray(data.uploaded) ? data.uploaded : [])
+          .filter(x => x.knowledge?.index?.truncated === true).length;
         const description = uploaded + ' archivo(s) guardado(s) en S3. '
           + Math.min(ready, uploaded) + ' listo(s) para RAG.'
           + (errors ? ' ' + errors + ' archivo(s) fallaron.' : '')
           + (pending ? ' ' + pending + ' con embeddings pendientes.' : '')
+          + (truncated ? ' ' + truncated + ' archivo(s) tienen índice parcial por límite de extracción.' : '')
           + (issues.length ? ' ' + issues.length + ' requieren análisis manual.' : '')
           + (ready < uploaded && !pending && !issues.length ? ' Revisa el estado del índice en 🧠.' : '');
         if (Number(currentSessionId) === targetSessionId) setStatus(description);
