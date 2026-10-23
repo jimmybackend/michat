@@ -28,6 +28,8 @@ try{
         if(ctype_digit($q)){$where[]="(cs.id_=? OR cs.title LIKE CONCAT('%',?,'%'))";$types.='is';$params[]=(int)$q;$params[]=esc_like($q);}
         else{$where[]="cs.title LIKE CONCAT('%',?,'%')";$types.='s';$params[]=esc_like($q);}
     }
+    $offset=max(0,min(1000000,(int)($_GET['offset']??0)));
+    $types.='i';$params[]=$offset;
     $sql="SELECT cs.id_,cs.user_id_,cs.project_id_,cs.title,cs.model_id,cs.provider,cs.status,cs.meta,cs.created_at,cs.updated_at,
                  (SELECT COUNT(*) FROM ChatMessages cm WHERE cm.session_id_=cs.id_) AS message_count,
                  EXISTS(SELECT 1 FROM SessionContextBlocks scb WHERE scb.session_id_=cs.id_ LIMIT 1) AS has_context_blocks,
@@ -38,7 +40,7 @@ try{
                       AND f.Ruta LIKE CONCAT('Data/Chat/Uploads/', cs.user_id_, '/%/', cs.id_, '/%')
                     LIMIT 1
                  ) AS has_files
-          FROM ChatSessions cs WHERE ".implode(' AND ',$where)." ORDER BY cs.updated_at DESC LIMIT 200";
+          FROM ChatSessions cs WHERE ".implode(' AND ',$where)." ORDER BY cs.updated_at DESC LIMIT 201 OFFSET ?";
     $stmt=$db->prepare($sql);if(!$stmt)throw new RuntimeException($db->error);$stmt->bind_param($types,...$params);$stmt->execute();$res=$stmt->get_result();$sessions=[];
     while($row=$res->fetch_assoc()){
         $meta=[];if(is_string($row['meta'])&&trim($row['meta'])!==''){$d=json_decode($row['meta'],true);if(is_array($d))$meta=$d;}
@@ -52,5 +54,8 @@ try{
             'branch'=>$branch,
         ];
     }
-    $stmt->close();jexit(['ok'=>true,'cleanup_deleted'=>$cleaned,'sessions'=>$sessions]);
+    $stmt->close();
+    $hasMore=count($sessions)>200;
+    if($hasMore)array_pop($sessions);
+    jexit(['ok'=>true,'cleanup_deleted'=>$cleaned,'sessions'=>$sessions,'has_more'=>$hasMore]);
 }catch(Throwable $e){jexit(['ok'=>false,'error'=>$e->getMessage()],500);}
