@@ -49,7 +49,7 @@ final class ChatContextPreparationService
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         $meta = json_decode((string)($row['meta'] ?? ''),true);
-        return is_array($meta) && (($meta['attachment_mode'] ?? '') === 'always') ? 'always' : 'rag';
+        return is_array($meta) && (($meta['attachment_rag_mode'] ?? '') === 'always') ? 'always' : 'rag';
     }
 
 }
