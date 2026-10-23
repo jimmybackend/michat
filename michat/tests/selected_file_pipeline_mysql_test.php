@@ -7,6 +7,7 @@ define('APP_BOOTSTRAP_LOADED',true);
 require_once dirname(__DIR__).'/includes/Drive/DriveAnalysisService.php';
 require_once dirname(__DIR__).'/includes/SessionAttachmentKnowledgeService.php';
 require_once dirname(__DIR__).'/includes/Memory/bootstrap.php';
+require_once __DIR__.'/fixtures/arcadecloud_xlsx.php';
 $db=new mysqli($host,getenv('DOCUMENT_TEST_DB_USER')?:'root',getenv('DOCUMENT_TEST_DB_PASSWORD')?:'',getenv('DOCUMENT_TEST_DB_NAME')?:'mysql',(int)(getenv('DOCUMENT_TEST_DB_PORT')?:3306));$db->set_charset('utf8mb4');$GLOBALS['db_connection']=$db;
 $schema=file_get_contents(dirname(__DIR__,2).'/adbbmis1_Cloud.sql');
 foreach(['FileS3','ChatSessions','SessionContextBlocks','EmbeddingJobs','TokenUsage','UserAIAgentConfigs'] as $name){
@@ -33,9 +34,9 @@ final class Config {
 }
 Config::$s3=new class {
     public array $objects=['Data/codigo.txt'=>"Primera linea\nImporte verificable 41837\nUltima linea"];
-    public bool $fail=false;
+    public bool $fail=false;public bool $ignoreSaveAs=false;
     public function headObject(array $p):array{if($this->fail)throw new FixtureMissing('missing original');$b=$this->objects[$p['Key']]??throw new FixtureMissing('missing');return ['ETag'=>'"'.hash('sha256',$b).'"','ContentLength'=>strlen($b)];}
-    public function getObject(array $p):array{$b=$this->objects[$p['Key']]??throw new FixtureMissing('missing');if(isset($p['SaveAs']))file_put_contents($p['SaveAs'],$b);return ['Body'=>$b];}
+    public function getObject(array $p):array{$b=$this->objects[$p['Key']]??throw new FixtureMissing('missing');if(isset($p['SaveAs'])&&!$this->ignoreSaveAs)file_put_contents($p['SaveAs'],$b);return ['Body'=>$b];}
     public function putObject(array $p):array{$this->objects[$p['Key']]=$p['Body'];return [];}
 };
 $n=0;function pipelineCheck(bool $ok,string $label):void{global $n;$n++;if(!$ok)throw new RuntimeException($label);echo "PASS $label\n";}
@@ -46,6 +47,22 @@ pipelineCheck(!empty($first['warnings'])&&!empty($first['lexical_rag_available']
 $chunk=$db->query("SELECT content_preview,source_ids FROM SessionContextBlocks WHERE block_type='file_chunk' LIMIT 1")->fetch_assoc();
 pipelineCheck(str_contains($chunk['content_preview'],'41837')&&(json_decode($chunk['source_ids'],true)['locator']['line_start']??0)===1,'Actual extractor and indexer persist original evidence and line locator');
 pipelineCheck((int)$db->query('SELECT COUNT(*) n FROM EmbeddingJobs')->fetch_assoc()['n']===0,'No fake successful or pending embedding job without a configured model');
+
+// ArcadeCloud catalog selection with a real prefixed XLSX and a client that
+// returns Body only; no S3Manager/global database is needed for downloading.
+$db->query("INSERT INTO FileS3(id_,user_id_,Nombre,Ruta,Encriptado,Tamano,Found) VALUES(3,1,'Untitled spreadsheet.xlsx','Data/','fixture.xlsx',5090,1),(4,1,'Libro renombrado','Data/','renamed.xls',5090,1)");
+$db->query("UPDATE ChatSessions SET meta=JSON_SET(meta,'$.knowledge_file_ids',JSON_ARRAY(1,2,3,4)) WHERE id_=1");
+Config::$s3->objects['Data/fixture.xlsx']=arcadecloudXlsxFixture();
+Config::$s3->objects['Data/renamed.xls']=arcadecloudXlsxFixture();
+Config::$s3->ignoreSaveAs=true;unset($GLOBALS['db_connection']);
+$xlsx=$service->analyze(1,1,3);
+pipelineCheck($xlsx['ok']&&$xlsx['chunks']>0,'Actual ArcadeCloud XLSX selection indexes Body-only downloads without global DB');
+$evidence=(new AttachmentContextRepository($db,null))->retrieve(1,1,'88317','rag',null,null);
+pipelineCheck(str_contains($evidence['context'],'G7: 88317')&&str_contains($evidence['context'],'Impuestos y cuotas'),'Selected XLSX returns exact amount, original cell and worksheet in RAG');
+pipelineCheck(isset(Config::$s3->objects['Data/fixture.xlsx.michat-u1.analysis.v1.json']),'Selected XLSX persists private sibling analysis JSON');
+$renamed=$service->analyze(1,1,4);
+pipelineCheck($renamed['ok']&&!empty($renamed['warnings']),'Renamed extensionless Drive workbook indexes actual XLSX content');
+Config::$s3->ignoreSaveAs=false;$GLOBALS['db_connection']=$db;
 
 if(idx_command_exists('pdftotext')){
     $objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>','<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>','<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
@@ -91,6 +108,17 @@ pipelineCheck(count(json_decode($row['embedding_json'],true)??[])===1024,'Comple
 Config::$embeddingFail=true;Config::$s3->objects['Data/codigo.txt'].="\nRevision con proveedor caido 44331";
 $result=$service->analyze(1,1,1);
 pipelineCheck($result['ok']&&!empty($result['warnings'])&&(int)$db->query("SELECT COUNT(*) n FROM EmbeddingJobs WHERE status='pending' AND error_message IS NOT NULL")->fetch_assoc()['n']>0,'Provider failure preserves text and actual pending retry jobs');
+// A failed SQL insertion must retain the prior transactional index and return
+// a concrete storage-stage failure, rather than a generic extraction error.
+$before=$db->query("SELECT content_preview FROM SessionContextBlocks WHERE s3_path='Data/codigo.txt' AND block_type='file_chunk' ORDER BY id_")->fetch_all(MYSQLI_ASSOC);
+$db->query("SET SESSION sql_mode='STRICT_ALL_TABLES'");
+$db->query('ALTER TABLE SessionContextBlocks ADD COLUMN fixture_required INT NOT NULL');
+Config::$s3->objects['Data/codigo.txt'].="\nIntento que no se puede guardar 22331";
+$storage=$service->analyze(1,1,1);
+pipelineCheck(!$storage['ok']&&$storage['stage']==='chunk_storage'&&$storage['error_code']==='index_storage_failed','Actual SQL insertion failure identifies chunk storage and does not mark completion');
+$after=$db->query("SELECT content_preview FROM SessionContextBlocks WHERE s3_path='Data/codigo.txt' AND block_type='file_chunk' ORDER BY id_")->fetch_all(MYSQLI_ASSOC);
+pipelineCheck($before===$after,'Storage failure rolls back replacement and preserves prior literal index');
+$db->query('ALTER TABLE SessionContextBlocks DROP COLUMN fixture_required');
 Config::$s3->fail=true;$result=$service->analyze(1,1,1);
 pipelineCheck(!$result['ok']&&($result['error_code']??'')==='source_missing'&&($result['stage']??'')==='source_verification','Real source failure classified at original-read stage');
 pipelineCheck(preg_match('/^AK-[a-f0-9]{12}$/',$result['error_id']??'')===1&&str_contains($result['error'],$result['error_id']),'Error reference returned to user for server log correlation');

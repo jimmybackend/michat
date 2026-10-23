@@ -4,9 +4,10 @@
  *
  * Extracción compartida para adjuntos de sesión.
  * No abre DB, no inicia sesión y no imprime respuestas.
- * Requiere que app_bootstrap.php y S3Manager.php ya estén cargados.
+ * Requiere la configuración de la aplicación; no depende de una conexión DB global.
  */
 declare(strict_types=1);
+require_once __DIR__.'/Documents/S3DocumentDownload.php';
 
 if (!defined('IDX_MAX_EXTRACTED_CHARS')) define('IDX_MAX_EXTRACTED_CHARS', 200000);
 if (!defined('IDX_CHUNK_MAX_LEN')) define('IDX_CHUNK_MAX_LEN', 2000);
@@ -347,141 +348,120 @@ function idx_extract_pptx(string $tmp, string &$extractor, string &$error): stri
     return implode("\n", $lines);
 }
 
+/** Yield one row/string at a time; reject DTDs and malformed trailing XML. */
+function idx_xlsx_elements(ZipArchive $zip,string $archive,string $part,string $parent,string $element): Generator {
+    if(!class_exists('XMLReader')) {
+        $stat=$zip->statName($part);
+        if(!$stat || $stat['size']>2097152) throw new DocumentProcessingException('xlsx_reader','missing_stream_reader','Esta hoja requiere la extensión PHP XMLReader para procesarla por partes sin agotar memoria.');
+        $xml=$zip->getFromName($part);$dom=is_string($xml)?idx_safe_xml($xml):null;
+        if(!$dom) throw new DocumentProcessingException('xlsx_reader','invalid_xml','La hoja contiene XML dañado o declaraciones externas no permitidas.');
+        foreach((new DOMXPath($dom))->query('//*[local-name()="'.$parent.'"]/*[local-name()="'.$element.'"]') as $node) yield $node;
+        return;
+    }
+    $old=libxml_use_internal_errors(true);libxml_clear_errors();$reader=new XMLReader();
+    try {
+        if(!$reader->open('zip://'.$archive.'#'.$part,null,LIBXML_NONET|LIBXML_COMPACT)) throw new DocumentProcessingException('xlsx_reader','invalid_xml','No se pudo abrir el XML de la hoja.');
+        $reader->setParserProperty(XMLReader::LOADDTD,false);$reader->setParserProperty(XMLReader::SUBST_ENTITIES,false);
+        $parentDepth=null;
+        while($reader->read()) {
+            if(in_array($reader->nodeType,[XMLReader::DOC_TYPE,XMLReader::ENTITY_REF],true)) throw new DocumentProcessingException('xlsx_reader','invalid_xml','La hoja contiene declaraciones externas no permitidas.');
+            if($reader->nodeType===XMLReader::ELEMENT && $reader->localName===$parent) $parentDepth=$reader->isEmptyElement?null:$reader->depth;
+            if($reader->nodeType===XMLReader::END_ELEMENT && $reader->localName===$parent) $parentDepth=null;
+            if($reader->nodeType!==XMLReader::ELEMENT || $reader->localName!==$element || $parentDepth===null || $reader->depth!==$parentDepth+1) continue;
+            $xml=$reader->readOuterXml();
+            if(strlen($xml)>2097152) throw new DocumentProcessingException('xlsx_reader','resource_limit','Una fila excede el presupuesto de lectura por lotes; no se truncó su contenido.');
+            $dom=idx_safe_xml($xml);
+            if(!$dom) throw new DocumentProcessingException('xlsx_reader','invalid_xml','Una fila contiene XML inválido; no se marcó el libro como completo.');
+            yield $dom->documentElement;
+        }
+        foreach(libxml_get_errors() as $err) if($err->level>=LIBXML_ERR_ERROR) throw new DocumentProcessingException('xlsx_reader','invalid_xml','El XML de la hoja está incompleto o dañado; no se guardó una extracción parcial como completa.');
+    } finally {$reader->close();libxml_clear_errors();libxml_use_internal_errors($old);}
+}
+
 function idx_extract_xlsx(string $tmp, string &$extractor, string &$error): string {
-    if (!class_exists('ZipArchive')) {
-        $error = 'ZipArchive no está disponible para leer XLSX.';
-        return '';
-    }
-
-    $zip = new ZipArchive();
-
-    if ($zip->open($tmp) !== true) {
-        $error = 'No se pudo abrir el XLSX.';
-        return '';
-    }
-
-    $sharedStrings = [];
-    $sharedXml = $zip->getFromName('xl/sharedStrings.xml');
-
-    if ($sharedXml !== false) {
-        if (preg_match_all('/<si>(.*?)<\/si>/s', $sharedXml, $siMatches)) {
-            foreach ($siMatches[1] as $siXml) {
-                if (preg_match_all('/<t(?:\s[^>]*)?>(.*?)<\/t>/s', $siXml, $tMatches)) {
-                    $sharedStrings[] = idx_xml_decode(implode('', $tMatches[1]));
-                } else {
-                    $sharedStrings[] = '';
-                }
+    if (!class_exists('ZipArchive') || !class_exists('DOMDocument')) throw new DocumentProcessingException('xlsx_reader','missing_reader','El lector XLSX requiere las extensiones PHP ZIP y DOM en el servidor.');
+    $zip=new ZipArchive();
+    if($zip->open($tmp)!==true) throw new DocumentProcessingException('xlsx_reader','invalid_archive','El archivo no es un contenedor XLSX válido o está protegido con contraseña.');
+    $xmlDocument=static function(string $xml): DOMDocument {
+        $dom=idx_safe_xml($xml);
+        if(!$dom) throw new DocumentProcessingException('xlsx_reader','invalid_xml','El libro contiene XML dañado o declaraciones externas no permitidas; no se ejecutó contenido del archivo.');
+        return $dom;
+    };
+    $textRuns=static function(DOMNode $node,DOMXPath $xp): string {
+        $parts=[];
+        foreach($xp->query('./*[local-name()="t"] | ./*[local-name()="r"]/*[local-name()="t"]',$node) as $text) $parts[]=$text->textContent;
+        return implode('',$parts);
+    };
+    try {
+        $shared=[];$sharedBytes=0;
+        if($zip->locateName('xl/sharedStrings.xml')!==false) {
+            foreach(idx_xlsx_elements($zip,$tmp,'xl/sharedStrings.xml','sst','si') as $si) {
+                $value=$textRuns($si,new DOMXPath($si->ownerDocument));$sharedBytes+=strlen($value);
+                if(count($shared)>=200000 || $sharedBytes>16777216) throw new DocumentProcessingException('xlsx_reader','resource_limit','El diccionario del libro excede el presupuesto de memoria; requiere procesamiento por lotes.');
+                $shared[]=$value;
             }
         }
-    }
-
-    $sheets = [];
-
-    for ($i = 0; $i < $zip->numFiles; $i++) {
-        $name = $zip->getNameIndex($i);
-
-        if (preg_match('#^xl/worksheets/sheet(\d+)\.xml$#', $name, $m)) {
-            $sheets[(int)$m[1]] = $name;
-        }
-    }
-
-    ksort($sheets);
-
-    $sheetLabels = [];
-    $workbookXml = $zip->getFromName('xl/workbook.xml');
-    $workbookRels = idx_zip_relationships($zip, 'xl/_rels/workbook.xml.rels');
-    if (is_string($workbookXml)) {
-        $dom = idx_safe_xml($workbookXml);
-        if ($dom) {
-            foreach ((new DOMXPath($dom))->query('//*[local-name()="sheet"]') as $sheet) {
-                $id = $sheet->getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
-                if (isset($workbookRels[$id])) $sheetLabels[idx_zip_target('xl/workbook.xml',$workbookRels[$id])] = $sheet->getAttribute('name');
+        $sheets=[];$workbook=$zip->getFromName('xl/workbook.xml');
+        $rels=idx_zip_relationships($zip,'xl/_rels/workbook.xml.rels');
+        if(is_string($workbook)) {
+            if(strlen($workbook)>2097152) throw new DocumentProcessingException('xlsx_reader','resource_limit','Los metadatos del libro exceden el presupuesto seguro.');
+            $dom=$xmlDocument($workbook);$xp=new DOMXPath($dom);
+            foreach($xp->query('//*[local-name()="sheets"]/*[local-name()="sheet"]') as $sheet) {
+                $id='';foreach($sheet->attributes as $attr) if($attr->localName==='id') $id=$attr->value;
+                if(!isset($rels[$id])) continue;
+                $path=idx_zip_target('xl/workbook.xml',$rels[$id]);
+                if(!str_starts_with($path,'xl/worksheets/')) continue;
+                $sheets[$path]=$sheet->getAttribute('name') ?: basename($path,'.xml');
             }
         }
-    }
-    $out = [];
-
-    foreach ($sheets as $sheetNumber => $sheetName) {
-        $xml = $zip->getFromName($sheetName);
-        if ($xml === false) continue;
-
-        $sheetLabel = $sheetLabels[$sheetName] ?? basename($sheetName, '.xml');
-        $out[] = "--- Hoja {$sheetLabel} ---";
-
-        $rows = preg_split('/<\/row>/s', $xml);
-        $rowNumber = 0;
-
-        foreach ($rows as $rowXml) {
-            if (!preg_match('/<row\b([^>]*)>/s', $rowXml, $rowTag)) continue;
-
-            $rowNumber++;
-            if (preg_match('/\br="([0-9]+)"/', $rowTag[1], $rowRef)) {
-                $rowNumber = (int)$rowRef[1];
-            }
-
-            $cells = [];
-            $nextColumn = 1;
-
-            if (preg_match_all('/<c(?:\s[^>]*)?>(?:.*?)<\/c>|<c(?:\s[^>]*)?\/>/s', $rowXml, $cellMatches)) {
-                foreach ($cellMatches[0] as $cellXml) {
-                    // XLSX stores sparse cells: use the original address instead of
-                    // collapsing populated cells into consecutive positions.
-                    if (preg_match('/<c\b[^>]*\br="([A-Z]+)([0-9]+)"/i', $cellXml, $cellRef)) {
-                        $column = strtoupper($cellRef[1]);
-                        $address = $column . $cellRef[2];
-                        $columnIndex = 0;
-                        for ($j = 0, $length = strlen($column); $j < $length; $j++) {
-                            $columnIndex = $columnIndex * 26 + ord($column[$j]) - 64;
-                        }
-                        $nextColumn = $columnIndex + 1;
+        // Minimal producers may omit workbook relationships. Keep their actual
+        // part names, never infer a user's worksheet name or display ordering.
+        if(!$sheets) {
+            $parts=[];for($i=0;$i<$zip->numFiles;$i++) {$name=$zip->getNameIndex($i);if(is_string($name)&&preg_match('~^xl/worksheets/[^/]+\.xml$~D',$name)) $parts[]=$name;}
+            natsort($parts);foreach($parts as $name) $sheets[$name]=basename($name,'.xml');
+        }
+        if(!$sheets) throw new DocumentProcessingException('xlsx_reader','missing_worksheets','El contenedor no contiene hojas XLSX legibles. Comprueba el formato real del original.');
+        $out=[];$hasData=false;
+        foreach($sheets as $path=>$label) {
+            if($zip->locateName($path)===false) throw new DocumentProcessingException('xlsx_reader','missing_worksheet','Falta una hoja referenciada por el libro; no se marcó como una extracción completa.');
+            $lines=[];$rowNumber=0;
+            foreach(idx_xlsx_elements($zip,$tmp,$path,'sheetData','row') as $row) {
+                $xp=new DOMXPath($row->ownerDocument);
+                $rowNumber=$row->hasAttribute('r')?(int)$row->getAttribute('r'):$rowNumber+1;
+                if($rowNumber<1 || $rowNumber>1048576) throw new DocumentProcessingException('xlsx_reader','invalid_cell','El libro contiene una referencia de fila fuera del rango XLSX.');
+                $nextColumn=1;$cells=[];
+                foreach($xp->query('./*[local-name()="c"]',$row) as $cell) {
+                    $address=strtoupper($cell->getAttribute('r'));
+                    if($address!=='' && !preg_match('/^([A-Z]+)([1-9][0-9]*)$/D',$address)) throw new DocumentProcessingException('xlsx_reader','invalid_cell','El libro contiene una dirección de celda inválida; no se inventó una ubicación alternativa.');
+                    if(preg_match('/^([A-Z]+)([1-9][0-9]*)$/D',$address,$m)) {
+                        $col=0;foreach(str_split($m[1]) as $letter) $col=$col*26+ord($letter)-64;
+                        if($col>16384 || (int)$m[2]>1048576) throw new DocumentProcessingException('xlsx_reader','invalid_cell','El libro contiene una referencia de celda fuera del rango XLSX.');
+                        $nextColumn=$col+1;
                     } else {
-                        // Some producers omit a cell reference. Count even empty
-                        // cells to keep the positional fallback aligned.
-                        $columnIndex = $nextColumn++;
-                        $column = '';
-                        while ($columnIndex > 0) {
-                            $columnIndex--;
-                            $column = chr(65 + $columnIndex % 26) . $column;
-                            $columnIndex = intdiv($columnIndex, 26);
-                        }
-                        $address = $column . $rowNumber;
+                        if($nextColumn>16384) throw new DocumentProcessingException('xlsx_reader','invalid_cell','La fila contiene más columnas que las permitidas por XLSX.');
+                        $col=$nextColumn++;$letters='';while($col>0){$col--;$letters=chr(65+$col%26).$letters;$col=intdiv($col,26);}$address=$letters.$rowNumber;
                     }
-
-                    $value = '';
-
-                    if (preg_match('/t="s"/', $cellXml) && preg_match('/<v>(.*?)<\/v>/s', $cellXml, $vM)) {
-                        $idx = (int)$vM[1];
-                        $value = $sharedStrings[$idx] ?? '';
-                    } elseif (preg_match('/<is>(.*?)<\/is>/s', $cellXml, $isM)) {
-                        if (preg_match_all('/<t(?:\s[^>]*)?>(.*?)<\/t>/s', $isM[1], $tM)) {
-                            $value = idx_xml_decode(implode('', $tM[1]));
-                        }
-                    } elseif (preg_match('/<v>(.*?)<\/v>/s', $cellXml, $vM)) {
-                        $value = idx_xml_decode($vM[1]);
+                    $type=$cell->getAttribute('t');$v=$xp->query('./*[local-name()="v"]',$cell)->item(0);$value=$v?$v->textContent:'';
+                    if($type==='s') {
+                        if(!preg_match('/^[0-9]+$/D',$value) || !array_key_exists((int)$value,$shared)) throw new DocumentProcessingException('xlsx_reader','invalid_shared_string','Una celda referencia texto que no está incluido en el libro.');
+                        $value=$shared[(int)$value];
+                    } elseif($type==='inlineStr') {
+                        $inline=$xp->query('./*[local-name()="is"]',$cell)->item(0);$value=$inline?$textRuns($inline,$xp):'';
                     }
-
-                    $value = trim($value);
-                    // Conservar fórmulas y valores cacheados; de otro modo el
-                    // asistente no puede explicar cómo se calculó una celda.
-                    if (preg_match('/<f(?:\s[^>]*)?>(.*?)<\/f>/s', $cellXml, $formulaMatch)) {
-                        $formula = '=' . idx_xml_decode($formulaMatch[1]);
-                        $value = $value === '' ? $formula : $value . ' [fórmula ' . $formula . ']';
+                    $formula=$xp->query('./*[local-name()="f"]',$cell)->item(0);
+                    if($formula) {
+                        if($formula->textContent!=='') {$f='='.$formula->textContent;$value=$value===''?$f:$value.' [fórmula '.$f.']';}
+                        elseif($formula->getAttribute('t')==='shared') $value.=' [fórmula compartida: expresión no incluida en esta celda]';
                     }
-                    if ($value !== '') $cells[] = $address . ': ' . $value;
+                    if(trim($value)!=='') {$cells[]=$address.': '.$value;$hasData=true;}
                 }
+                if($cells) $lines[]=implode(' | ',$cells);
             }
-
-            if (!empty($cells)) {
-                $out[] = implode(' | ', $cells);
-            }
+            if($lines) {$out[]='--- Hoja '.$label.' ---';$out=array_merge($out,$lines);}
         }
-    }
-
-    $zip->close();
-
-    $extractor = 'xlsx-xml';
-
-    return implode("\n", $out);
+        if(!$hasData) throw new DocumentProcessingException('xlsx_reader','empty_spreadsheet','El libro se abrió correctamente, pero sus hojas no contienen valores ni fórmulas para indexar.');
+        $extractor='xlsx-xml';return implode("\n",$out);
+    } finally {$zip->close();}
 }
 
 function idx_extract_odf(string $tmp, string &$extractor, string &$error): string {
@@ -1038,10 +1018,6 @@ function idx_extract_s3_text(
     $textExts = idx_text_extensions();
     $extractable = idx_extractable_extensions();
 
-    if (!in_array($ext, $textExts, true) && !in_array($ext, $extractable, true)) {
-        throw new RuntimeException('Formato no soportado para extracción de texto: .' . $ext);
-    }
-
     $tmpDir = sys_get_temp_dir() . '/idx_s3_' . bin2hex(random_bytes(6));
     if (!@mkdir($tmpDir, 0775, true)) {
         throw new RuntimeException('No se pudo crear directorio temporal de extracción.');
@@ -1049,20 +1025,22 @@ function idx_extract_s3_text(
     $tmpFile = $tmpDir . '/' . idx_safe_filename($filename);
 
     try {
-        $manager = new S3Manager();
         $s3 = Config::getS3();
-        $bucket = $manager->getBucket();
+        $bucket = Config::getBucket();
 
         $head = $s3->headObject(['Bucket'=>$bucket,'Key'=>$s3Key]);
-        if ((int)($head['ContentLength'] ?? 0) > 64 * 1024 * 1024) throw new RuntimeException('Archivo excede 64 MiB; requiere procesamiento por lotes.');
-        $download = $s3->getObject(['Bucket'=>$bucket, 'Key'=>$s3Key, 'SaveAs'=>$tmpFile, 'IfMatch'=>(string)$head['ETag']]);
+        try { S3DocumentDownload::save($s3,$bucket,$s3Key,$head,$tmpFile); }
+        catch(DocumentProcessingException $e) {throw $e;}
+        catch(Throwable $e) {throw new DocumentProcessingException('source_download','source_download_failed','No se pudo descargar la revisión original desde S3. El índice no se marcó como terminado.',$e);}
+        $declaredExt=$ext;
+        $ext=idx_detect_document_format($tmpFile,$filename,$s3Key);
+        if (!in_array($ext,$textExts,true) && !in_array($ext,$extractable,true)) throw new DocumentProcessingException('format_detection','unsupported_format','El formato real no dispone de un lector compatible. No se interpretó el archivo como texto.');
 
-        if (!is_file($tmpFile) || filesize($tmpFile) <= 0) {
-            throw new RuntimeException('El archivo está vacío o no se descargó correctamente.');
+
+        if (in_array($ext, ['docx','dotx','pptx','ppsx','xlsx','xlsm','xltx','xltm','odt','ods','odp','epub'], true)) {
+            try {idx_validate_archive($tmpFile);}
+            catch(Throwable $e) {throw new DocumentProcessingException('archive_validation','invalid_archive','No se pudo abrir el contenedor documental: comprueba que el archivo no esté dañado o cifrado y que PHP ZIP esté instalado.',$e);}
         }
-
-        if (filesize($tmpFile) > 64 * 1024 * 1024) throw new RuntimeException('Archivo excede 64 MiB; requiere procesamiento por lotes.');
-        if (in_array($ext, ['docx','dotx','pptx','ppsx','xlsx','xlsm','xltx','xltm','odt','ods','odp','epub'], true)) idx_validate_archive($tmpFile);
         if ($ext === 'pdf' && file_get_contents($tmpFile, false, null, 0, 5) !== '%PDF-') throw new RuntimeException('Firma PDF inválida.');
         $extractor = 'raw_text';
         $extractError = '';
@@ -1097,6 +1075,7 @@ function idx_extract_s3_text(
             'source_etag'=>(string)$head['ETag'],
             'extracted_chars'=>mb_strlen($content),
             'coverage'=>$truncated ? 'partial' : 'text_extracted',
+            'warnings'=>$declaredExt!==$ext?['Se detectó el formato real .'.$ext.'; la extensión del nombre visible no coincide.']:[],
         ];
     } finally {
         idx_rrmdir($tmpDir);
@@ -1112,6 +1091,39 @@ function idx_extract_files3_text(array $file, int $maxChars = IDX_MAX_EXTRACTED_
     $s3Key = idx_build_s3_key($file);
     if ($s3Key === '') throw new RuntimeException('No se pudo resolver la clave S3 del archivo.');
     return idx_extract_s3_text($s3Key, $filename, $maxChars);
+}
+
+/** Prefer recognized signatures/container parts over a renamed display filename. */
+function idx_detect_document_format(string $path,string $filename,string $key): string {
+    $declared=strtolower(pathinfo($filename,PATHINFO_EXTENSION));
+    $keyExt=strtolower(pathinfo($key,PATHINFO_EXTENSION));
+    $signature=(string)file_get_contents($path,false,null,0,8);
+    if(str_starts_with($signature,'%PDF-')) return 'pdf';
+    if(str_starts_with($signature,"PK\x03\x04") || str_starts_with($signature,"PK\x05\x06")) {
+        idx_validate_archive($path);
+        $z=new ZipArchive();$z->open($path);
+        try {
+            $xlsx=$z->locateName('xl/workbook.xml')!==false;
+            $pptx=$z->locateName('ppt/presentation.xml')!==false;
+            for($i=0;$i<$z->numFiles;$i++) {
+                $part=$z->getNameIndex($i);
+                if(preg_match('~^xl/worksheets/[^/]+\.xml$~D',$part)) $xlsx=true;
+                if(preg_match('~^ppt/slides/slide[0-9]+\.xml$~D',$part)) $pptx=true;
+            }
+            if($xlsx) return in_array($declared,['xlsx','xlsm','xltx','xltm'],true)?$declared:'xlsx';
+            if($z->locateName('word/document.xml')!==false) return $declared==='dotx'?'dotx':'docx';
+            if($pptx) return $declared==='ppsx'?'ppsx':'pptx';
+            $mime=$z->getFromName('mimetype',256);
+            $map=['application/vnd.oasis.opendocument.text'=>'odt','application/vnd.oasis.opendocument.spreadsheet'=>'ods','application/vnd.oasis.opendocument.presentation'=>'odp','application/epub+zip'=>'epub'];
+            if(is_string($mime)&&isset($map[trim($mime)])) return $map[trim($mime)];
+            // Retain known ODF/EPUB layouts from minimal legacy producers.
+            if(in_array($declared,['odt','ods','odp','epub'],true)) return $declared;
+            throw new DocumentProcessingException('format_detection','unsupported_archive','El ZIP no contiene una estructura documental reconocida. No se indexaron sus bytes como texto.');
+        } finally {$z->close();}
+    }
+    if(str_starts_with($signature,"\xD0\xCF\x11\xE0") && in_array($declared,['xlsx','xlsm','docx','pptx'],true)) throw new DocumentProcessingException('format_detection','encrypted_office','El archivo Office usa un contenedor binario, posiblemente cifrado o de formato antiguo. Guarda una copia sin contraseña en el formato indicado.');
+    if($declared==='') return $keyExt;
+    return $declared;
 }
 
 /** Validate real text before normalization. Never turn a binary file into plausible prose. */

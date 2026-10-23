@@ -128,6 +128,7 @@ final class SessionAttachmentKnowledgeService
      */
     private function indexPrepared(int $sessionId, int $fileId, array $file, array $extracted, array $warnings = []): array
     {
+        $warnings=array_merge($warnings,(array)($extracted['warnings'] ?? []));
         $content = (string)($extracted['content'] ?? '');
         $ext = strtolower((string)($extracted['ext'] ?? ''));
         $s3Key = (string)($extracted['s3_key'] ?? idx_build_s3_key($file));
@@ -144,7 +145,7 @@ final class SessionAttachmentKnowledgeService
         }
         $blockIds = [];
 
-        $this->db->begin_transaction();
+        if (!$this->db->begin_transaction()) throw new DocumentProcessingException('chunk_storage','index_storage_failed','No se pudo iniciar una transacción segura para guardar el índice.');
         try {
             $replacedIds = $this->deleteBlocks($sessionId, $s3Key, 'file_chunk', false);
 
@@ -162,7 +163,7 @@ final class SessionAttachmentKnowledgeService
                     'extractor' => (string)($extracted['extractor'] ?? 'unknown'),
                     'ext' => $ext,
                     'truncated' => !empty($extracted['truncated']),
-                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 $tokens = (int)ceil(mb_strlen($chunkText) / 4);
 
                 $ins = $this->db->prepare("INSERT INTO SessionContextBlocks (session_id_,block_type,content_preview,s3_path,is_locked,source_ids,token_count) VALUES (?,'file_chunk',?,?,1,?,?)");
@@ -178,10 +179,10 @@ final class SessionAttachmentKnowledgeService
                 $blockIds[] = $blockId;
 
             }
-            $this->db->commit();
+            if (!$this->db->commit()) throw new RuntimeException('No se pudo confirmar la transacción del índice');
         } catch (Throwable $e) {
             $this->db->rollback();
-            throw $e;
+            throw new DocumentProcessingException('chunk_storage','index_storage_failed','Se extrajo contenido, pero no se pudo guardar el índice en la base de datos. El índice anterior se conservó; revisa el esquema y los permisos de escritura.',$e);
         }
 
         // Persist literal evidence before touching the optional embedding queue.
