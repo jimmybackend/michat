@@ -277,7 +277,12 @@ try {
   clearTimeout(hardTimeout);
   finishInputStream();
   client.destroy();
-  fail(error?.message || String(error));
+  // El SDK puede lanzar AccessDeniedException sin message. Registrar siempre
+  // nombre y status HTTP para que PHP pueda clasificar el problema real.
+  const name = String(error?.name || error?.Code || 'SonicError');
+  const status = Number(error?.$metadata?.httpStatusCode || 0);
+  const detail = String(error?.message || '').trim().slice(0, 800);
+  fail(name + (status ? ' HTTP ' + status : '') + ': ' + (detail || 'SDK sin descripción'));
 }
 
 clearTimeout(hardTimeout);
