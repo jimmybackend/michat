@@ -31,7 +31,7 @@ $check(str_contains($pages, '[Página 1]') && str_contains($pages, '[Página 3]'
 if (class_exists('ZipArchive')) {
     $xlsx = tempnam(sys_get_temp_dir(), 'rag_xlsx_');
     $z = new ZipArchive();
-    if ($z->open($xlsx, ZipArchive::OVERWRITE) === true) {
+    if ($z->open($xlsx, ZipArchive::CREATE | ZipArchive::OVERWRITE) === true) {
         $z->addFromString('xl/sharedStrings.xml', '<sst><si><t>Ventas</t></si></sst>');
         $z->addFromString('xl/worksheets/sheet1.xml',
             '<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1"><f>1+2</f><v>3</v></c></row></sheetData></worksheet>');
@@ -69,6 +69,10 @@ if (class_exists('SQLite3')) {
     $extractor = ''; $error = '';
     $text = idx_extract_sqlite($tmp, $extractor, $error);
     $check(str_contains($text, '[MUESTRA PARCIAL:'), 'SQLite informa datos no incluidos');
+    $db = new SQLite3($tmp, SQLITE3_OPEN_READONLY);
+    $check((int)$db->querySingle('SELECT COUNT(*) FROM registros') === 45,
+        'No se modifican las 45 filas originales');
+    $db->close();
     @unlink($tmp);
 }
 
