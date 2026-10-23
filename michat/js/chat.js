@@ -77,7 +77,7 @@
       usage: $('#chat2Usage'),
       input: $('#chat2Input'),
       file: $('#chat2File'),
-      attach: null, // Único clip visible: #chatFilesOpen en la cabecera.
+      attach: $('#chat2Attach'),
       btnGenImg: $('#chat2BtnGenImg'),
       btnGenVid: $('#chat2BtnGenVid'),
       btnSonic: $('#chat2BtnSonic'),
@@ -1449,7 +1449,7 @@ function renderSessionsList() {
       return false;
     }
 
-    async function createSession(title) {
+    async function createSession(title, options = {}) {
       setStatus('Creando sesión…');
       // Dar oportunidad a user_preferences.js de restaurar el modelo guardado.
       // El backend tiene además fallback defensivo por si un cliente antiguo omite model.
@@ -1459,9 +1459,13 @@ function renderSessionsList() {
       const uid = getUserId();
       if (uid) fd.append('user_id', uid);
       if (currentProjectId) fd.append('project_id', currentProjectId);
-      const model = requireModelSelected();
-      if (!model) throw new Error('Selecciona un modelo.');
-      fd.append('model', model);
+      const model = options.allowModelFallback
+        ? (String(el.model?.value || window.chatPreferences?.getModelId?.() || '').trim())
+        : requireModelSelected();
+      if (!model && !options.allowModelFallback) throw new Error('Selecciona un modelo.');
+      // Sólo para el alta desde un archivo se permite que el servidor
+      // escoja el modelo configurado por defecto sin generar respuesta IA.
+      if (model) fd.append('model', model);
       const r = await fetch(API.createSession, { method:'POST', credentials:'same-origin', body: fd });
       const j = toJSONorThrow(await r.text(), r.status, 'Crear sesión');
       if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
@@ -3043,10 +3047,29 @@ function renderProjectSources() {
               <small class="text-muted d-block">${esc(p.description || 'Sin descripción')}</small>
               <small class="text-muted"><i class="fas fa-folder"></i> ${esc(p.root_prefix)}</small>
             </div>
+            <button type="button" class="btn btn-sm btn-outline-info btn-project-sources ml-2" data-id="${p.id}" title="Subir o indexar fuentes RAG compartidas del proyecto" aria-label="Fuentes RAG del proyecto"><i class="fas fa-folder-open"></i> Fuentes</button>
             <button class="btn btn-sm btn-outline-primary btn-edit-project ml-2" data-id="${p.id}"><i class="fas fa-edit"></i></button>
             <button class="btn btn-sm btn-outline-danger btn-delete-project ml-1" data-id="${p.id}"><i class="fas fa-trash"></i></button>
           </div>
         `).join('');
+        list.querySelectorAll('.btn-project-sources').forEach(btn => {
+          btn.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            const projectId = Number(btn.dataset.id || 0);
+            if (!projectId) return;
+            const manager = document.getElementById('modalProjectManager');
+            try {
+              await selectProject(projectId);
+              if (manager && window.jQuery && window.jQuery(manager).hasClass('show')) {
+                window.jQuery(manager).one('hidden.bs.modal', openProjectSourcesModal).modal('hide');
+              } else {
+                openProjectSourcesModal();
+              }
+            } catch (error) {
+              showToast('Fuentes RAG', esc(String(error.message || error)), 'danger');
+            }
+          });
+        });
         list.querySelectorAll('.btn-edit-project').forEach(btn => {
           btn.addEventListener('click', (e) => { e.stopPropagation(); editProject(parseInt(btn.dataset.id)); });
         });
@@ -3469,7 +3492,87 @@ const btnIndexPending = document.getElementById('btnIndexPending');
 if (btnIndexPending) {
   btnIndexPending.addEventListener('click', indexPendingSources);
 }
-    if (el.file) el.file.addEventListener('change', (ev) => addFilesFromInput(el.file.files));
+    if (el.file) el.file.addEventListener('change', () => {
+      // No esperar a enviar un mensaje: subir y procesar RAG de inmediato.
+      const selected = Array.from(el.file.files || []);
+      el.file.value = '';
+      if (selected.length) uploadComposerFiles(selected);
+    });
+    // Un único clip en el compositor. El selector nativo del navegador
+    // permite adjuntar desde teléfono y escritorio.
+    let composerUploadBusy = false;
+    if (el.attach) {
+      el.attach.addEventListener('click', (event) => {
+        event.preventDefault();
+        if (composerUploadBusy || isSending) {
+          showToast('Archivos', 'Termina la operación actual antes de adjuntar otros archivos.', 'warning');
+          return;
+        }
+        if (currentSessionId && currentSessionStatus !== 'open') {
+          showToast('Archivos', 'Restaura la conversación para adjuntar archivos.', 'warning');
+          return;
+        }
+        el.file?.click();
+      });
+    }
+
+    async function uploadComposerFiles(selectedFiles) {
+      const files = Array.from(selectedFiles || []);
+      if (!files.length || composerUploadBusy) return;
+      if (currentSessionId && currentSessionStatus !== 'open') {
+        showToast('Archivos', 'Restaura la conversación antes de subir archivos.', 'warning');
+        return;
+      }
+      if (isSending) {
+        showToast('Archivos', 'Termina la respuesta actual antes de subir archivos.', 'warning');
+        return;
+      }
+      composerUploadBusy = true;
+      if (el.attach) el.attach.disabled = true;
+      try {
+        let targetSessionId = Number(currentSessionId || 0);
+        if (!targetSessionId) {
+          setStatus('Creando conversación para los archivos…');
+          const created = await createSession('Nueva conversación (archivos)', {allowModelFallback: true});
+          targetSessionId = Number(created.id || 0);
+          if (!targetSessionId) throw new Error('No se recibió el ID de la conversación.');
+          await loadSessions();
+          await selectSession(targetSessionId);
+        }
+        setStatus('Subiendo e indexando ' + files.length + ' archivo(s) para RAG…');
+        const fd = new FormData();
+        fd.append('session_id', String(targetSessionId));
+        for (const file of files) fd.append('files[]', file, file.name);
+        const response = await fetch('session_upload.php', {
+          method: 'POST', credentials: 'same-origin', body: fd
+        });
+        const data = toJSONorThrow(await response.text(), response.status, 'Subir archivos');
+        if (!response.ok || data.ok === false) throw new Error(data.error || 'HTTP ' + response.status);
+        const uploaded = Array.isArray(data.uploaded) ? data.uploaded.length : 0;
+        const ready = Math.max(0, Number(data.knowledge_ready || 0));
+        const errors = Array.isArray(data.errors) ? data.errors.length : 0;
+        if (!uploaded || data.success === false) {
+          throw new Error(errors ? String(data.errors[0]).slice(0, 250) : 'No se pudo subir ningún archivo.');
+        }
+        const description = uploaded + ' archivo(s) guardado(s) en la conversación. '
+          + Math.min(ready, uploaded) + ' listo(s) para RAG.'
+          + (errors ? ' ' + errors + ' archivo(s) fallaron.' : '')
+          + (ready < uploaded ? ' Algunos requieren revisión de indexación.' : '');
+        if (Number(currentSessionId) === targetSessionId) setStatus(description);
+        showToast('Adjuntos de conversación', esc(description), ready === uploaded && errors === 0 ? 'success' : 'warning');
+        // La API session_upload.php ya invoca SessionAttachmentKnowledgeService
+        // o SessionImageKnowledgeService. No hacer una segunda indexación.
+        if (Number(currentSessionId) === targetSessionId) await loadSessionAttachments(targetSessionId);
+      } catch (error) {
+        console.error('Error adjuntando archivos:', error);
+        const msg = String(error?.message || error);
+        setStatus('No se pudieron adjuntar los archivos: ' + msg);
+        showToast('Error al adjuntar archivos', esc(msg.slice(0, 250)), 'danger');
+      } finally {
+        composerUploadBusy = false;
+        if (el.attach) el.attach.disabled = false;
+      }
+    }
     if (el.send) el.send.addEventListener('click', sendMessage);
     if (el.input) {
       el.input.addEventListener('keydown', (ev) => {
