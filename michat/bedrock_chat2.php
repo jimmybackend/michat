@@ -607,7 +607,7 @@ if (!function_exists('buildSessionAttachmentContext')) {
                 WHERE session_id_ = ?
                   AND block_type IN ('file', 'file_chunk')
                 ORDER BY block_type ASC, created_at ASC
-                LIMIT 30
+                LIMIT 150
             ");
 
             if (!$stmt) return '';
@@ -634,15 +634,19 @@ if (!function_exists('buildSessionAttachmentContext')) {
 
                 $filename = getAttachmentFilenameFromBlock($block);
 
+                $meta = json_decode((string)($block['source_ids'] ?? ''), true);
+                $chunk = (int)($meta['chunk'] ?? 0);
                 $label = ($block['block_type'] === 'file')
                     ? "[RESUMEN DE ARCHIVO ADJUNTO - {$filename}]"
-                    : "[FRAGMENTO DE ARCHIVO ADJUNTO - {$filename}]";
+                    : "[FRAGMENTO " . ($chunk > 0 ? (string)$chunk : '?') . " DE ARCHIVO ADJUNTO - {$filename}]";
 
                 $part = $label . "\n" . $content . "\n\n";
 
-                if ($chars + mb_strlen($part) > max(1000, (int)aiAgentExtra('embedding_main', 'attachment_rag_max_chars', ATTACHMENT_RAG_MAX_CHARS_FALLBACK))) {
-                    break;
-                }
+                $limit = max(1000, (int)aiAgentExtra('embedding_main', 'attachment_rag_max_chars', ATTACHMENT_RAG_MAX_CHARS_FALLBACK));
+                $remaining = $limit - $chars;
+                if ($remaining < 180) break;
+                // Un resumen largo no debe ocultar a los demás archivos.
+                $part = mb_substr($part, 0, min(3200, $remaining), 'UTF-8');
 
                 $out .= $part;
                 $chars += mb_strlen($part);
@@ -827,15 +831,18 @@ if (!function_exists('buildSessionAttachmentContext')) {
 
             $filename = getAttachmentFilenameFromBlock($row);
 
+            $source = json_decode((string)($row['source_ids'] ?? ''), true);
+            $chunk = (int)($source['chunk'] ?? 0);
             $label = ($row['block_type'] === 'file')
                 ? "[RESUMEN DE ARCHIVO ADJUNTO - {$filename}]"
-                : "[FRAGMENTO DE ARCHIVO ADJUNTO - {$filename}]";
+                : "[FRAGMENTO " . ($chunk > 0 ? (string)$chunk : '?') . " DE ARCHIVO ADJUNTO - {$filename}]";
 
             $part = $label . "\n" . $content . "\n\n";
 
-            if ($chars + mb_strlen($part) > max(1000, (int)aiAgentExtra('embedding_main', 'attachment_rag_max_chars', ATTACHMENT_RAG_MAX_CHARS_FALLBACK))) {
-                break;
-            }
+            $limit = max(1000, (int)aiAgentExtra('embedding_main', 'attachment_rag_max_chars', ATTACHMENT_RAG_MAX_CHARS_FALLBACK));
+            $remaining = $limit - $chars;
+            if ($remaining < 180) break;
+            $part = mb_substr($part, 0, min(4500, $remaining), 'UTF-8');
 
             $out .= $part;
             $chars += mb_strlen($part);
