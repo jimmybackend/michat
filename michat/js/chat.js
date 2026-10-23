@@ -2796,18 +2796,18 @@ function renderProjectList() {
     if (projSessions.length > 0) {
       sessionsHtml = projSessions.map(s => {
         const sid = s.id || s.id_;
-        const stitle = esc(s.title || `Sesión #${sid}`);
+        const stitle = String(s.title || `Sesión #${sid}`);
         const sactive = (sid === currentSessionId) ? ' active' : '';
         const isArchived = s.archived || s.status === 'archived';
-        const badge = isArchived ? `<span class="badge badge-secondary ml-1" style="font-size:0.6rem;">arch</span>` : '';
-        return `<div class="sb-item project-session${sactive}" data-id="${sid}" title="${esc(stitle)}" 
-                style="padding-left: 1.2rem; font-size: 0.75rem; border-left: 2px solid var(--accent, #00ff88); margin-top: 2px;">
-          <div class="d-flex justify-content-between align-items-center">
-            <span class="text-truncate sb-item-title" style="max-width: 70%; font-size: 0.7rem;">
-              <i class="fas fa-comment-dots mr-1" style="font-size:0.6rem;"></i>${stitle} ${badge}
-            </span>
-            <div class="btn-group btn-group-sm" style="flex-shrink: 0;">
-              <button class="btn btn-link p-0 js-rename text-muted" title="Renombrar"><i class="fas fa-pen" style="font-size:0.5rem;"></i></button>
+        const isDeleted = s.status === 'closed';
+        const badge = isDeleted ? '<span class="badge badge-danger ml-1">eliminada</span>'
+          : isArchived ? '<span class="badge badge-secondary ml-1">arch</span>' : '';
+        return `<div class="sb-item project-session${sactive}" data-id="${sid}" title="${esc(stitle)}">
+          <span class="sb-item-title"><i class="fas fa-comment-dots mr-1" aria-hidden="true"></i>${esc(stitle)} ${badge}</span>
+          <div class="sb-item-footer">
+            <small class="sb-item-meta text-muted">${esc(formatSessionMeta(s.updated_at || s.created_at || ''))}</small>
+            <div class="sb-item-actions" role="group" aria-label="Acciones de conversación de proyecto">
+              <button type="button" class="btn btn-link js-rename" title="Renombrar conversación" aria-label="Renombrar conversación"><i class="fas fa-pen" aria-hidden="true"></i></button>
             </div>
           </div>
         </div>`;
