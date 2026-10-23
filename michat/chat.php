@@ -324,7 +324,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <meta name="csrf-token" content="<?php echo htmlspecialchars($_SESSION['csrf_token'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
 <link rel="stylesheet" href="css/chat2.css" />
 <link rel="stylesheet" href="css/design-system.css?v=20261022-conversation-layout" />
-<link rel="stylesheet" href="css/chat-files-drawer.css?v=20261023-unified-file-drawer" />
+
 <link rel="stylesheet" href="css/michat-about.css?v=20261021-2" />
 </head>
 <body class="ui-theme theme-neon-green theme-light vision-normal ascii-on">
@@ -412,9 +412,6 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
       <i class="fas fa-bars"></i>
     </button>
     <h1 class="chat-title" id="chat2Title">Nueva conversación</h1>
-    <button id="chatFilesOpen" class="btn-icon-sm chat-files-trigger" type="button" aria-label="Ver archivos y RAG de la conversación" title="Archivos y RAG" aria-haspopup="dialog" aria-controls="chatFilesDrawer" aria-expanded="false">
-      <i class="fas fa-paperclip" aria-hidden="true"></i>
-    </button>
     <small class="text-muted ml-2 d-none" id="chat2SessionBadge"></small>
         <button id="chat2Rename" class="btn-icon-sm" title="Renombrar chat" type="button">
       <i class="fas fa-pen"></i>
@@ -483,96 +480,6 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 
   </div>
 </header>
-<!-- Archivos fuera del sidebar: visibles únicamente al pulsar el clip de la conversación. -->
-<div id="chatFilesBackdrop" class="chat-files-backdrop" hidden></div>
-<aside id="chatFilesDrawer" class="chat-files-drawer" role="dialog" aria-modal="true" aria-labelledby="chatFilesTitle" aria-hidden="true" tabindex="-1" hidden>
-  <div class="chat-files-drawer-header">
-    <div>
-      <h2 id="chatFilesTitle"><i class="fas fa-paperclip" aria-hidden="true"></i> Archivos y RAG</h2>
-      <small id="chatFilesSessionLabel" class="text-muted">Selecciona una conversación</small>
-    </div>
-    <button id="chatFilesClose" class="btn-icon-sm" type="button" title="Cerrar archivos" aria-label="Cerrar panel de archivos">
-      <i class="fas fa-times" aria-hidden="true"></i>
-    </button>
-  </div>
-  <div class="chat-files-drawer-body">
-    <p class="chat-files-help">Consulta los adjuntos de esta conversación, su indexación y el modo de recuperación RAG.</p>
-    <button id="chatFilesManage" class="btn btn-sm btn-outline-primary w-100 mb-2" type="button" aria-expanded="false" aria-controls="chatFilesUpload">
-      <i class="fas fa-cloud-upload-alt mr-1" aria-hidden="true"></i> Agregar archivos a la conversación
-    </button>
-    <div class="sidebar-section adjuntos-section">
-
-  <div class="section-label-row">
-    <div class="section-label">
-      <i class="fas fa-paperclip"></i>
-      ARCHIVOS DE LA CONVERSACIÓN
-    </div>
-    <span class="chat-files-count" id="chatFilesCount">0</span>
-  </div>
-  <p class="chat-files-scope-note">Se usan en esta conversación; puedes indexarlos para el contexto RAG.</p>
-
-
-
-    <button id="btnAttachmentInspector" class="btn btn-sm btn-outline-info w-100 mt-2" style="font-size:0.75rem;" title="Ver qué información tiene la IA de los archivos adjuntos">
-        <i class="fas fa-microscope"></i> Inspector de Adjuntos
-    </button>
-  <div id="chatSessionFilesList" class="chat-session-files-list">
-    <!-- Los archivos se cargan dinámicamente desde chat.js -->
-    <div class="empty-state-sidebar chat-files-empty">
-      <!--<i class="fas fa-file"></i>
-      <span class="text-muted" style="font-size:0.65rem;">Selecciona una conversación</span>-->
-    </div>
-  </div>
-  <div id="chatFilesUpload" class="chat-files-upload" hidden>
-    <label for="sessionFilesInput" class="font-weight-bold d-block mb-1">Seleccionar archivos para esta conversación</label>
-    <input id="sessionFilesInput" type="file" class="form-control-file" multiple
-      accept=".php,.js,.ts,.py,.java,.c,.cpp,.cs,.go,.rs,.rb,.html,.css,.scss,.json,.xml,.yaml,.yml,.md,.txt,.sql,.sh,.bash,.pdf,.jpg,.jpeg,.png,.gif,.mp4,.webm,.mp3,.wav,.docx,.xlsx,.pptx">
-    <p class="chat-files-upload-path">
-      Carpeta: <code id="sessionUploadPath">Data/Chat/Uploads/{user_id}/YYYY/MM/</code>
-    </p>
-    <div id="sessionUploadProgress" class="d-none">
-      <div class="progress" style="height:20px;">
-        <div id="sessionUploadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width:0%">0%</div>
-      </div>
-      <small id="sessionUploadStatus" class="text-muted d-block mt-1">Subiendo...</small>
-    </div>
-    <div id="sessionUploadResult" class="d-none mt-2">
-      <div class="alert alert-success small mb-0"><i class="fas fa-check-circle"></i> <span id="sessionUploadSuccessMsg"></span></div>
-    </div>
-    <button id="btnUploadSessionFiles" class="btn btn-sm btn-primary w-100 mt-2" type="button">
-      <i class="fas fa-cloud-upload-alt mr-1" aria-hidden="true"></i> Subir archivos seleccionados
-    </button>
-  </div>
-  <button id="btnIndexSessionAttachments" class="btn btn-sm btn-outline-success w-100 mt-2 mb-2" type="button" title="Indexar adjuntos pendientes de esta conversación">
-    <i class="fas fa-sync-alt" aria-hidden="true"></i> Indexar pendientes de esta conversación
-  </button>
-  <div class="chat-attachment-mode mb-2" style="font-size:0.75rem;">
-    <label class="m-0 d-flex align-items-center" style="gap:6px; cursor:pointer;">
-        <input type="checkbox" id="chatAttachmentsRagMode"  title="Si está activo, solo se inyectan archivos relacionados con la pregunta." checked>
-        <small class="text-muted" style="font-size:0.65rem;">Usar adjuntos solo si son relevantes (RAG)</small>
-    </label>
-</div>
-
-</div>
-    <div id="chat2SourcesPanel" class="px-3 py-2 d-none" style="border-bottom: 1px solid var(--border, #333); background: rgba(255,255,255,0.02);">
-<div class="d-flex align-items-center">
-<h6 class="mb-0 small"><i class="fas fa-folder-open"></i> Fuentes del Proyecto (<span id="chat2SourcesCount">0</span>)</h6><p class="chat-files-scope-note">Disponibles para las conversaciones vinculadas a este proyecto.</p>
-<button id="chat2IndexPending" class="btn btn-sm btn-outline-success ml-2" title="Indexar archivos pendientes/desactualizados">
-<i class="fas fa-sync-alt"></i> Indexar
-</button>
-<button id="chat2SourcesAdd" class="btn btn-sm btn-outline-primary ml-auto" title="Agregar fuentes">
-<i class="fas fa-plus"></i>
-</button><button id="chat2SourcesRefresh" class="btn btn-sm btn-outline-secondary ml-1" title="Recargar">
-<i class="fas fa-sync"></i>
-</button>
-</div>
-<div id="chat2SourcesList" class="d-flex flex-wrap mt-1" style="max-height: 60px; overflow-y: auto; font-size:0.7rem; gap: 4px;"></div>
-</div>
-
-
-  </div>
-</aside>
-
 <!-- panel -->
 <div id="pane-Chat2" class="tab-pane show active">   
 <div class="card h-100 d-flex flex-column shadow-sm">
@@ -600,7 +507,8 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
   <div class="chat-composer-actions">
     <div class="chat-composer-tools-scroll" aria-label="Herramientas del chat">
       <div class="chat-composer-primary-tools">
-        <input id="chat2File" type="file" style="display:none" multiple accept="image/*,video/*,audio/*,text/plain,.txt,.md,.csv,.json,.xml,.log,application/pdf">
+        <input id="chat2File" type="file" hidden multiple accept=".php,.js,.ts,.py,.java,.c,.cpp,.cs,.go,.rs,.rb,.html,.css,.scss,.json,.xml,.yaml,.yml,.md,.txt,.sql,.sh,.bash,.pdf,.jpg,.jpeg,.png,.gif,.mp4,.webm,.mp3,.wav,.docx,.xlsx,.pptx" aria-label="Elegir archivos para adjuntar a la conversación">
+        <button id="chat2Attach" class="btn btn-sm btn-outline-secondary" type="button" title="Adjuntar archivos (subida e indexación RAG automática)" aria-label="Adjuntar archivos a la conversación"><i class="fas fa-paperclip" aria-hidden="true"></i></button>
         <button id="chat2BtnGenImg" class="btn btn-sm btn-outline-primary" title="Generar imagen" aria-label="Generar imagen"><i class="fas fa-image"></i></button>
         <button id="chat2BtnGenVid" class="btn btn-sm btn-outline-primary" title="Generar video" aria-label="Generar video"><i class="fas fa-film"></i></button>
         <button id="chat2BtnSonic" class="btn btn-sm btn-outline-secondary" title="Voz" aria-label="Voz"><i class="fas fa-microphone"></i></button>
@@ -842,7 +750,7 @@ role="progressbar" style="width: 0%">0%</div>
 <!-- Preferencias primero: expone chatPreferencesReady/modelo antes de crear sesiones. -->
 <script src="js/user_preferences.js"></script>
 <!-- chat.js administra sesiones/proyectos y exporta window.chatUtils. -->
-<script src="js/chat.js?v=20261023-unified-file-drawer"></script>
+<script src="js/chat.js?v=20261023-direct-upload-rag"></script>
 <!-- El micrófono utiliza Nova 2 Sonic: cargar su controlador tras chat.js. -->
 <script src="js/chat-voice.js?v=20261023-sonic-diagnostics"></script>
 <script src="js/context-viewer.js"></script> 
