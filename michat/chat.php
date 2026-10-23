@@ -569,17 +569,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <div id="chat2SourcesList" class="d-flex flex-wrap mt-1" style="max-height: 60px; overflow-y: auto; font-size:0.7rem; gap: 4px;"></div>
 </div>
 
-<div id="chat2AttachmentsPanel" class="px-3 py-2 d-none" style="border-bottom: 1px solid var(--border, #333); background: rgba(255,255,255,0.02);">
-<div class="d-flex align-items-center">
-<h6 class="mb-0 small"><i class="fas fa-paperclip"></i> Adjuntos de Sesión (<span id="chat2AttachmentsCount">0</span>)</h6>
-<button id="chat2AttachmentsAdd" class="btn btn-sm btn-outline-primary ml-auto" title="Agregar adjuntos">
-<i class="fas fa-plus"></i>
-</button><button id="chat2AttachmentsRefresh" class="btn btn-sm btn-outline-secondary ml-1" title="Recargar">
-<i class="fas fa-sync"></i>
-</button>
-</div>
-<div id="chat2AttachmentsList" class="d-flex flex-wrap mt-1" style="max-height: 60px; overflow-y: auto; font-size:0.7rem; gap: 4px;"></div>
-</div>
+
   </div>
 </aside>
 
