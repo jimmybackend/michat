@@ -345,7 +345,7 @@ final class ContextRanker
             if (mb_strlen($part, 'UTF-8') < 3 || isset($stop[$part])) continue;
             $out[$part] = true;
         }
-        return array_keys($out);
+        return array_map('strval',array_keys($out));
     }
 
     /** @param string[] $queryTerms */

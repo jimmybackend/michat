@@ -188,9 +188,9 @@ for ($i = 0; $i < $count; $i++) {
             'ruta' => $result['ruta'] ?? $rutaDestino,
             'created_at' => date('Y-m-d H:i:s'),
             'knowledge' => $knowledge,
-            'knowledge_status' => !empty($knowledge['index']['truncated']) ? 'extraction_partial'
+            'knowledge_status' => !empty($knowledge['queued']) ? 'queued' : (!empty($knowledge['index']['truncated']) ? 'extraction_partial'
                 : (!empty($knowledge['ready_for_attachment_rag']) ? 'ready'
-                : (!empty($knowledge['ok']) ? 'pending_embedding' : 'needs_attention')),
+                : (!empty($knowledge['ok']) ? 'pending_embedding' : 'needs_attention'))),
             'version_of_files3_id' => $versionParentId > 0 ? $versionParentId : null,
             'revision_number' => $versionParent ? $versionNumber : 1,
         ];

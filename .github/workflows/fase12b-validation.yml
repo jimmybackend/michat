@@ -140,3 +140,35 @@ jobs:
             echo "Production database snapshots must not be committed."
             exit 1
           fi
+
+  document-migration-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: isolated-document-test
+          MYSQL_ROOT_HOST: '%'
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -pisolated-document-test"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    env:
+      TASK_TEST_DB_HOST: 127.0.0.1
+      TASK_TEST_DB_PORT: 3306
+      TASK_TEST_DB_USER: root
+      TASK_TEST_DB_PASSWORD: isolated-document-test
+      TASK_TEST_DB_ALLOW_DESTRUCTIVE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mysqli, mbstring
+          coverage: none
+      - name: Real migration baseline, upgrade, history and idempotency
+        run: |
+          php michat/tests/migration_runner_mysql_test.php
+          php michat/tests/supported_upgrade_mysql_test.php

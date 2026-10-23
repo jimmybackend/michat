@@ -31,5 +31,22 @@ if($files){
  $jq=$db_connection->prepare("SELECT ej.target_id,ej.status FROM EmbeddingJobs ej JOIN SessionContextBlocks scb ON scb.id_=ej.target_id WHERE ej.target_type='session_block' AND scb.session_id_=? AND scb.block_type IN ('file','file_chunk') AND ej.status IN ('pending','processing')");if($jq){$jq->bind_param('i',$sessionId);$jq->execute();$jr=$jq->get_result();$pendingIds=[];while($x=$jr->fetch_assoc())$pendingIds[(int)$x['target_id']]=true;$jq->close();if($pendingIds){$qq=$db_connection->prepare("SELECT id_,s3_path,source_ids FROM SessionContextBlocks WHERE session_id_=? AND block_type IN ('file','file_chunk')");$qq->bind_param('i',$sessionId);$qq->execute();$qr=$qq->get_result();while($b=$qr->fetch_assoc()){if(!isset($pendingIds[(int)$b['id_']]))continue;$meta=json_decode((string)$b['source_ids'],true);$fid=(int)($meta['files3_id']??0);if(!$fid&&isset($byKey[(string)$b['s3_path']]))$fid=$byKey[(string)$b['s3_path']];if($fid&&isset($files[$fid]))$files[$fid]['chunks_pending']++;}$qq->close();}}
 }
 foreach($files as &$f){$f['embedding_models']=array_keys($f['embedding_models']);$hasOtherModel=$currentEmbeddingModel!==''&&count($f['embedding_models'])>0&&!in_array($currentEmbeddingModel,$f['embedding_models'],true);if($f['chunks_total']>0&&!$embeddingActive)$f['index_status']='embedding_disabled';elseif($f['chunks_pending']>0)$f['index_status']='processing';elseif($f['chunks_total']>0&&$f['chunks_with_embedding']===$f['chunks_total'])$f['index_status']='indexed';elseif($f['chunks_total']>0&&$hasOtherModel)$f['index_status']='stale_embedding';elseif($f['chunks_total']>0)$f['index_status']='chunks_without_embedding';if($f['extraction_partial'])$f['index_status']='extraction_partial';if($f['semantic_exists']&&!$embeddingActive)$f['semantic_status']='embedding_disabled';elseif($f['semantic_exists']&&$f['semantic_embedding_ready'])$f['semantic_status']='ready';elseif($f['semantic_exists']&&$hasOtherModel)$f['semantic_status']='stale_embedding';elseif($f['semantic_exists'])$f['semantic_status']='pending_embedding';else$f['semantic_status']='none';}unset($f);
+// The central source is shared across chats; each listing still validates the live binding.
+if (getenv('MICHAT_DOCUMENT_KNOWLEDGE_ENABLED')==='1') {
+ require_once __DIR__.'/includes/Documents/CentralDocumentIndex.php';
+ $centralIndex=new CentralDocumentIndex($db_connection);
+ foreach($centralIndex->sources($owner,$sessionId,$session,false) as $fid=>$source) {
+  if(!isset($files[$fid]))continue;
+  $state=$centralIndex->status($source,$currentEmbeddingModel);
+  $files[$fid]['central_knowledge']=$state;
+  $files[$fid]['chunks_total']=$state['chunks_total'];
+  $files[$fid]['chunks_with_embedding']=$state['chunks_with_embedding'];
+  $files[$fid]['extraction_partial']=$state['coverage']==='partial';
+  $jobStatus=$state['job']['status']??'pending';
+  $vectorsCurrent=$state['chunks_total']>0&&$state['chunks_with_embedding']===$state['chunks_total'];
+  $files[$fid]['index_status']=($jobStatus==='failed'?'processing_failed':($jobStatus==='blocked'||!$embeddingActive?'embedding_disabled':($jobStatus==='completed'?($vectorsCurrent?($state['coverage']==='partial'?'extraction_partial':'indexed'):'stale_embedding'):'queued')));
+  $files[$fid]['chunks_pending']=max(0,$state['chunks_total']-$state['chunks_with_embedding']);
+ }
+}
 $_SESSION['chat_session_id']=$sessionId;
 jexit(['ok'=>true,'session_id'=>$sessionId,'prefix_pattern'=>$pattern,'embedding_active'=>$embeddingActive,'current_embedding_model'=>$currentEmbeddingModel?:null,'count'=>count($files),'files'=>array_values($files)]);

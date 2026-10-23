@@ -1,0 +1,22 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const source=fs.readFileSync(__dirname+'/../js/chat.js','utf8');
+const begin=source.indexOf('let documentKnowledgeRefreshTimer = null;');
+const end=source.indexOf('// Drive links reuse the existing S3 object.',begin);
+assert(begin>0&&end>begin);
+let next=0,refreshes=0;const timers=new Map();
+const drawer={hidden:false};
+const sandbox={currentSessionId:7,document:{getElementById(){return drawer;}},setTimeout(fn){timers.set(++next,fn);return next;},clearTimeout(id){timers.delete(id);},loadSessionAttachments(){refreshes++;}};
+function fire(){const fn=timers.get(next);timers.delete(next);fn();}
+vm.createContext(sandbox);vm.runInContext(source.slice(begin,end),sandbox);
+sandbox.scheduleDocumentKnowledgeRefresh([{central_knowledge:{job:{status:'pending'}}}],7);
+assert.strictEqual(timers.size,1);fire();assert.strictEqual(refreshes,1);
+sandbox.scheduleDocumentKnowledgeRefresh([{central_knowledge:{job:{status:'running'}}}],7);
+sandbox.currentSessionId=8;fire();assert.strictEqual(refreshes,1,'Old conversation is never refreshed');
+sandbox.currentSessionId=7;drawer.hidden=true;
+sandbox.scheduleDocumentKnowledgeRefresh([{central_knowledge:{job:{status:'retry'}}}],7);
+fire();assert.strictEqual(refreshes,1,'Closed drawer does not keep polling');
+sandbox.scheduleDocumentKnowledgeRefresh([{central_knowledge:{job:{status:'completed'}}}],7);
+assert.strictEqual(timers.has(next),false,'Completed jobs stop polling');
+assert(!source.slice(begin,end).includes('loadMessages'),'Queue polling does not refresh conversation');
+console.log('Document queue UI: bounded polling, conversation switch, close and completion passed');

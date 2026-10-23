@@ -34,7 +34,8 @@ final class AttachmentEvidence
     {
         $meta = json_decode((string)($row['source_ids'] ?? ''), true) ?: [];
         $location = (array)($meta['locator'] ?? []);
-        $parts = ['SCB:' . (int)$row['id_'], (string)($meta['filename'] ?? 'adjunto')];
+        $prefix=($row['source_table']??'')==='DocumentKnowledgeChunks'?'DKC:':'SCB:';
+        $parts = [$prefix . (int)$row['id_'], (string)($meta['filename'] ?? 'adjunto')];
         if (isset($location['page'])) $parts[] = 'página ' . (int)$location['page'];
         if (isset($location['slide'])) $parts[] = 'diapositiva ' . (int)$location['slide'];
         if (isset($location['slide_part'])) $parts[] = 'parte interna ' . $location['slide_part'] . '; posición no verificada';

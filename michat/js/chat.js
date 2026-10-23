@@ -4101,6 +4101,8 @@ async function loadSessionAttachments(sessionId) {
     }
 
     const files = Array.isArray(j.files) ? j.files : [];
+    if (Number(currentSessionId) !== Number(sessionId)) return;
+    scheduleDocumentKnowledgeRefresh(files,sessionId);
     sessionAttachments = files;
     updateKnowledgePipelineSummary(files);
 
@@ -4186,10 +4188,11 @@ async function loadSessionAttachments(sessionId) {
           </div>
 
           <div class="chat-session-file-index-state" style="font-size:.62rem; margin:.2rem 0; display:flex; gap:.25rem; flex-wrap:wrap;">
-            ${file.index_status === 'extraction_partial' ? '<span class="badge badge-warning">Extracción parcial · consultar con límites</span>' : file.index_status === 'indexed' ? '<span class="badge badge-success">RAG listo</span>' : file.index_status === 'embedding_disabled' ? '<span class="badge badge-secondary">Embeddings desactivados</span>' : file.index_status === 'processing' ? '<span class="badge badge-warning">Embedding pendiente</span>' : file.index_status === 'stale_embedding' ? '<span class="badge badge-danger">Reindexar · modelo cambió</span>' : file.chunks_total > 0 ? '<span class="badge badge-warning">Chunks sin vector</span>' : '<span class="badge badge-secondary">Sin indexar</span>'}
+            ${file.index_status === 'queued' ? '<span class="badge badge-info">Procesamiento en cola / en curso</span>' : file.index_status === 'processing_failed' ? '<span class="badge badge-danger">Fallo de procesamiento · reintentar</span>' : file.index_status === 'extraction_partial' ? '<span class="badge badge-warning">Extracción parcial · consultar con límites</span>' : file.index_status === 'indexed' ? '<span class="badge badge-success">RAG listo</span>' : file.index_status === 'embedding_disabled' ? '<span class="badge badge-secondary">Embeddings desactivados</span>' : file.index_status === 'processing' ? '<span class="badge badge-warning">Embedding pendiente</span>' : file.index_status === 'stale_embedding' ? '<span class="badge badge-danger">Reindexar · modelo cambió</span>' : file.chunks_total > 0 ? '<span class="badge badge-warning">Chunks sin vector</span>' : '<span class="badge badge-secondary">Sin indexar</span>'}
             ${file.semantic_status === 'ready' ? '<span class="badge badge-info">Semántica lista</span>' : file.semantic_status === 'embedding_disabled' ? '<span class="badge badge-secondary">Semántica sin vector</span>' : file.semantic_status === 'pending_embedding' ? '<span class="badge badge-warning">Semántica pendiente</span>' : file.semantic_status === 'stale_embedding' ? '<span class="badge badge-danger">Semántica requiere nuevo embedding</span>' : ''}
           </div>
 
+          ${file.central_knowledge ? `<div class="chat-session-file-meta">Fase: ${esc(({extract:'Extracción',chunks:'Generación de fragmentos',embeddings:'Embeddings'})[file.central_knowledge.job?.phase] || '')} · ${Number(file.central_knowledge.chunks_done || 0)}/${Number(file.central_knowledge.chunks_total || 0)} chunks · ${Number(file.central_knowledge.extracted_chars || 0)} caracteres ${file.central_knowledge.job?.error_message ? ' · ' + esc(file.central_knowledge.job.error_message) : ''}</div>` : ''}
           <div class="chat-session-file-actions">
             <button type="button" class="chat-file-action" title="Ver archivo"
               data-action="view" data-file-id="${fileId}"
@@ -4809,6 +4812,18 @@ window.chatUtils = {
     buildS3Url: buildS3Url,
     mdToHtml: mdToHtml
 };
+let documentKnowledgeRefreshTimer = null;
+function scheduleDocumentKnowledgeRefresh(files, sid) {
+  if (documentKnowledgeRefreshTimer) clearTimeout(documentKnowledgeRefreshTimer);
+  documentKnowledgeRefreshTimer = null;
+  if (!files.some(f => f.central_knowledge && ['pending','retry','running'].includes(f.central_knowledge.job?.status))) return;
+  documentKnowledgeRefreshTimer = setTimeout(() => {
+    documentKnowledgeRefreshTimer = null;
+    const drawer = document.getElementById('chatFilesDrawer');
+    if (Number(currentSessionId) === Number(sid) && drawer && !drawer.hidden) loadSessionAttachments(sid);
+  },5000);
+}
+
 // Drive links reuse the existing S3 object. Searching/linking never reloads chat messages.
 let driveKnowledgeCsrf = '';
 document.getElementById('driveKnowledgeSearch')?.addEventListener('submit', async event => {

@@ -32,6 +32,11 @@ final class SessionAttachmentKnowledgeService
     {
         $this->loadRuntime($userId);
         $file = $this->ownedFile($userId, $sessionId, $fileId);
+        if (getenv('MICHAT_DOCUMENT_KNOWLEDGE_ENABLED')==='1') {
+            require_once __DIR__.'/Documents/DocumentKnowledgeService.php';
+            require_once __DIR__.'/Documents/BedrockDocumentKnowledgeRuntime.php';
+            return (new DocumentKnowledgeService($this->db,new BedrockDocumentKnowledgeRuntime($this->db)))->enqueue($userId,$sessionId,$fileId);
+        }
         $extracted = idx_extract_files3_text($file, IDX_MAX_EXTRACTED_CHARS);
         $index = $this->indexPrepared($sessionId, $fileId, $file, $extracted);
 
@@ -77,6 +82,19 @@ final class SessionAttachmentKnowledgeService
         $extracted = idx_extract_files3_text($file, $maxChars);
 
         return $this->semanticPrepared($sessionId, $fileId, $file, $extracted);
+    }
+
+    /** Shared embedding adapter for central jobs; never silently truncates a chunk. */
+    public function vectorizeDocumentChunk(int $userId,string $text,string $expectedModel): array
+    {
+        $this->loadRuntime($userId);
+        $state=$this->embeddingState();
+        if (!$state['active'] || $state['model']!==$expectedModel) throw new RuntimeException('Configuración de embedding cambió; solicita reintentar el documento');
+        $isCohere3=str_contains(strtolower($expectedModel),'cohere.embed-') && str_contains(strtolower($expectedModel),'v3');
+        $max=max(100,(int)aiAgentExtra('embedding_main','input_max_chars',$isCohere3?2048:8000));
+        if ($isCohere3) $max=min($max,2048);
+        if (mb_strlen($text)>$max) throw new RuntimeException('El chunk excede el límite configurado del modelo; no se vectorizó un prefijo');
+        return $this->generateEmbedding($text,$expectedModel,'search_document');
     }
 
     private function loadRuntime(int $userId): void

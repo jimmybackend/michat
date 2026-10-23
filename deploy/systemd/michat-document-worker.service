@@ -1,0 +1,22 @@
+[Unit]
+Description=MiChat central document knowledge bounded worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Review User/Group and paths against the actual production service before installing.
+User=apache
+Group=apache
+WorkingDirectory=/var/www/michat
+EnvironmentFile=-/etc/michat/document-worker.env
+Environment=MICHAT_DOCUMENT_KNOWLEDGE_ENABLED=1
+ExecStart=/usr/bin/php /var/www/michat/michat/bin/document_knowledge_worker.php --max-batches=12
+TimeoutStartSec=30min
+MemoryMax=512M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/tmp
+UMask=0077

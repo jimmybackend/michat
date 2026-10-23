@@ -130,7 +130,7 @@ final class RankingPolicy
         if ($item->source === 'ChatSessions' && $item->type === 'context_summary') return 0.76;
         if ($item->source === 'ChatMessages') return 0.70;
 
-        if ($item->source === 'SessionContextBlocks') {
+        if ($item->source === 'SessionContextBlocks' || $item->source === 'DocumentKnowledgeChunks') {
             if ($item->scope === 'session_attachment') return 0.84;
             if ($item->type === 'qa_memory') return 0.80;
             return match ($item->type) {
