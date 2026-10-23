@@ -90,3 +90,45 @@ Entre las pruebas que protegen este flujo se encuentran:
 - **Revisiones de código de un chat libre**: botón "nueva versión" sube un archivo corregido a un objeto S3 distinto, guardando `version_of_files3_id` y `revision_number` en `FileS3.Metadatos`, sin sobrescribir ni destruir el anterior. Para archivos de proyecto, `FileVersions` continúa siendo la tabla de auditoría del flujo `code_edit` y requiere `project_id_`.
 - **Límites**: el extractor procesa hasta `IDX_MAX_EXTRACTED_CHARS` (actualmente 200.000 caracteres) y divide en chunks de tamaño acotado. El análisis de imagen requiere el modelo visual activo. Si `embedding_main`, IA semántica o AWS no están disponibles, la subida a S3 puede completarse mientras el análisis queda parcial o pendiente. No reportar una indexación completa hasta comprobar el estado; los jobs de `EmbeddingJobs` se procesan desde Mantenimiento.
 - **Comparación/edición**: el modelo responde basándose en fragmentos disponibles; no modifica automáticamente código en S3 tras sugerir mejoras. Para guardar la revisión se debe subir el archivo revisado o usar el flujo de edición/versiones autorizado en un proyecto.
+
+
+## Cobertura multiformato y preparación para ArcadeCloud (2026-10-22)
+
+La cobertura nunca debe anunciarse como universal: un archivo binario cualquiera puede
+requerir lector propio, modelo visual o conversor externo. El almacenamiento en S3
+no demuestra que se haya extraído todo el contenido o que el RAG esté listo.
+
+| Entrada | Lectura | Requisitos y límites |
+|---|---|---|
+| TXT, MD, JSON/JSONL, NDJSON, CSV/TSV, XML, YAML, SQL, código fuente | UTF-8 normalizado; chunks con límite estricto (incluidas líneas enormes) | Texto real, no contenido binario disfrazado |
+| PDF | smalot/pdfparser o pdftotext; Textract como respaldo | Si es PDF escaneado, Textract y permisos AWS; no todos los PDF son extraíbles |
+| PPTX/PPSX | ZIP/XML, diapositivas y notas | ZipArchive de PHP; gráficos y contenido visual sin texto pueden requerir visión |
+| XLSX/XLSM | ZIP/XML; direcciones de celdas, valores cacheados y fórmulas | ZipArchive; los cálculos NO se ejecutan |
+| DOCX, ODT/ODS/ODP, EPUB, RTF | Extractores de texto del servidor | Según formato y extensiones instaladas |
+| DOC/XLS/PPT heredados | antiword, catdoc, xls2csv, catppt o LibreOffice | Solo si el conversor está instalado |
+| .db, .sqlite, .sqlite3 | SQLite3 de solo lectura; esquema y muestra con referencias de tabla/fila | Extensión PHP sqlite3; muestra acotada a 50 tablas, 40 filas, 24 columnas y 1500 caracteres por celda. Se etiqueta MUESTRA PARCIAL cuando se detecta omisión. No incluye bases Access, MySQL u otros formatos solo por usar .db |
+| PNG/JPG/GIF/WEBP | SessionImageKnowledgeService | Modelo visual habilitado y permisos |
+| MP3/WAV/MP4/WEBM y archivos desconocidos | Pueden almacenarse pero NO se consideran texto indexado automáticamente | Requieren ASR/visión/conversores especializados; no afirmar que embeddings estén listos |
+
+IDX_MAX_EXTRACTED_CHARS sigue limitando a 200.000 caracteres por objeto:
+cuando se excede se registra truncated=true. En la ruta SQLite la muestra
+también se marca como parcial cuando hay omisiones. No prometer cobertura
+integral de libros, tablas o bases enormes sin un pipeline paginado/asíncrono
+con métricas de progreso y reintentos.
+
+El indexador existente crea chunks y SessionContextBlocks, intenta
+embeddings inmediatos si embedding_main está activo y encola EmbeddingJobs
+para pendientes. El resumidor semántico se ejecuta en su ruta de configuración
+independiente. Distinguir expresamente **guardado en S3**, **texto extraído**,
+**chunks generados**, **semántica generada**, **embedding listo** y
+**recuperado como contexto de una respuesta**; son estados diferentes.
+
+La futura conexión a ArcadeCloud Drive no debe permitir búsqueda global
+sobre todos los archivos del bucket. Resolver primero permisos del usuario,
+propietario y ACL/compartición de Drive, por cada archivo, antes de extraer o
+recuperar información. Para adjuntos actuales, la validación utiliza
+ChatSessions.user_id_ y el propietario/ruta de FileS3.
+
+Pruebas de regresión: php michat/tests/multiformat_rag_extractor_test.php,
+php michat/tests/xlsx_column_preservation_test.php y
+php michat/tests/session_attachment_auto_knowledge_test.php.
