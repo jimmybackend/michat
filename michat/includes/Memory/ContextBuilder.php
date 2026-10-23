@@ -341,6 +341,16 @@ final class ContextBuilder
         // 9) Bloques finales: sólo ContextItem seleccionados por Ranking.
         // -------------------------------------------------------------
         $this->formatBlocks($bundle);
+        if ($explicitFileQuestion && $features['attachment_rag']
+            && !$hasAttachments && $projectId <= 0) {
+            // Evitar respuestas imaginadas cuando el archivo sólo se guardó en
+            // S3 pero no tiene fragmentos indexados, o nunca llegó a subirse.
+            $bundle->setBlock(
+                'attachment_context_block',
+                '[ESTADO DE ARCHIVOS] No existen fragmentos o resúmenes de adjuntos indexados para esta conversación. '
+                . 'No afirmes haber leído un archivo. Pide comprobar la subida y el estado 🧠 de indexación/embeddings.'
+            );
+        }
 
         $bundle->setTelemetry('builder', [
             'stage' => 'respond',
