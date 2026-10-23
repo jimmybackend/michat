@@ -113,6 +113,8 @@
     let isSending = false;
     let pendingFiles = [];
     let sessionAttachments = [];
+    let versionUploadParentId = 0;
+    let compareFilesSelected = [];
     let currentMemoryScope = null;
     let fileIdSeq = 1;
 
@@ -1575,6 +1577,7 @@ function renderSessionsList() {
         await discardEmptySession(previousSessionId, { silent:true, keepCurrent:true });
       }
       currentSessionId = id;
+      compareFilesSelected = [];
       // Una búsqueda (incluso autocompletada por el navegador) puede ocultar
       // todas las conversaciones. Al abrir una, restaurar el listado completo.
       const sessionSearch = el.sbChatSearch || el.search;
@@ -1845,6 +1848,46 @@ function wireFileActions(container) {
             '🧠 Semántica',
             btn
           );
+          break;
+        case 'ask':
+          if (!currentSessionId) return;
+          el.input.value = 'Analiza el archivo "' + filename + '". Explica de qué trata, qué contiene, dónde se encuentra cada dato relevante, y cita el nombre del archivo y los fragmentos. Si no está indexado o falta contexto, indícalo sin inventar.';
+          closeChatFilesDrawer();
+          el.input.focus();
+          break;
+        case 'compare': {
+          if (!currentSessionId) return;
+          if (compareFilesSelected.some(x => x.id === fileId)) {
+            compareFilesSelected = compareFilesSelected.filter(x => x.id !== fileId);
+            showToast('Comparación', 'Archivo deseleccionado.', 'info');
+            return;
+          }
+          compareFilesSelected.push({id: fileId, filename});
+          if (compareFilesSelected.length < 2) {
+            showToast('Comparación', 'Selecciona un segundo archivo para compararlo.', 'info');
+            return;
+          }
+          const pair = compareFilesSelected.splice(0, 2);
+          el.input.value = 'Compara los archivos "' + pair[0].filename + '" y "' + pair[1].filename + '". Identifica coincidencias, diferencias, temas y referencias concretas a cada archivo. Si algún archivo no está indexado o falta contexto, dilo.';
+          closeChatFilesDrawer();
+          el.input.focus();
+          break;
+        }
+        case 'improve':
+          if (!currentSessionId) return;
+          el.input.value = 'Revisa el código del archivo "' + filename + '". Identifica errores, seguridad, rendimiento y pruebas. Propón una versión mejorada, explica los cambios y muestra código concreto. Conserva el original y no afirmes que guardaste una versión si no se ha subido realmente.';
+          closeChatFilesDrawer();
+          el.input.focus();
+          break;
+        case 'version':
+          if (currentSessionStatus !== 'open') {
+            showToast('Versiones', 'Restaura la conversación para añadir versiones.', 'warning');
+            return;
+          }
+          versionUploadParentId = fileId;
+          closeChatFilesDrawer();
+          showToast('Nueva versión', 'Selecciona el archivo revisado. La versión anterior seguirá intacta en S3.', 'info');
+          el.file?.click();
           break;
       }
     });
@@ -3493,10 +3536,11 @@ if (btnIndexPending) {
   btnIndexPending.addEventListener('click', indexPendingSources);
 }
     if (el.file) el.file.addEventListener('change', () => {
-      // No esperar a enviar un mensaje: subir y procesar RAG de inmediato.
       const selected = Array.from(el.file.files || []);
       el.file.value = '';
-      if (selected.length) uploadComposerFiles(selected);
+      const parentId = versionUploadParentId;
+      versionUploadParentId = 0;
+      if (selected.length) uploadComposerFiles(selected, parentId);
     });
     // Un único clip en el compositor. El selector nativo del navegador
     // permite adjuntar desde teléfono y escritorio.
@@ -3516,9 +3560,13 @@ if (btnIndexPending) {
       });
     }
 
-    async function uploadComposerFiles(selectedFiles) {
+    async function uploadComposerFiles(selectedFiles, parentFileId = 0) {
       const files = Array.from(selectedFiles || []);
       if (!files.length || composerUploadBusy) return;
+      if (parentFileId && files.length !== 1) {
+        showToast('Versiones', 'Selecciona exactamente un archivo para cada revisión.', 'warning');
+        return;
+      }
       if (currentSessionId && currentSessionStatus !== 'open') {
         showToast('Archivos', 'Restaura la conversación antes de subir archivos.', 'warning');
         return;
@@ -3542,6 +3590,7 @@ if (btnIndexPending) {
         setStatus('Subiendo e indexando ' + files.length + ' archivo(s) para RAG…');
         const fd = new FormData();
         fd.append('session_id', String(targetSessionId));
+        if (parentFileId) fd.append('version_of_file_id', String(parentFileId));
         for (const file of files) fd.append('files[]', file, file.name);
         const response = await fetch('session_upload.php', {
           method: 'POST', credentials: 'same-origin', body: fd
@@ -3554,12 +3603,20 @@ if (btnIndexPending) {
         if (!uploaded || data.success === false) {
           throw new Error(errors ? String(data.errors[0]).slice(0, 250) : 'No se pudo subir ningún archivo.');
         }
-        const description = uploaded + ' archivo(s) guardado(s) en la conversación. '
+        const issues = Array.isArray(data.knowledge_issues) ? data.knowledge_issues : [];
+        const pending = Math.max(0, Number(data.embedding_pending || 0));
+        const truncated = (Array.isArray(data.uploaded) ? data.uploaded : [])
+          .filter(x => x.knowledge?.index?.truncated === true).length;
+        const description = uploaded + ' archivo(s) guardado(s) en S3. '
           + Math.min(ready, uploaded) + ' listo(s) para RAG.'
           + (errors ? ' ' + errors + ' archivo(s) fallaron.' : '')
-          + (ready < uploaded ? ' Algunos requieren revisión de indexación.' : '');
+          + (pending ? ' ' + pending + ' con embeddings pendientes.' : '')
+          + (truncated ? ' ' + truncated + ' archivo(s) tienen índice parcial por límite de extracción.' : '')
+          + (issues.length ? ' ' + issues.length + ' requieren análisis manual.' : '')
+          + (ready < uploaded && !pending && !issues.length ? ' Revisa el estado del índice en 🧠.' : '');
         if (Number(currentSessionId) === targetSessionId) setStatus(description);
         showToast('Adjuntos de conversación', esc(description), ready === uploaded && errors === 0 ? 'success' : 'warning');
+        if (issues.length) showToast('🧠 Indexación', esc(issues[0].message || 'Faltan datos de análisis automático'), 'warning');
         // La API session_upload.php ya invoca SessionAttachmentKnowledgeService
         // o SessionImageKnowledgeService. No hacer una segunda indexación.
         if (Number(currentSessionId) === targetSessionId) await loadSessionAttachments(targetSessionId);
@@ -4067,6 +4124,10 @@ async function loadSessionAttachments(sessionId) {
       // Icono según extensión
       const extension = (file.filename || '').split('.').pop().toLowerCase();
       const canIndexText = INDEXABLE_SESSION_EXTS.has(extension);
+      const isCodeFile = CODE_EXTS.includes(extension);
+      const metadata = file.metadata && typeof file.metadata === 'object' ? file.metadata : {};
+      const revision = Number(metadata.revision_number || 1);
+      const olderFileId = Number(metadata.version_of_files3_id || 0);
       let fileIcon = 'fa-file';
       if (extension === 'pdf') fileIcon = 'fa-file-pdf';
       else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(extension)) fileIcon = 'fa-file-image';
@@ -4089,7 +4150,7 @@ async function loadSessionAttachments(sessionId) {
               <div class="chat-session-file-meta">
                 ${dateLabel}
                 ·
-                ${sizeLabel}
+                ${sizeLabel} ${revision > 1 ? ' · Revisión v' + revision : ''} ${olderFileId ? ' · anterior #' + olderFileId : ''}
               </div>
             </div>
           </div>
@@ -4122,6 +4183,18 @@ async function loadSessionAttachments(sessionId) {
               <i class="fas fa-brain"></i>
             </button>` : ''}
 
+            <button type="button" class="chat-file-action" title="Preguntar a la IA por este archivo" aria-label="Preguntar sobre ${filename}"
+              data-action="ask" data-file-id="${fileId}" data-filename="${filename}">
+              <i class="fas fa-comment-dots"></i>
+            </button>
+            <button type="button" class="chat-file-action" title="Comparar con otro archivo (selecciona dos)" aria-label="Comparar ${filename}"
+              data-action="compare" data-file-id="${fileId}" data-filename="${filename}">
+              <i class="fas fa-exchange-alt"></i>
+            </button>
+            ${isCodeFile ? `<button type="button" class="chat-file-action" title="Pedir mejoras y revisión de código a la IA"
+              data-action="improve" data-file-id="${fileId}" data-filename="${filename}"><i class="fas fa-code"></i></button>
+              <button type="button" class="chat-file-action" title="Subir una nueva versión de este código sin sobrescribir el original"
+              data-action="version" data-file-id="${fileId}" data-filename="${filename}"><i class="fas fa-code-branch"></i></button>` : ''}
             <button type="button" class="chat-file-action chat-file-action-danger" title="Eliminar archivo"
               data-action="delete" data-file-id="${fileId}">
               <i class="fas fa-trash"></i>

@@ -41,15 +41,17 @@ try {
     $isImage = $imageService->supports($userId, $sessionId, $fileId);
     $result = $isImage
         ? $imageService->process($userId, $sessionId, $fileId)
-        : (new SessionAttachmentKnowledgeService($db_connection))->index($userId, $sessionId, $fileId);
+        : (new SessionAttachmentKnowledgeService($db_connection))->process($userId, $sessionId, $fileId);
     indexSessionFileExit($result + [
         'mensaje' => $isImage
             ? (!empty($result['embedding_ready'])
                 ? 'Imagen analizada y embedding visual listo para RAG.'
                 : 'Imagen analizada. El embedding pendiente puede reintentarse desde Mantenimiento.')
-            : (!empty($result['embedding_ready'])
-                ? 'Archivo indexado y embeddings listos para RAG.'
-                : 'Archivo indexado. Los embeddings pendientes pueden reintentarse desde Mantenimiento.'),
+            : (!empty($result['ready_for_attachment_rag'])
+                ? 'Archivo indexado, semántica procesada y vectores disponibles para RAG.'
+                : (!empty($result['index']['ok'])
+                    ? 'Fragmentos guardados; los embeddings pueden estar pendientes en Mantenimiento.'
+                    : 'La indexación no se completó; revisa el estado del archivo.')),
     ]);
 } catch (InvalidArgumentException $e) {
     indexSessionFileExit(['ok'=>false,'error'=>$e->getMessage()], 400);

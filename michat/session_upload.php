@@ -50,7 +50,34 @@ if (($session['status'] ?? '') !== 'open') {
 }
 
 if (empty($_FILES['files']) || !isset($_FILES['files']['name']) || !is_array($_FILES['files']['name'])) {
-    sessionUploadExit(['ok'=>false,'error'=>'No se recibieron archivos'], 400);
+    $limit = (string)ini_get('post_max_size');
+    $received = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+    $hint = $received > 0 ? ' La petición puede haber superado post_max_size='.$limit.'.' : '';
+    sessionUploadExit(['ok'=>false,'error'=>'No se recibieron archivos.'.$hint], 413);
+}
+
+// Una revisión de archivo es otro objeto S3; el original nunca se sobrescribe.
+// FileVersions exige project_id_, por lo que el vínculo de los adjuntos de
+// conversaciones libres se conserva en FileS3.Metadatos.
+$versionParentId = (int)($_POST['version_of_file_id'] ?? 0);
+$versionParent = null;
+$versionNumber = 1;
+if ($versionParentId > 0) {
+    if (count($_FILES['files']['name']) !== 1) {
+        sessionUploadExit(['ok'=>false,'error'=>'Cada revisión debe contener exactamente un archivo'], 400);
+    }
+    $pattern = 'Data/Chat/Uploads/'.$userId.'/%/'.$sessionId.'/';
+    $parentStmt = $db_connection->prepare(
+        'SELECT id_,Nombre,Metadatos FROM FileS3 WHERE id_=? AND user_id_=? AND Found=1 AND Ruta LIKE ? LIMIT 1'
+    );
+    if (!$parentStmt) sessionUploadExit(['ok'=>false,'error'=>'No se pudo validar la versión original'], 500);
+    $parentStmt->bind_param('iis', $versionParentId, $userId, $pattern);
+    $parentStmt->execute();
+    $versionParent = $parentStmt->get_result()->fetch_assoc();
+    $parentStmt->close();
+    if (!$versionParent) sessionUploadExit(['ok'=>false,'error'=>'Archivo original fuera de esta conversación'], 403);
+    $parentMeta = json_decode((string)($versionParent['Metadatos'] ?? ''), true);
+    $versionNumber = max(2, min(100000, (int)($parentMeta['revision_number'] ?? 1) + 1));
 }
 
 $now = new DateTimeImmutable();
@@ -115,6 +142,28 @@ for ($i = 0; $i < $count; $i++) {
         }
         $fileId = (int)$result['id'];
 
+        if ($versionParent) {
+            $metaStmt = $db_connection->prepare('SELECT Metadatos FROM FileS3 WHERE id_=? AND user_id_=? LIMIT 1');
+            if (!$metaStmt) throw new RuntimeException('No se pudieron recuperar los metadatos de versión');
+            $metaStmt->bind_param('ii', $fileId, $userId);
+            $metaStmt->execute();
+            $metaRow = $metaStmt->get_result()->fetch_assoc();
+            $metaStmt->close();
+            $meta = json_decode((string)($metaRow['Metadatos'] ?? ''), true);
+            if (!is_array($meta)) $meta = [];
+            $meta['version_of_files3_id'] = $versionParentId;
+            $meta['revision_number'] = $versionNumber;
+            $meta['previous_filename'] = (string)$versionParent['Nombre'];
+            $encoded = json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($encoded === false) throw new RuntimeException('No se pudo serializar el historial del archivo');
+            $metaStmt = $db_connection->prepare('UPDATE FileS3 SET Metadatos=? WHERE id_=? AND user_id_=?');
+            if (!$metaStmt) throw new RuntimeException('No se pudieron guardar los metadatos de versión');
+            $metaStmt->bind_param('sii', $encoded, $fileId, $userId);
+            $saved = $metaStmt->execute();
+            $metaStmt->close();
+            if (!$saved) throw new RuntimeException('No se pudo registrar la versión nueva');
+        }
+
         try {
             $knowledge = SessionImageKnowledgeService::supportsFilename($originalName)
                 ? $imageKnowledgeService->process($userId, $sessionId, $fileId)
@@ -139,6 +188,10 @@ for ($i = 0; $i < $count; $i++) {
             'ruta' => $result['ruta'] ?? $rutaDestino,
             'created_at' => date('Y-m-d H:i:s'),
             'knowledge' => $knowledge,
+            'knowledge_status' => !empty($knowledge['ready_for_attachment_rag']) ? 'ready'
+                : (!empty($knowledge['ok']) ? 'pending_embedding' : 'needs_attention'),
+            'version_of_files3_id' => $versionParentId > 0 ? $versionParentId : null,
+            'revision_number' => $versionParent ? $versionNumber : 1,
         ];
     } catch (Throwable $e) {
         $errors[] = "Error subiendo {$originalName}: {$e->getMessage()}";
@@ -147,8 +200,17 @@ for ($i = 0; $i < $count; $i++) {
 }
 
 $ready = 0;
+$indexed = 0;
+$pending = 0;
+$knowledgeIssues = [];
 foreach ($uploaded as $file) {
     if (!empty($file['knowledge']['ready_for_attachment_rag'])) $ready++;
+    if (!empty($file['knowledge']['ok'])) $indexed++;
+    if (($file['knowledge_status'] ?? '') === 'pending_embedding') $pending++;
+    if (($file['knowledge_status'] ?? '') === 'needs_attention') {
+        $knowledgeIssues[] = ['file_id'=>(int)$file['id'],'filename'=>(string)$file['filename'],
+            'message'=>mb_substr((string)($file['knowledge']['error'] ?? $file['knowledge']['semantic']['error'] ?? 'El análisis automático falló'),0,250)];
+    }
 }
 
 sessionUploadExit([
@@ -158,5 +220,8 @@ sessionUploadExit([
     'errors' => $errors,
     'ruta_destino' => $rutaDestino,
     'knowledge_ready' => $ready,
+    'knowledge_indexed' => $indexed,
+    'embedding_pending' => $pending,
+    'knowledge_issues' => $knowledgeIssues,
     'message' => count($uploaded) . ' archivo(s) subido(s); ' . $ready . ' listo(s) para búsqueda semántica/RAG.',
 ]);

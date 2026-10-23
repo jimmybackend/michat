@@ -28,7 +28,7 @@ final class ChatContextPreparationService
         $bundle=$this->builder->build(new MemoryRoute($route),[
             'stage'=>'respond','user_id'=>$request->userId,'session_id'=>$request->sessionId,
             'project_id'=>$projectId,'memory_scope'=>$scope,'query_text'=>$query,
-            'attachment_mode'=>'rag','question_memory_enabled'=>!empty($features['question_memory_read']),
+            'attachment_mode'=>$this->attachmentMode($request->userId,$request->sessionId),'question_memory_enabled'=>!empty($features['question_memory_read']),
             'question_memory_scope'=>$scope->semanticScope(),'log_message_id'=>$request->originMessageId,
             'pipeline_features'=>$features,
         ]);
@@ -40,4 +40,16 @@ final class ChatContextPreparationService
         foreach($keys as$key){$block=trim($bundle->block($key));if($block!=='')$blocks[]=$block;}
         return ['route'=>$route,'bundle'=>$bundle,'system_context'=>implode("\n\n",$blocks),'project_id'=>$projectId];
     }
+    private function attachmentMode(int $userId, int $sessionId): string
+    {
+        $stmt = $this->db->prepare('SELECT meta FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1');
+        if (!$stmt) return 'rag';
+        $stmt->bind_param('ii',$sessionId,$userId);
+        if (!$stmt->execute()) { $stmt->close(); return 'rag'; }
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $meta = json_decode((string)($row['meta'] ?? ''),true);
+        return is_array($meta) && (($meta['attachment_rag_mode'] ?? '') === 'always') ? 'always' : 'rag';
+    }
+
 }

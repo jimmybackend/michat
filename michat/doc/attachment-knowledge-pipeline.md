@@ -80,3 +80,13 @@ Entre las pruebas que protegen este flujo se encuentran:
 - `michat/tests/session_attachment_auto_knowledge_test.php`;
 - `michat/tests/session_attachment_image_vision_test.php`;
 - `michat/tests/attachment_vision_preferences_test.php`.
+
+
+## Operación desde Chat (2026-10-23)
+
+- **Clip inferior**: abre el selector, crea sesión cuando falta y usa `session_upload.php` para guardar objetos privados en S3 bajo `Data/Chat/Uploads/{user}/{YYYY}/{MM}/{DD}/{session}/`. El proyecto vinculado se obtiene de `ChatSessions.project_id_`, no se confunde con los ficheros del proyecto.
+- **🧠 Conocimiento de archivos**: recupera estado desde `chat2_session_files.php` y muestra nombre, chunks, embeddings y semántica; permite reintentar indexación (incluye semántica), volver a solicitar semántica, preguntar sobre un documento y comparar dos archivos desde el mismo chat.
+- **Preguntas explícitas** ("qué dice el archivo", explicación, comparaciones): el `ContextBuilder` fuerza recuperación del índice propio de la sesión cuando el Router la omite. Si el embedding de consulta no existe o no hay una coincidencia semántica, utiliza de forma acotada fragmentos indexados; jamás supone que un archivo en S3 ya fue analizado.
+- **Revisiones de código de un chat libre**: botón "nueva versión" sube un archivo corregido a un objeto S3 distinto, guardando `version_of_files3_id` y `revision_number` en `FileS3.Metadatos`, sin sobrescribir ni destruir el anterior. Para archivos de proyecto, `FileVersions` continúa siendo la tabla de auditoría del flujo `code_edit` y requiere `project_id_`.
+- **Límites**: el extractor procesa hasta `IDX_MAX_EXTRACTED_CHARS` (actualmente 200.000 caracteres) y divide en chunks de tamaño acotado. El análisis de imagen requiere el modelo visual activo. Si `embedding_main`, IA semántica o AWS no están disponibles, la subida a S3 puede completarse mientras el análisis queda parcial o pendiente. No reportar una indexación completa hasta comprobar el estado; los jobs de `EmbeddingJobs` se procesan desde Mantenimiento.
+- **Comparación/edición**: el modelo responde basándose en fragmentos disponibles; no modifica automáticamente código en S3 tras sugerir mejoras. Para guardar la revisión se debe subir el archivo revisado o usar el flujo de edición/versiones autorizado en un proyecto.
