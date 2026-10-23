@@ -14,7 +14,7 @@ try {
         $ownedFile=(new DocumentAccessRepository($db_connection))->requireFile($user,$session,$file);
         $state=(new AnalysisSidecarStore(Config::getS3(),Config::getBucket()))->read($ownedFile);
         if (!$state['analysis']) throw new RuntimeException('Aún no hay un análisis de esta revisión');
-        header("Content-Disposition: attachment; filename=\"michat-analysis-$file.json\"; filename*=UTF-8''".rawurlencode($ownedFile['Nombre'].'.michat-analysis.v1.json')); 
+        header("Content-Disposition: attachment; filename=\"michat-analysis-$file.json\"; filename*=UTF-8''".rawurlencode($ownedFile['Nombre'].'.michat-analysis.v1.json'));
         header('X-Content-Type-Options: nosniff');
         echo json_encode($state['document'],JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT);exit;
     }
