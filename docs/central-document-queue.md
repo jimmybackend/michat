@@ -101,4 +101,4 @@ Después de activar en un entorno autorizado:
 
 ## Rollback sin pérdida de información
 
-Desactivar el flag en web/CLI y detener el timer/worker documental si se instaló. Se vuelve a la ruta anterior y los índices/historial Fase 13 se conservan. Los originales S3 no cambian. No borrar tablas ni filas de SchemaMigrations. Restaurar código antiguo no exige destruir datos; para volver a activar, conservar el código/runner que conoce esta migración y comprobar `status` antes de arrancar el worker.
+Desactivar el flag en web/CLI y detener el timer/worker documental si se instaló. Se vuelve a la ruta anterior y los índices/historial Fase 13 se conservan. Los originales S3 no cambian. Los archivos indexados únicamente por el motor central deberán reindexarse por la ruta anterior si se necesita consultarlos mientras el flag está apagado. No borrar tablas ni filas de SchemaMigrations. Restaurar código antiguo no exige destruir datos; para volver a activar, conservar el código/runner que conoce esta migración y comprobar `status` antes de arrancar el worker.

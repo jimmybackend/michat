@@ -12,7 +12,20 @@ if($port===false||$port<1||$port>65535){fwrite(STDERR,"FAIL invalid TASK_TEST_DB
 $admin=new mysqli($host,$user,$password,'',(int)$port);$admin->set_charset('utf8mb4');$databases=[];$passed=0;$failed=0;
 $check=function(bool$ok,string$label)use(&$passed,&$failed){echo($ok?'PASS ':'FAIL ').$label."\n";$ok?$passed++:$failed++;};$quote=fn(string$v)=>'`'.str_replace('`','``',$v).'`';
 $connect=function(string$name)use($host,$port,$user,$password):mysqli{$db=new mysqli($host,$user,$password,$name,(int)$port);$db->set_charset('utf8mb4');return$db;};
-$create=function(string$suffix,string$file)use($admin,&$databases,$quote,$connect):mysqli{$name=externalMysqlTemporaryDatabaseName($suffix);$admin->query('CREATE DATABASE '.$quote($name).' CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci');$databases[]=$name;$db=$connect($name);$sql=(string)file_get_contents($file);$db->multi_query($sql);do{if($r=$db->store_result())$r->free();}while($db->more_results()&&$db->next_result());return$db;};
+$create=function(string$suffix,string$file)use($admin,&$databases,$quote,$connect):mysqli{
+ $name=externalMysqlTemporaryDatabaseName($suffix);$admin->query('CREATE DATABASE '.$quote($name).' CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci');$databases[]=$name;$db=$connect($name);
+ $sql=(string)file_get_contents($file);
+ $legacy=realpath($file)===realpath(__DIR__.'/fixtures/post_fase10d.sql');
+ foreach(SqlMigrationExecutor::splitStatements($sql)as$statement){
+  $result=$db->query($statement);if($result instanceof mysqli_result)$result->free();
+  // The immutable historical fixture has owner-1 preferences but deliberately omits real Users data.
+  // Supply its synthetic parent before adding the fixture FKs; never disable FK checks or edit fixture bytes.
+  if($legacy&&preg_match('/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?Users`?\s*\(/i',$statement)){
+   $db->query("INSERT INTO Users(id,firstname,lastname,curp,gender,email,password,role,chat,userstatus) VALUES (1,'Fixture','Owner','FIXTURE00000000001','Otro','owner@example.invalid','!disabled-test-password!','Otros',0,'Activo')");
+  }
+ }
+ return$db;
+};
 $runner=function(mysqli$db)use(&$root):array{$name=(string)$db->query('SELECT DATABASE() d')->fetch_assoc()['d'];$catalog=new MigrationCatalog();$repository=new SchemaMigrationRepository($db,$name);return[new MigrationRunner($catalog,$repository,new SqlMigrationExecutor($db)),$catalog,$repository];};
 $throws=function(callable$fn,string$needle)use($check):void{try{$fn();$check(false,$needle);}catch(Throwable$e){$check(str_contains($e->getMessage(),$needle),$needle);}};
 $current=$root.'/adbbmis1_Cloud.sql';$fixture=$root.'/michat/tests/fixtures/post_fase10d.sql';
