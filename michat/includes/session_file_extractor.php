@@ -640,6 +640,90 @@ function idx_extract_legacy_office(string $tmp, string $ext, string $filename, s
     return '';
 }
 
+/**
+ * Lee una base SQLite (extensiones .db/.sqlite/.sqlite3) SIN ejecutar SQL
+ * suministrado por el archivo ni escribir en él. La extracción es una muestra
+ * acotada, no una exportación completa: evita cargas excesivas en PHP-FPM.
+ * Bases Access, MySQL y otros formatos .db se rechazan explícitamente.
+ */
+function idx_extract_sqlite(string $tmp, string &$extractor, string &$error): string {
+    if (!class_exists('SQLite3')) {
+        $error = 'Falta extensión PHP sqlite3 para analizar bases SQLite.';
+        return '';
+    }
+    $head = @file_get_contents($tmp, false, null, 0, 16);
+    if ($head !== "SQLite format 3\x00") {
+        $error = 'El archivo .db no es una base SQLite reconocible. Otros motores requieren un extractor propio.';
+        return '';
+    }
+
+    $db = null;
+    try {
+        $db = new SQLite3($tmp, SQLITE3_OPEN_READONLY);
+        $db->busyTimeout(100);
+        $db->exec('PRAGMA query_only=ON');
+        $db->exec('PRAGMA trusted_schema=OFF');
+        $list = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name LIMIT 51");
+        if (!$list) throw new RuntimeException('No se pudo enumerar el esquema SQLite');
+
+        $out = ["[BASE SQLITE: esquema y muestra de datos de SOLO LECTURA]"];
+        $count = 0;
+        $partial = false;
+        $maxChars = 120000;
+        while (($tableRow = $list->fetchArray(SQLITE3_ASSOC)) !== false) {
+            if (++$count > 50) { $partial = true; break; }
+            $table = (string)$tableRow['name'];
+            $quoted = '"' . str_replace('"', '""', $table) . '"';
+            $columnRows = $db->query('PRAGMA table_info(' . $quoted . ')');
+            if (!$columnRows) continue;
+            $columns = [];
+            $types = [];
+            while (($c = $columnRows->fetchArray(SQLITE3_ASSOC)) !== false) {
+                $columns[] = (string)$c['name'];
+                $types[] = (string)$c['name'] . ' ' . (string)$c['type'];
+            }
+            if (!$columns) continue;
+            $out[] = "\n[Tabla: {$table}]";
+            $out[] = 'Columnas: ' . implode(' | ', $types);
+            // Leer un máximo de 40 filas y 24 columnas por tabla; los valores
+            // largos se acotan ANTES de devolverlos a PHP.
+            $selected = array_slice($columns, 0, 24);
+            if (count($columns) > 24) $partial = true;
+            $expr = [];
+            foreach ($selected as $col) {
+                $q = '"' . str_replace('"', '""', $col) . '"';
+                $expr[] = 'substr(CAST(' . $q . ' AS TEXT),1,1500) AS ' . $q;
+            }
+            $rows = $db->query('SELECT ' . implode(',', $expr) . ' FROM ' . $quoted . ' LIMIT 41');
+            if (!$rows) { $partial = true; continue; }
+            $rowNum = 0;
+            while (($row = $rows->fetchArray(SQLITE3_ASSOC)) !== false) {
+                if (++$rowNum > 40) { $partial = true; break; }
+                $values = [];
+                foreach ($selected as $col) {
+                    $v = $row[$col] ?? null;
+                    $v = $v === null ? 'NULL' : (string)$v;
+                    $v = idx_normalize_extracted_text($v);
+                    if ($v !== '') $values[] = $col . '=' . $v;
+                }
+                $out[] = '[Fila ' . $rowNum . '] ' . implode(' | ', $values);
+                if (strlen(implode("\n", $out)) > $maxChars) {
+                    $partial = true;
+                    break 2;
+                }
+            }
+        }
+        if ($partial) $out[] = '[MUESTRA PARCIAL: hay tablas, columnas, filas o valores no representados. No se debe afirmar que contiene todos los registros.]';
+        $extractor = 'sqlite3-readonly-sample';
+        return implode("\n", $out);
+    } catch (Throwable $e) {
+        $error = 'No se pudo inspeccionar SQLite de solo lectura: ' . $e->getMessage();
+        return '';
+    } finally {
+        if ($db instanceof SQLite3) $db->close();
+    }
+}
+
 function idx_extract_file(
     string $tmp,
     string $ext,
@@ -654,6 +738,12 @@ function idx_extract_file(
     $text = '';
 
     switch ($ext) {
+        case 'db':
+        case 'sqlite':
+        case 'sqlite3':
+            $text = idx_extract_sqlite($tmp, $extractor, $error);
+            break;
+
         case 'pdf':
             $text = idx_extract_pdf($tmp, $bucket, $s3Key, $extractor, $error);
             break;
@@ -838,7 +928,7 @@ function idx_text_extensions(): array {
 function idx_extractable_extensions(): array {
     return [
         'pdf','docx','dotx','xlsx','xlsm','xltx','xltm','pptx','ppsx',
-        'odt','ods','odp','rtf','epub','doc','xls','ppt'
+        'odt','ods','odp','rtf','epub','doc','xls','ppt','db','sqlite','sqlite3'
     ];
 }
 
@@ -922,7 +1012,9 @@ function idx_extract_s3_text(
             throw new RuntimeException($extractError ?: 'El archivo no contiene texto extraíble.');
         }
 
-        $truncated = false;
+        // La extracción SQLite es intencionadamente una muestra; identificar
+        // explícitamente la cobertura parcial, incluso sin exceder maxChars.
+        $truncated = strpos($content, '[MUESTRA PARCIAL:') !== false;
         if (mb_strlen($content) > $maxChars) {
             $content = trim(mb_substr($content, 0, $maxChars));
             $truncated = true;
