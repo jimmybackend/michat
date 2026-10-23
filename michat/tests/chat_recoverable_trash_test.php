@@ -27,7 +27,7 @@ $check(str_contains($chat, 'id="sbChatView"') && str_contains($chat, '<option va
 $check(str_contains($chat, 'id="chat2Delete"'), 'Existe acción Eliminar');
 $check(str_contains($js, 'API.deleteSession') && str_contains($js, 'async function doRestore('), 'Hay acciones AJAX para eliminar y recuperar');
 $check(str_contains($js, 'updateCurrentSessionState') && str_contains($js, 'Restaura esta conversación'), 'El visor bloquea escritura en archivo y papelera');
-$check(str_contains($send, "($sessionData['status'] ?? '') !== 'open'"), 'Bedrock rechaza mensajes a sesiones no activas');
+$check(str_contains($send, "(\$sessionData['status'] ?? '') !== 'open'"), 'Bedrock rechaza mensajes a sesiones no activas');
 
 if ($failures) {
     fwrite(STDERR, "Chat recoverable trash contract failed:\n - " . implode("\n - ", $failures) . "\n");
