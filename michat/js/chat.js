@@ -1397,8 +1397,22 @@ function renderSessionsList() {
         const r = await fetch(api, { method: 'POST', credentials: 'same-origin', body: fd });
         const j = toJSONorThrow(await r.text(), r.status, label);
         if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
-        if (Number(currentSessionId) === Number(id)) updateCurrentSessionState(j.status);
+        const wasSelected = Number(currentSessionId) === Number(id);
+        if (wasSelected) updateCurrentSessionState(j.status);
         await loadSessions();
+        // Si la conversación salió de la vista seleccionada, limpiar también
+        // su visor. Los mensajes siguen intactos y disponibles en su carpeta.
+        if (wasSelected && (el.sbChatView?.value || 'open') !== j.status) {
+          currentSessionId = null;
+          currentSessionStatus = 'open';
+          currentMemoryScope = null;
+          if (el.title) el.title.textContent = 'Nueva conversación';
+          if (el.sbCurrentSession) el.sbCurrentSession.textContent = 'Ninguna';
+          if (el.messages) el.messages.textContent = '';
+          updateCurrentSessionState('open');
+          syncTraceExplorerButton();
+          renderSessionsList();
+        }
       } catch (e) {
         window.alert(label + ': ' + e.message);
       } finally {
