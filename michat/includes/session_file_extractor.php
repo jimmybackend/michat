@@ -118,8 +118,9 @@ function idx_pdf_page_labels(string $text): string {
     $pages = explode("\f", $text);
     if (count($pages) < 2) return $text;
     $out = [];
+    if (end($pages) === '') array_pop($pages);
     foreach ($pages as $i => $page) {
-        if (trim($page) !== '') $out[] = '[Página ' . ($i + 1) . "]\n" . trim($page);
+        $out[] = '[Página ' . ($i + 1) . "]\n" . (trim($page) !== '' ? trim($page) : '[CONTENIDO NO EXTRAÍDO: página sin texto; requiere OCR/visión]');
     }
     return implode("\n\n", $out);
 }
@@ -135,9 +136,9 @@ function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$ex
                 $paged = [];
                 foreach ($pdf->getPages() as $pageNumber => $page) {
                     $pageText = trim((string)$page->getText());
-                    if ($pageText !== '') $paged[] = '[Página ' . ((int)$pageNumber + 1) . "]\n" . $pageText;
+                    $paged[] = '[Página ' . ((int)$pageNumber + 1) . "]\n" . ($pageText !== '' ? $pageText : '[CONTENIDO NO EXTRAÍDO: página sin texto; requiere OCR/visión]');
                 }
-                if ($paged) $text = implode("\n\n", $paged);
+                if ($paged && trim($text) !== '') $text = implode("\n\n", $paged);
             }
 
             if (trim($text) !== '') {
@@ -159,7 +160,7 @@ function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$ex
             $text = (string)file_get_contents($out);
             @unlink($out);
 
-            if (trim($text) !== '') {
+            if (trim(str_replace("\f", '', $text)) !== '') {
                 $extractor = 'pdftotext';
                 return idx_pdf_page_labels($text);
             }
@@ -272,6 +273,16 @@ function idx_extract_pptx(string $tmp, string &$extractor, string &$error): stri
 
     ksort($slides);
     ksort($notes);
+    $displayOrder = [];
+    $presentation = $zip->getFromName('ppt/presentation.xml');
+    $rels = idx_zip_relationships($zip,'ppt/_rels/presentation.xml.rels');
+    if (is_string($presentation) && ($dom = idx_safe_xml($presentation))) {
+        foreach ((new DOMXPath($dom))->query('//*[local-name()="sldId"]') as $slide) {
+            $id = $slide->getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id');
+            if (isset($rels[$id])) $displayOrder[] = idx_zip_target('ppt/presentation.xml',$rels[$id]);
+        }
+    }
+    if ($displayOrder) $slides = array_combine(range(1,count($displayOrder)),$displayOrder);
 
     $lines = [];
 
@@ -279,7 +290,7 @@ function idx_extract_pptx(string $tmp, string &$extractor, string &$error): stri
         $xml = $zip->getFromName($slideName);
         if ($xml === false) continue;
 
-        $lines[] = "[Slide {$slideNumber}]";
+        $lines[] = $displayOrder ? "[Slide {$slideNumber}]" : "[Parte de diapositiva: " . basename($slideName) . "]";
 
         $paragraphs = preg_split('/<\/a:p>/s', $xml);
 
@@ -292,8 +303,16 @@ function idx_extract_pptx(string $tmp, string &$extractor, string &$error): stri
             }
         }
 
-        if (!empty($notes[$slideNumber])) {
-            $noteXml = $zip->getFromName($notes[$slideNumber]);
+        $slideRels = idx_zip_relationships($zip,dirname($slideName).'/_rels/'.basename($slideName).'.rels');
+        $notePath = null;
+        foreach ($slideRels as $target) {
+            $resolved = idx_zip_target($slideName,$target);
+            if (str_starts_with($resolved,'ppt/notesSlides/')) { $notePath = $resolved; break; }
+        }
+        // Old minimal producers without relationships: preserve internal notes pairing.
+        if (!$displayOrder && $notePath === null) $notePath = $notes[$slideNumber] ?? null;
+        if ($notePath !== null) {
+            $noteXml = $zip->getFromName($notePath);
 
             if ($noteXml !== false) {
                 $noteLines = [];
@@ -363,13 +382,25 @@ function idx_extract_xlsx(string $tmp, string &$extractor, string &$error): stri
 
     ksort($sheets);
 
+    $sheetLabels = [];
+    $workbookXml = $zip->getFromName('xl/workbook.xml');
+    $workbookRels = idx_zip_relationships($zip, 'xl/_rels/workbook.xml.rels');
+    if (is_string($workbookXml)) {
+        $dom = idx_safe_xml($workbookXml);
+        if ($dom) {
+            foreach ((new DOMXPath($dom))->query('//*[local-name()="sheet"]') as $sheet) {
+                $id = $sheet->getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+                if (isset($workbookRels[$id])) $sheetLabels[idx_zip_target('xl/workbook.xml',$workbookRels[$id])] = $sheet->getAttribute('name');
+            }
+        }
+    }
     $out = [];
 
     foreach ($sheets as $sheetNumber => $sheetName) {
         $xml = $zip->getFromName($sheetName);
         if ($xml === false) continue;
 
-        $sheetLabel = basename($sheetName, '.xml');
+        $sheetLabel = $sheetLabels[$sheetName] ?? basename($sheetName, '.xml');
         $out[] = "--- Hoja {$sheetLabel} ---";
 
         $rows = preg_split('/<\/row>/s', $xml);
@@ -735,7 +766,7 @@ function idx_extract_sqlite(string $tmp, string &$extractor, string &$error): st
                     $v = idx_normalize_extracted_text($v);
                     if ($v !== '') $values[] = $col . '=' . $v;
                 }
-                $out[] = '[Fila ' . $rowNum . '] ' . implode(' | ', $values);
+                $out[] = '[Fila de muestra ' . $rowNum . '] ' . implode(' | ', $values);
                 if (strlen(implode("\n", $out)) > $maxChars) {
                     $partial = true;
                     break 2;
@@ -1016,26 +1047,21 @@ function idx_extract_s3_text(
         $s3 = Config::getS3();
         $bucket = $manager->getBucket();
 
-        try {
-            $s3->getObject(['Bucket'=>$bucket, 'Key'=>$s3Key, 'SaveAs'=>$tmpFile]);
-        } catch (Throwable $e) {
-            $result = $s3->getObject(['Bucket'=>$bucket, 'Key'=>$s3Key]);
-            file_put_contents($tmpFile, (string)($result['Body'] ?? ''));
-        }
+        $head = $s3->headObject(['Bucket'=>$bucket,'Key'=>$s3Key]);
+        if ((int)($head['ContentLength'] ?? 0) > 64 * 1024 * 1024) throw new RuntimeException('Archivo excede 64 MiB; requiere procesamiento por lotes.');
+        $download = $s3->getObject(['Bucket'=>$bucket, 'Key'=>$s3Key, 'SaveAs'=>$tmpFile, 'IfMatch'=>(string)$head['ETag']]);
 
         if (!is_file($tmpFile) || filesize($tmpFile) <= 0) {
             throw new RuntimeException('El archivo está vacío o no se descargó correctamente.');
         }
 
+        if (filesize($tmpFile) > 64 * 1024 * 1024) throw new RuntimeException('Archivo excede 64 MiB; requiere procesamiento por lotes.');
+        if (in_array($ext, ['docx','dotx','pptx','ppsx','xlsx','xlsm','xltx','xltm','odt','ods','odp','epub'], true)) idx_validate_archive($tmpFile);
+        if ($ext === 'pdf' && file_get_contents($tmpFile, false, null, 0, 5) !== '%PDF-') throw new RuntimeException('Firma PDF inválida.');
         $extractor = 'raw_text';
         $extractError = '';
         if (in_array($ext, $textExts, true)) {
-            $content = (string)file_get_contents($tmpFile);
-            if (!mb_check_encoding($content, 'UTF-8')) {
-                $converted = @mb_convert_encoding($content, 'UTF-8', 'auto');
-                if (is_string($converted)) $content = $converted;
-            }
-            $content = idx_normalize_extracted_text($content);
+            $content = idx_read_safe_text($tmpFile);
         } else {
             $content = idx_extract_file($tmpFile, $ext, $filename, $bucket, $s3Key, $extractor, $extractError);
         }
@@ -1046,9 +1072,9 @@ function idx_extract_s3_text(
 
         // La extracción SQLite es intencionadamente una muestra; identificar
         // explícitamente la cobertura parcial, incluso sin exceder maxChars.
-        $truncated = strpos($content, '[MUESTRA PARCIAL:') !== false;
+        $truncated = strpos($content, '[MUESTRA PARCIAL:') !== false || strpos($content, '[CONTENIDO NO EXTRAÍDO:') !== false;
         if (mb_strlen($content) > $maxChars) {
-            $content = trim(mb_substr($content, 0, $maxChars));
+            $content = mb_substr($content, 0, $maxChars);
             $truncated = true;
         }
 
@@ -1058,6 +1084,10 @@ function idx_extract_s3_text(
             'ext'=>$ext,
             's3_key'=>$s3Key,
             'truncated'=>$truncated,
+            'source_sha256'=>hash_file('sha256', $tmpFile),
+            'source_etag'=>(string)$head['ETag'],
+            'extracted_chars'=>mb_strlen($content),
+            'coverage'=>$truncated ? 'partial' : 'text_extracted',
         ];
     } finally {
         idx_rrmdir($tmpDir);
@@ -1073,4 +1103,105 @@ function idx_extract_files3_text(array $file, int $maxChars = IDX_MAX_EXTRACTED_
     $s3Key = idx_build_s3_key($file);
     if ($s3Key === '') throw new RuntimeException('No se pudo resolver la clave S3 del archivo.');
     return idx_extract_s3_text($s3Key, $filename, $maxChars);
+}
+
+/** Validate real text before normalization. Never turn a binary file into plausible prose. */
+function idx_read_safe_text(string $path): string {
+    $text = (string)file_get_contents($path);
+    if (str_starts_with($text, "\xFF\xFE") || str_starts_with($text, "\xFE\xFF")) {
+        $encoding = str_starts_with($text, "\xFF\xFE") ? 'UTF-16LE' : 'UTF-16BE';
+        $text = mb_convert_encoding(substr($text, 2), 'UTF-8', $encoding);
+    } elseif (str_starts_with($text, "\xEF\xBB\xBF")) {
+        $text = substr($text, 3);
+    }
+    if (str_contains($text, "\0") || preg_match('/[\x01-\x08\x0B\x0C\x0E-\x1F]/', $text)) {
+        throw new RuntimeException('Contenido binario incompatible con el lector de texto.');
+    }
+    if (!mb_check_encoding($text, 'UTF-8')) {
+        throw new RuntimeException('Codificación no soportada; convierte el texto a UTF-8 o UTF-16 con BOM.');
+    }
+    // Preserve blank lines, indentation and source line numbers.
+    return str_replace(["\r\n", "\r"], "\n", $text);
+}
+
+/** Bound archive expansion before any existing ZIP/XML adapter is invoked. */
+function idx_validate_archive(string $path): void {
+    if (!class_exists('ZipArchive')) throw new RuntimeException('ZipArchive no está instalado.');
+    $zip = new ZipArchive();
+    if ($zip->open($path) !== true) throw new RuntimeException('Contenedor ZIP dañado o inválido.');
+    try {
+        if ($zip->numFiles > 10000) throw new RuntimeException('Archivo excede 10000 entradas ZIP.');
+        $total = 0;
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $stat = $zip->statIndex($i);
+            if (!$stat) throw new RuntimeException('Entrada ZIP inválida.');
+            $total += (int)$stat['size'];
+            if ((int)$stat['size'] > 32 * 1024 * 1024 || $total > 128 * 1024 * 1024) {
+                throw new RuntimeException('Expansión ZIP excede el presupuesto seguro; requiere procesamiento por lotes.');
+            }
+        }
+    } finally { $zip->close(); }
+}
+
+/** Carry original locations into EVERY chunk, including chunks mid-page/mid-sheet. */
+function idx_located_chunks(string $text, string $ext, int $maxLen = IDX_CHUNK_MAX_LEN): array {
+    if ($maxLen < 16) throw new InvalidArgumentException('Chunk demasiado pequeño');
+    $raw = in_array($ext, idx_text_extensions(), true);
+    $out = []; $buffer = ''; $locator = []; $start = 1; $end = 1;
+    $flush = static function() use (&$out, &$buffer, &$locator, &$start, &$end, $raw): void {
+        if (trim($buffer) !== '') {
+            $loc = $locator;
+            if ($raw) $loc += ['line_start'=>$start,'line_end'=>$end];
+            $out[] = ['content'=>$buffer,'locator'=>$loc,'sha256'=>hash('sha256', $buffer)];
+        }
+        $buffer = '';
+    };
+    foreach (explode("\n", $text) as $i => $line) {
+        $new = null;
+        if (!$raw && preg_match('/^\[Página (\d+)\]$/u', $line, $m)) $new = ['page'=>(int)$m[1]];
+        if (!$raw && preg_match('/^\[Slide (\d+)\]$/', $line, $m)) $new = ['slide'=>(int)$m[1]];
+        if (!$raw && preg_match('/^\[Parte de diapositiva: (.+)\]$/u', $line, $m)) $new = ['slide_part'=>$m[1]];
+        if (!$raw && preg_match('/^\[Tabla: (.+)\]$/u', $line, $m)) $new = ['table'=>$m[1]];
+        if (!$raw && preg_match('/^--- Hoja (.+) ---$/u', $line, $m)) $new = ['sheet'=>$m[1]];
+        if ($new !== null) { $flush(); $locator = $new; }
+        $remaining = $line;
+        do {
+            if ($buffer !== '' && mb_strlen($buffer) + 1 + mb_strlen($remaining) > $maxLen) $flush();
+            if ($buffer === '') $start = $i + 1;
+            $room = $maxLen - mb_strlen($buffer) - ($buffer !== '' ? 1 : 0);
+            $part = mb_substr($remaining, 0, $room);
+            $buffer .= ($buffer !== '' ? "\n" : '') . $part; $end = $i + 1;
+            $remaining = mb_substr($remaining, mb_strlen($part));
+            if ($remaining !== '') $flush();
+        } while ($remaining !== '');
+    }
+    $flush();
+    return $out;
+}
+
+
+function idx_safe_xml(string $xml): ?DOMDocument {
+    if (!class_exists('DOMDocument') || stripos($xml,'<!DOCTYPE') !== false || stripos($xml,'<!ENTITY') !== false) return null;
+    $dom = new DOMDocument();
+    return @$dom->loadXML($xml, LIBXML_NONET) ? $dom : null;
+}
+
+function idx_zip_relationships(ZipArchive $zip, string $path): array {
+    $xml=$zip->getFromName($path);
+    if (!is_string($xml) || !($dom=idx_safe_xml($xml))) return [];
+    $out=[];
+    foreach ((new DOMXPath($dom))->query('//*[local-name()="Relationship"]') as $rel) {
+        if (strtolower($rel->getAttribute('TargetMode'))==='external') continue;
+        $out[$rel->getAttribute('Id')]=$rel->getAttribute('Target');
+    }
+    return $out;
+}
+
+function idx_zip_target(string $part, string $target): string {
+    $parts=[];
+    foreach (explode('/',str_starts_with($target,'/') ? ltrim($target,'/') : dirname($part).'/'.$target) as $p) {
+        if ($p==='..') array_pop($parts);
+        elseif ($p!=='' && $p!=='.') $parts[]=$p;
+    }
+    return implode('/',$parts);
 }

@@ -10,7 +10,7 @@ $index = (string)file_get_contents($root . '/index_session_file.php');
 $semantic = (string)file_get_contents($root . '/semantic_session_file.php');
 $maintenance = (string)file_get_contents($root . '/includes/preferences/maintenance.php');
 $builder = (string)file_get_contents($root . '/includes/Memory/ContextBuilder.php');
-$chat = (string)file_get_contents($root . '/bedrock_chat2.php');
+$chat = (string)file_get_contents($root . '/includes/Memory/AttachmentContextRepository.php');
 
 $passed = 0; $failed = 0;
 $check = static function (bool $ok, string $label) use (&$passed, &$failed): void {
@@ -24,12 +24,12 @@ $check(str_contains($service, "'search_document'") && str_contains($service, 'sa
 $check(str_contains($service, "status='pending'") && str_contains($service, 'Mantenimiento'), 'fallo de embedding conserva retry en cola');
 $check(str_contains($index, '->process(') && str_contains($semantic, '->semantic('), 'reindexación manual regenera chunks y semántica del mismo servicio');
 $check(str_contains($maintenance, 'btnRunEmbeddings') && str_contains($maintenance, 'btnRunCompression'), 'mantenimiento conserva reparación de embeddings y compresión de chat');
-$check(str_contains($builder, 'AttachmentContextRepository') && str_contains($chat, "block_type IN ('file', 'file_chunk')"), 'pipeline de respuesta consume índice y semántica de adjuntos');
+$check(str_contains($builder, 'AttachmentContextRepository') && str_contains($chat, "block_type IN ('file','file_chunk')"), 'pipeline de respuesta consume índice y semántica de adjuntos');
 $check(str_contains($service, 'smart_memory_code') && str_contains($service, 'smart_memory_general') && str_contains($service, 'attachment_semantic_prompt'), 'semántica usa configuración dinámica existente');
 $check(!str_contains($upload, 'SessionAttachments'), 'upload continúa usando FileS3/S3Folders sin tabla legacy');
 $check(str_contains($upload, 'knowledge_issues') && str_contains($upload, 'embedding_pending'), 'upload reporta fallos y embeddings pendientes');
 $check(str_contains($builder, 'explicitFileQuestion') && str_contains($builder, 'effectiveAttachmentMode'), 'pregunta explícita sobre archivo consulta el RAG incluso si Router omite adjuntos');
-$check(str_contains($chat, 'FRAGMENTO ') && str_contains($chat, 'min(3200, $remaining)'), 'fragmentos etiquetados y contexto repartido entre archivos');
+$check(str_contains($chat, 'AttachmentEvidence::citation') && str_contains($chat, 'AttachmentEvidence::diversify'), 'fragmentos etiquetados y contexto repartido entre archivos');
 
 echo "Result: {$passed} passed, {$failed} failed\n";
 exit($failed ? 1 : 0);

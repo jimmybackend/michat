@@ -47,11 +47,13 @@ try {
             ? (!empty($result['embedding_ready'])
                 ? 'Imagen analizada y embedding visual listo para RAG.'
                 : 'Imagen analizada. El embedding pendiente puede reintentarse desde Mantenimiento.')
-            : (!empty($result['ready_for_attachment_rag'])
+            : (!empty($result['index']['truncated'])
+                ? 'Extracción parcial: los fragmentos disponibles se pueden consultar, pero hay contenido omitido.'
+                : (!empty($result['ready_for_attachment_rag'])
                 ? 'Archivo indexado, semántica procesada y vectores disponibles para RAG.'
                 : (!empty($result['index']['ok'])
                     ? 'Fragmentos guardados; los embeddings pueden estar pendientes en Mantenimiento.'
-                    : 'La indexación no se completó; revisa el estado del archivo.')),
+                    : 'La indexación no se completó; revisa el estado del archivo.'))),
     ]);
 } catch (InvalidArgumentException $e) {
     indexSessionFileExit(['ok'=>false,'error'=>$e->getMessage()], 400);
