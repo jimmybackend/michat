@@ -487,7 +487,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <aside id="chatFilesDrawer" class="chat-files-drawer" role="dialog" aria-modal="true" aria-labelledby="chatFilesTitle" aria-hidden="true" tabindex="-1" hidden>
   <div class="chat-files-drawer-header">
     <div>
-      <h2 id="chatFilesTitle"><i class="fas fa-paperclip" aria-hidden="true"></i> 🧠 Conocimiento de archivos</h2>
+      <h2 id="chatFilesTitle"><i class="fas fa-brain" aria-hidden="true"></i> Conocimiento de archivos y RAG</h2>
       <small id="chatFilesSessionLabel" class="text-muted">Selecciona una conversación</small>
     </div>
     <button id="chatFilesClose" class="btn-icon-sm" type="button" title="Cerrar archivos" aria-label="Cerrar panel de archivos">
@@ -495,7 +495,8 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
     </button>
   </div>
   <div class="chat-files-drawer-body">
-    <p class="chat-files-help">Aquí puedes consultar qué conoce la IA de los archivos, reintentar indexación y semántica, y pedir análisis o comparaciones. Para subir archivos utiliza el clip junto a Imagen.</p>
+    <p class="chat-files-help">Los archivos se almacenan en S3 y al subirlos se intenta extraer su contenido, dividirlo en fragmentos, generar un resumen semántico y crear embeddings para RAG. Si algo queda pendiente, aquí puedes comprobarlo y reintentarlo. El clip junto a Imagen sube archivos; este panel permite analizarlos, compararlos y crear versiones.</p>
+    <p id="chatFilesPipelineSummary" class="chat-files-scope-note" role="status" aria-live="polite">Selecciona una conversación para revisar sus archivos.</p>
     <div class="sidebar-section adjuntos-section">
 
   <div class="section-label-row">
@@ -578,7 +579,6 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
       <div class="chat-composer-primary-tools">
         <input id="chat2File" type="file" hidden multiple accept=".php,.js,.ts,.py,.java,.c,.cpp,.cs,.go,.rs,.rb,.html,.css,.scss,.json,.xml,.yaml,.yml,.md,.txt,.sql,.sh,.bash,.pdf,.jpg,.jpeg,.png,.gif,.mp4,.webm,.mp3,.wav,.docx,.xlsx,.pptx" aria-label="Elegir archivos para adjuntar a la conversación">
         <button id="chat2Attach" class="btn btn-sm btn-outline-secondary" type="button" title="Adjuntar archivos (subida e indexación RAG automática)" aria-label="Adjuntar archivos a la conversación"><i class="fas fa-paperclip" aria-hidden="true"></i></button>
-        <button id="chat2FilesKnowledge" class="btn btn-sm btn-outline-secondary" type="button" title="Archivos de esta conversación: indexación, 🧠 semántica, RAG, comparación y versiones" aria-label="Gestionar conocimiento de archivos"><i class="fas fa-brain" aria-hidden="true"></i></button>
         <button id="chat2BtnGenImg" class="btn btn-sm btn-outline-primary" title="Generar imagen" aria-label="Generar imagen"><i class="fas fa-image"></i></button>
         <button id="chat2BtnGenVid" class="btn btn-sm btn-outline-primary" title="Generar video" aria-label="Generar video"><i class="fas fa-film"></i></button>
         <button id="chat2BtnSonic" class="btn btn-sm btn-outline-secondary" title="Voz" aria-label="Voz"><i class="fas fa-microphone"></i></button>
@@ -589,20 +589,6 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
     </button>
   </div>
 
-  <section id="chat2KnowledgePanel" class="card mt-2" hidden aria-label="Conocimiento de archivos de esta conversación" style="max-height:45vh;overflow:auto;">
-    <div class="card-header d-flex align-items-center justify-content-between py-2">
-      <strong><i class="fas fa-brain"></i> Archivos, RAG y versiones</strong>
-      <button type="button" id="chat2KnowledgeClose" class="btn btn-sm btn-outline-secondary" aria-label="Cerrar archivos">✕</button>
-    </div>
-    <div class="card-body p-2">
-      <div class="small text-muted mb-2">Cada archivo subido se guarda en S3 y se intenta indexar, resumir y vectorizar automáticamente. Aquí puedes inspeccionar, reintentar, consultar, comparar y versionar.</div>
-      <div id="chatSessionFilesList" aria-live="polite"></div>
-      <div class="mt-2 d-flex flex-wrap" style="gap:.35rem;">
-        <button type="button" id="btnAttachmentInspector" class="btn btn-sm btn-outline-info"><i class="fas fa-microscope"></i> Inspector</button>
-        <button type="button" id="btnIndexSessionAttachments" class="btn btn-sm btn-outline-success"><i class="fas fa-sync"></i> Indexar pendientes</button>
-      </div>
-    </div>
-  </section>
   <div id="chatToasts" class="chat-toasts"></div>
   <div id="incomingToasts" class="chat-toasts"></div>
 </div>
@@ -834,7 +820,7 @@ role="progressbar" style="width: 0%">0%</div>
 <!-- Preferencias primero: expone chatPreferencesReady/modelo antes de crear sesiones. -->
 <script src="js/user_preferences.js"></script>
 <!-- chat.js administra sesiones/proyectos y exporta window.chatUtils. -->
-<script src="js/chat.js?v=20261023-file-rag-knowledge"></script>
+<script src="js/chat.js?v=20261023-single-brain-rag"></script>
 <!-- El micrófono utiliza Nova 2 Sonic: cargar su controlador tras chat.js. -->
 <script src="js/chat-voice.js?v=20261023-sonic-diagnostics"></script>
 <script src="js/context-viewer.js"></script> 
