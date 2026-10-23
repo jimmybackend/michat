@@ -41,7 +41,7 @@ try {
     $isImage = $imageService->supports($userId, $sessionId, $fileId);
     $result = $isImage
         ? $imageService->process($userId, $sessionId, $fileId)
-        : (new SessionAttachmentKnowledgeService($db_connection))->index($userId, $sessionId, $fileId);
+        : (new SessionAttachmentKnowledgeService($db_connection))->process($userId, $sessionId, $fileId);
     indexSessionFileExit($result + [
         'mensaje' => $isImage
             ? (!empty($result['embedding_ready'])
