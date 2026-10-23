@@ -94,6 +94,9 @@ queueCheck(!$centralIndex->inspect([],0,(int)$lastChunk['id_'])['rows'],'Citatio
 queueCheck(str_contains($bundle->block('attachment_context_block'),'central_chunk_id='),'Model prompt includes a verifiable exact source URL');
 $embedCalls=$runtime->embedCalls;$service->enqueue(1,1,1);$service->tick($jobId);
 queueCheck($runtime->embedCalls===$embedCalls,'Completed revision is reused without more Bedrock requests');
+$db->query("UPDATE FileS3 SET Nombre='grande.pdf' WHERE id_=1");
+queueCheck(!$retriever->retrieve(1,1,'987654321','rag',null,null)['items'],'Changing the extension invalidates the previous format adapter index');
+$db->query("UPDATE FileS3 SET Nombre='grande.php' WHERE id_=1");
 $runtime->model='new-model';$service->enqueue(1,1,1);$modelJob=$repo->job($jobId);
 queueCheck($modelJob['phase']==='embeddings'&&$modelJob['status']==='pending','Embedding model change queues only vector regeneration');
 $db->query("UPDATE ChatSessions SET meta='{}' WHERE id_=2");

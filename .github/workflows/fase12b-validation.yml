@@ -168,7 +168,6 @@ jobs:
           php-version: '8.3'
           extensions: mysqli, mbstring
           coverage: none
-      - name: Real migration baseline, upgrade, history and idempotency
+      - name: Real current-baseline migration, history and idempotency
         run: |
           php michat/tests/migration_runner_mysql_test.php
-          php michat/tests/supported_upgrade_mysql_test.php

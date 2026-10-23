@@ -462,3 +462,5 @@ El motor nuevo se activa de forma explícita con `MICHAT_DOCUMENT_KNOWLEDGE_ENAB
 La subida guarda S3 y encola extracción/chunks/embeddings; un mismo archivo/revisión se reutiliza entre conversaciones autorizadas. El CLI `php michat/bin/document_knowledge_worker.php --max-batches=12` procesa lotes finitos, con leases, checkpoints y reintentos. Sin activar el flag se conserva la ruta anterior. Los archivos de systemd en `deploy/systemd/michat-document-worker.*` son ejemplos para revisión e instalación por el operador; no se instalan al actualizar Git.
 
 Operación, límites, rollback y pruebas: [docs/central-document-queue.md](docs/central-document-queue.md).
+
+La validación real de este incremento confirmó Fase 13 desde el baseline actual. La ruta histórica post-Fase10D → Fase 11B tiene un bloqueo previo de llave foránea documentado en el informe; no se certifica ni se fuerza esa actualización modificando migraciones publicadas.

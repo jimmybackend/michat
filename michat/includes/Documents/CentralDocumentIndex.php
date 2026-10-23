@@ -23,7 +23,7 @@ final class CentralDocumentIndex
             $fileId=(int)$source['files3_id'];
             if (isset($sources[$fileId])) continue;
             if (!idx_file_belongs_to_chat_session($source,$userId,$sessionId) && !DocumentAccessRepository::linked($session,$fileId)) continue;
-            if (idx_build_s3_key($source)!==$source['s3_key']) continue;
+            if (idx_build_s3_key($source)!==$source['s3_key'] || strtolower(pathinfo($source['Nombre'],PATHINFO_EXTENSION))!==$source['format']) continue;
             $key=$source['s3_key'];
             if (!array_key_exists($key,$heads)) {
                 try { $head=Config::getS3()->headObject(['Bucket'=>Config::getBucket(),'Key'=>$key]);$heads[$key]=(string)($head['ETag']??''); }

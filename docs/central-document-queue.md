@@ -88,7 +88,7 @@ El panel 🧠 muestra fase, estado, chunks procesados/esperados, caracteres extr
 
 Tests nuevos cubren índice compartido entre dos chats, idempotencia, recuperación de lease, rechazo de worker vencido, texto mayor de 200.000 caracteres, checkpoint persistente, embeddings fallidos/listos/desactivados, cambio de modelo y revisión, bloqueo y revocación, límite de recursos, presupuesto de reintentos, auditoría, ContextBuilder real y paginación/cita exacta. La prueba JavaScript cubre que el polling se detenga al cerrar/cambiar conversación o terminar el job.
 
-CI ejecuta la suite completa, integración de cola con MariaDB 10.11 e integración real del runner/baseline/upgrade con MySQL 8, además de los fixtures PDF/PPTX/XLSX del incremento anterior. No sustituir estos resultados por una prueba estática.
+CI ejecuta la suite completa, integración de cola con MariaDB 10.11 e integración real del runner desde el baseline actual con MySQL 8, además de los fixtures PDF/PPTX/XLSX del incremento anterior. No sustituir estos resultados por una prueba estática.
 
 Después de activar en un entorno autorizado:
 
@@ -98,6 +98,12 @@ Después de activar en un entorno autorizado:
 4. En una cuenta/entorno de pruebas, detener y reanudar el worker tras un lote. Verificar cursor y ausencia de duplicados.
 5. Comprobar un fallo controlado de embeddings: texto consultable, job no listo, reintento recuperable. No provocar fallos modificando credenciales de producción.
 6. Desvincular y bloquear archivos de prueba: no deben seguir aportando evidencia. Comprobar aislamiento con otro usuario.
+
+## Bloqueo preexistente de la actualización histórica
+
+Al ejecutar por primera vez el harness completo contra MySQL 8.0.46, la ruta post-Fase10D → Fase 11B se detiene con `fase11b_project_autonomy: Cannot add foreign key constraint`, antes de alcanzar Fase 13. Es un bloqueo de la ruta histórica, no una validación positiva de esa actualización. La preparación del fixture también necesitaba un padre Users ficticio para sus preferencias del usuario 1; se corrigió exclusivamente el harness, conservando los bytes del fixture y todas las restricciones.
+
+No se reescriben migraciones publicadas, checksums ni historia para forzar esa ruta. El CI de este incremento certifica Fase 13 desde el baseline actual (14 migraciones), que sí pasó las pruebas reales de MySQL, además de su cola con MariaDB. El harness histórico se conserva para diagnosticar y reparar esa ruta en un cambio específico. No usar el procedimiento post-Fase10D en producción suponiendo que quedó certificado por este PR. Si una instalación está en ese estado, detenerse antes de aplicar y resolver el bloqueo por separado.
 
 ## Rollback sin pérdida de información
 
