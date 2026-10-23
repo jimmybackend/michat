@@ -141,7 +141,8 @@ body.ui-theme {
   margin-top: 2px;
 }
 /* Conversaciones: título completo, acciones al extremo derecho y controles táctiles. */
-.sidebar-panel .sessions-list .sb-item {
+.sidebar-panel .sessions-list .sb-item,
+.sidebar-panel .projects-list .sb-item.project-session {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -149,7 +150,8 @@ body.ui-theme {
   min-width: 0;
   gap: 4px;
 }
-.sidebar-panel .sessions-list .sb-item-title {
+.sidebar-panel .sessions-list .sb-item-title,
+.sidebar-panel .projects-list .project-session .sb-item-title {
   display: block;
   width: 100%;
   max-width: none !important;
@@ -161,7 +163,8 @@ body.ui-theme {
   word-break: normal;
   text-overflow: clip;
 }
-.sidebar-panel .sessions-list .sb-item-footer {
+.sidebar-panel .sessions-list .sb-item-footer,
+.sidebar-panel .projects-list .project-session .sb-item-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -169,12 +172,14 @@ body.ui-theme {
   width: 100%;
   gap: 8px;
 }
-.sidebar-panel .sessions-list .sb-item-meta {
+.sidebar-panel .sessions-list .sb-item-meta,
+.sidebar-panel .projects-list .project-session .sb-item-meta {
   min-width: 0;
   margin: 0;
   line-height: 1.3;
 }
-.sidebar-panel .sessions-list .sb-item-actions {
+.sidebar-panel .sessions-list .sb-item-actions,
+.sidebar-panel .projects-list .project-session .sb-item-actions {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -182,7 +187,8 @@ body.ui-theme {
   gap: 4px;
   margin-left: auto;
 }
-.sidebar-panel .sessions-list .sb-item-actions .btn {
+.sidebar-panel .sessions-list .sb-item-actions .btn,
+.sidebar-panel .projects-list .project-session .sb-item-actions .btn {
   display: inline-flex;
   justify-content: center;
   align-items: center;
@@ -198,7 +204,9 @@ body.ui-theme {
   color: var(--text-soft);
 }
 .sidebar-panel .sessions-list .sb-item-actions .btn:hover,
-.sidebar-panel .sessions-list .sb-item-actions .btn:focus-visible {
+.sidebar-panel .projects-list .project-session .sb-item-actions .btn:hover,
+.sidebar-panel .sessions-list .sb-item-actions .btn:focus-visible,
+.sidebar-panel .projects-list .project-session .sb-item-actions .btn:focus-visible {
   color: var(--accent);
   border-color: var(--border) !important;
   background: rgba(var(--accent-rgb), .08);
