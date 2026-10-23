@@ -1519,7 +1519,10 @@ function renderSessionsList() {
         const j = toJSONorThrow(await r.text(), r.status, label);
         if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
         const wasSelected = Number(currentSessionId) === Number(id);
-        if (wasSelected) updateCurrentSessionState(j.status);
+        if (wasSelected) {
+          updateCurrentSessionState(j.status);
+          updateChatFilesDrawerContext();
+        }
         await loadSessions();
         // Si la conversación salió de la vista seleccionada, limpiar también
         // su visor. Los mensajes siguen intactos y disponibles en su carpeta.
@@ -1531,6 +1534,7 @@ function renderSessionsList() {
           if (el.sbCurrentSession) el.sbCurrentSession.textContent = 'Ninguna';
           if (el.messages) el.messages.textContent = '';
           updateCurrentSessionState('open');
+          updateChatFilesDrawerContext();
           syncTraceExplorerButton();
           renderSessionsList();
         }
@@ -1570,7 +1574,6 @@ function renderSessionsList() {
       const s = sessions.find(x => x.id === id);
       if (el.title) el.title.textContent = s ? (s.title || `Sesión #${id}`) : `Sesión #${id}`;
       if (el.sbCurrentSession) el.sbCurrentSession.textContent = s ? (s.title || `Sesión #${id}`) : 'Ninguna';
-      updateChatFilesDrawerContext();
       if (s && s.project_id) {
         currentProjectId = s.project_id;
         await selectProject(s.project_id);
@@ -1579,6 +1582,7 @@ function renderSessionsList() {
         await selectProject(null);
       }
       updateCurrentSessionState(s ? s.status : currentSessionStatus);
+      updateChatFilesDrawerContext();
       setStatus('Cargando mensajes…');
       try {
         const qs = new URLSearchParams({ session_id: String(id) });
