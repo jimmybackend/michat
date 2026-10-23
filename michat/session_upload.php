@@ -38,13 +38,16 @@ if ($userId <= 0) sessionUploadExit(['ok'=>false,'error'=>'No autenticado'], 401
 $sessionId = (int)($_POST['session_id'] ?? 0);
 if ($sessionId <= 0) sessionUploadExit(['ok'=>false,'error'=>'session_id es requerido'], 400);
 
-$stmt = $db_connection->prepare('SELECT id_ FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1');
+$stmt = $db_connection->prepare('SELECT id_, status FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1');
 if (!$stmt) sessionUploadExit(['ok'=>false,'error'=>'No se pudo validar la sesión'], 500);
 $stmt->bind_param('ii', $sessionId, $userId);
 $stmt->execute();
-$owned = $stmt->get_result()->num_rows > 0;
+$session = $stmt->get_result()->fetch_assoc();
 $stmt->close();
-if (!$owned) sessionUploadExit(['ok'=>false,'error'=>'Sesión no encontrada o acceso denegado'], 403);
+if (!$session) sessionUploadExit(['ok'=>false,'error'=>'Sesión no encontrada o acceso denegado'], 403);
+if (($session['status'] ?? '') !== 'open') {
+    sessionUploadExit(['ok'=>false,'error'=>'Restaura la conversación a Activas para subir archivos'], 409);
+}
 
 if (empty($_FILES['files']) || !isset($_FILES['files']['name']) || !is_array($_FILES['files']['name'])) {
     sessionUploadExit(['ok'=>false,'error'=>'No se recibieron archivos'], 400);
