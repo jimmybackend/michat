@@ -13,6 +13,7 @@
   let chunks = [];
   let startedAt = 0;
   let stopTimer = null;
+  let recordingSessionId = 0;
 
   const $ = (s) => document.querySelector(s);
   const button = $('#chat2BtnSonic');
@@ -28,8 +29,12 @@
     button.disabled = !!busy;
   }
   function currentSessionId() {
-    const active = $('#chat-sidebar [data-id].active') || $('.chat-msg.assistant[data-session-id]');
-    return Number(active?.dataset?.id || active?.dataset?.sessionId || 0);
+    // Usar la sesión real del chat; un proyecto o vista del sidebar puede
+    // marcarse "active" sin ser una conversación.
+    const id = Number(window.chatUtils?.getCurrentSessionId?.() || 0);
+    if (id > 0) return id;
+    const active = $('#sbChatList .sb-item.active') || $('#sbProjectList .project-session.active');
+    return Number(active?.dataset?.id || 0);
   }
   async function ensureSessionId() {
     let id = currentSessionId();
@@ -132,14 +137,13 @@
     audio.addEventListener('error', () => URL.revokeObjectURL(url), { once: true });
     try { await audio.play(); } catch (_) { URL.revokeObjectURL(url); }
   }
-  function refreshChat() {
-    const active = $('#chat-sidebar [data-id].active');
-    if (active) window.setTimeout(() => active.click(), 50);
-  }
   async function start() {
     if (processing || recording) return;
     await config();
-    await ensureSessionId();
+    if (currentSessionId() && $('#chat2Input')?.disabled) {
+      throw new Error('Restaura esta conversación a Activas para usar el micrófono.');
+    }
+    const sessionId = await ensureSessionId();
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('Este navegador no permite capturar micrófono.');
     if (!window.isSecureContext) throw new Error('El micrófono requiere HTTPS.');
 
@@ -159,6 +163,7 @@
     source.connect(processor);
     processor.connect(context.destination);
     recording = true;
+    recordingSessionId = sessionId;
     startedAt = Date.now();
     button.classList.remove('btn-outline-secondary');
     button.classList.add('btn-danger');
@@ -170,12 +175,15 @@
   }
   async function stopAndSend() {
     if (!recording || processing) return;
-    const sessionId = currentSessionId();
+    const sessionId = recordingSessionId;
     const sampleRate = context?.sampleRate || 48000;
     const duration = Date.now() - startedAt;
     const captured = chunks;
     cleanupRecording();
-    if (!sessionId) throw new Error('La conversación dejó de estar disponible.');
+    recordingSessionId = 0;
+    if (!sessionId || sessionId !== currentSessionId()) {
+      throw new Error('Cambió la conversación durante la grabación. Vuelve a grabar en la conversación correcta.');
+    }
     if (duration < 250 || !captured.length) throw new Error('La grabación fue demasiado corta.');
 
     const samples = downsample(flatten(captured), sampleRate);
@@ -193,8 +201,8 @@
       const usage = data.usage || {};
       const usageNode = $('#chat2Usage');
       if (usageNode) usageNode.textContent = `Voz: ${Number(usage.input_tokens || 0)} in / ${Number(usage.output_tokens || 0)} out · ${Number(usage.total_tokens || 0)} tokens`;
-      refreshChat();
-      status('🔊 Respuesta de voz lista.', false);
+      const added = window.chatUtils?.appendVoiceTurn?.(data) === true;
+      status(added ? '🔊 Respuesta de voz lista.' : '🔊 Turno de voz guardado en su conversación.', false);
       await playResponse(data.audio_pcm_base64 || '', data.output_sample_rate || 24000);
     } finally {
       processing = false;
@@ -203,6 +211,7 @@
   }
   function showError(error) {
     cleanupRecording();
+    recordingSessionId = 0;
     processing = false;
     button.disabled = false;
     const message = error?.message || String(error);
