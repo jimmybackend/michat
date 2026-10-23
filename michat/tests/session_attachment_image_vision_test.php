@@ -7,7 +7,7 @@ $service = (string)file_get_contents($root . '/includes/SessionImageKnowledgeSer
 $upload = (string)file_get_contents($root . '/session_upload.php');
 $index = (string)file_get_contents($root . '/index_session_file.php');
 $semantic = (string)file_get_contents($root . '/semantic_session_file.php');
-$rag = (string)file_get_contents($root . '/bedrock_chat2.php');
+$rag = (string)file_get_contents($root . '/includes/Memory/AttachmentContextRepository.php');
 
 $passed = 0;
 $failed = 0;
@@ -70,8 +70,8 @@ $check(
     'reintentos Indexar/Semántica también reconocen imágenes'
 );
 $check(
-    str_contains($rag, "block_type IN ('file', 'file_chunk')")
-    && str_contains($rag, 'ARCHIVOS ADJUNTOS RELEVANTES PARA ESTA PREGUNTA'),
+    str_contains($rag, "block_type IN ('file','file_chunk')")
+    && str_contains($rag, 'AttachmentEvidence::citation'),
     'RAG existente consume visual_summary sin un retriever paralelo'
 );
 $check(

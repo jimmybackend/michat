@@ -232,6 +232,8 @@ try {
     
     $result = $stmt->get_result();
     $blocks = [];
+    require_once __DIR__.'/includes/Memory/DocumentAccessRepository.php';
+    $documentAccess = new DocumentAccessRepository($db_connection);
     
     while ($row = $result->fetch_assoc()) {
         // Parsear source_ids si es JSON
@@ -243,6 +245,10 @@ try {
             }
         }
         
+        try {
+            $currentFile = $documentAccess->requireFile($userId,$sessionId,(int)($sourceIds['files3_id'] ?? 0));
+            if (idx_build_s3_key($currentFile) !== (string)$row['s3_path'] || !DocumentAccessRepository::currentObject($sourceIds,(string)$row['s3_path'])) continue;
+        } catch (Throwable $e) { continue; }
         $blocks[] = [
             'id' => (int)$row['id_'],
             'block_type' => $row['block_type'],

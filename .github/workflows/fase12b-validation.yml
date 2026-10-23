@@ -19,6 +19,22 @@ jobs:
   static-and-contracts:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      document-mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: '1'
+          MARIADB_DATABASE: document_evidence_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      DOCUMENT_TEST_DB_HOST: 127.0.0.1
+      DOCUMENT_TEST_DB_USER: root
+      DOCUMENT_TEST_DB_NAME: document_evidence_test
+      DOCUMENT_TEST_DB_PORT: 3306
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,7 +49,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
-          extensions: mysqli, mbstring, curl, openssl, fileinfo
+          extensions: mysqli, mbstring, curl, openssl, fileinfo, dom, xml, zip, sqlite3
           tools: composer:v2
           coverage: none
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/S3Manager.php';
 require_once __DIR__ . '/ai_agent_runtime.php';
 require_once __DIR__ . '/session_file_extractor.php';
+require_once __DIR__ . '/Memory/DocumentAccessRepository.php';
 
 /**
  * Construye conocimiento utilizable a partir de adjuntos de una sesión.
@@ -51,7 +52,9 @@ final class SessionAttachmentKnowledgeService
             'session_id' => $sessionId,
             'index' => $index,
             'semantic' => $semantic,
-            'ready_for_attachment_rag' => !empty($index['embedding_ready']) || !empty($semantic['embedding_ready']),
+            'ready_for_attachment_rag' => !empty($index['embedding_ready']) && empty($index['truncated']),
+            'lexical_rag_available' => !empty($index['ok']),
+            'coverage' => !empty($index['truncated']) ? 'partial' : 'text_extracted',
         ];
     }
 
@@ -71,19 +74,7 @@ final class SessionAttachmentKnowledgeService
         $file = $this->ownedFile($userId, $sessionId, $fileId);
         $s3Key = idx_build_s3_key($file);
         $maxChars = max(2000, (int)aiAgentExtra('attachment_semantic_prompt', 'max_content_chars', 24000));
-        $indexed = $this->existingIndexText($sessionId, $s3Key, $maxChars);
-
-        if ($indexed !== '') {
-            $extracted = [
-                'content' => $indexed,
-                'ext' => strtolower(pathinfo((string)$file['Nombre'], PATHINFO_EXTENSION)),
-                's3_key' => $s3Key,
-                'extractor' => 'indexed_chunks',
-                'truncated' => false,
-            ];
-        } else {
-            $extracted = idx_extract_files3_text($file, $maxChars);
-        }
+        $extracted = idx_extract_files3_text($file, $maxChars);
 
         return $this->semanticPrepared($sessionId, $fileId, $file, $extracted);
     }
@@ -97,30 +88,7 @@ final class SessionAttachmentKnowledgeService
     /** @return array<string,mixed> */
     private function ownedFile(int $userId, int $sessionId, int $fileId): array
     {
-        if ($sessionId <= 0 || $fileId <= 0) {
-            throw new InvalidArgumentException('file_id y session_id son obligatorios');
-        }
-
-        $session = $this->db->prepare('SELECT id_ FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1');
-        if (!$session) throw new RuntimeException('No se pudo validar la sesión');
-        $session->bind_param('ii', $sessionId, $userId);
-        $session->execute();
-        $owned = $session->get_result()->num_rows > 0;
-        $session->close();
-        if (!$owned) throw new RuntimeException('La sesión no existe o no es tuya');
-
-        $stmt = $this->db->prepare('SELECT id_,Nombre,Encriptado,Ruta,Found FROM FileS3 WHERE id_=? AND user_id_=? AND Found=1 LIMIT 1');
-        if (!$stmt) throw new RuntimeException('No se pudo consultar FileS3');
-        $stmt->bind_param('ii', $fileId, $userId);
-        $stmt->execute();
-        $file = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$file) throw new RuntimeException('El archivo no existe o no es tuyo');
-        if (!idx_file_belongs_to_chat_session($file, $userId, $sessionId)) {
-            throw new RuntimeException('El archivo no pertenece a esta sesión de chat');
-        }
-        return $file;
+        return (new DocumentAccessRepository($this->db))->requireFile($userId, $sessionId, $fileId);
     }
 
     /**
@@ -130,14 +98,12 @@ final class SessionAttachmentKnowledgeService
      */
     private function indexPrepared(int $sessionId, int $fileId, array $file, array $extracted): array
     {
-        $content = trim((string)($extracted['content'] ?? ''));
+        $content = (string)($extracted['content'] ?? '');
         $ext = strtolower((string)($extracted['ext'] ?? ''));
         $s3Key = (string)($extracted['s3_key'] ?? idx_build_s3_key($file));
         if ($content === '') throw new RuntimeException('El archivo no contiene texto indexable');
 
-        $chunks = in_array($ext, idx_text_extensions(), true)
-            ? idx_chunk_text_preserve_lines($content, IDX_CHUNK_MAX_LEN)
-            : idx_chunk_text_smart($content, IDX_CHUNK_MAX_LEN);
+        $chunks = idx_located_chunks($content, $ext, IDX_CHUNK_MAX_LEN);
         if (!$chunks) throw new RuntimeException('El archivo no generó chunks indexables');
 
         $embedding = $this->embeddingState();
@@ -147,11 +113,16 @@ final class SessionAttachmentKnowledgeService
         try {
             $this->deleteBlocks($sessionId, $s3Key, 'file_chunk');
 
-            foreach ($chunks as $i => $chunkText) {
+            foreach ($chunks as $i => $located) {
+                $chunkText = $located['content'];
                 $meta = json_encode([
                     'filename' => (string)$file['Nombre'],
                     'files3_id' => $fileId,
                     'chunk' => $i + 1,
+                    'locator' => $located['locator'],
+                    'chunk_sha256' => $located['sha256'],
+                    'source_sha256' => $extracted['source_sha256'] ?? null,
+                    'source_etag' => $extracted['source_etag'] ?? null,
                     'total' => count($chunks),
                     'extractor' => (string)($extracted['extractor'] ?? 'unknown'),
                     'ext' => $ext,
@@ -190,6 +161,7 @@ final class SessionAttachmentKnowledgeService
             'chunks' => count($chunks),
             'extractor' => (string)($extracted['extractor'] ?? 'unknown'),
             'truncated' => !empty($extracted['truncated']),
+            'coverage' => !empty($extracted['truncated']) ? 'partial' : 'text_extracted',
             'embedding_model' => $embedding['model'],
             'embedding_ready' => $embedding['active'] && $embeddingResult['ready'] === count($blockIds),
             'embedding_ready_count' => $embeddingResult['ready'],
@@ -215,15 +187,10 @@ final class SessionAttachmentKnowledgeService
 
         $maxChars = max(2000, (int)aiAgentExtra('attachment_semantic_prompt', 'max_content_chars', 24000));
         $s3Key = (string)($extracted['s3_key'] ?? idx_build_s3_key($file));
-        $content = $this->existingIndexText($sessionId, $s3Key, $maxChars);
-        $extractor = 'indexed_chunks';
-        $truncated = false;
-
-        if ($content === '') {
-            $content = mb_substr(trim((string)($extracted['content'] ?? '')), 0, $maxChars);
-            $extractor = (string)($extracted['extractor'] ?? 'unknown');
-            $truncated = !empty($extracted['truncated']);
-        }
+        $rawContent = (string)($extracted['content'] ?? '');
+        $content = mb_substr($rawContent, 0, $maxChars);
+        $extractor = (string)($extracted['extractor'] ?? 'unknown');
+        $truncated = !empty($extracted['truncated']) || mb_strlen($rawContent) > $maxChars;
         if ($content === '') throw new RuntimeException('No hay contenido para generar semántica');
 
         $agentKey = $this->looksLikeCode((string)$file['Nombre'], $content)
@@ -283,6 +250,8 @@ final class SessionAttachmentKnowledgeService
                 'filename' => (string)$file['Nombre'],
                 'files3_id' => $fileId,
                 'type' => 'semantic_summary',
+                'source_etag' => $extracted['source_etag'] ?? null,
+                'source_sha256' => $extracted['source_sha256'] ?? null,
                 'semantic_model' => $modelId,
                 'semantic_agent' => $agentKey,
                 'extractor' => $extractor,
@@ -385,7 +354,9 @@ final class SessionAttachmentKnowledgeService
         $pending = 0;
         $errors = [];
 
-        foreach ($blockIds as $blockId) {
+        $immediateLimit = max(0, min(32, (int)aiAgentExtra('embedding_main', 'attachment_immediate_blocks', 8)));
+        foreach ($blockIds as $position => $blockId) {
+            if ($position >= $immediateLimit) { $pending++; continue; }
             try {
                 $stmt = $this->db->prepare('SELECT content_preview FROM SessionContextBlocks WHERE id_=? AND session_id_=? LIMIT 1');
                 if (!$stmt) throw new RuntimeException('No se pudo leer bloque para embedding');
@@ -503,6 +474,10 @@ final class SessionAttachmentKnowledgeService
             throw new RuntimeException('Dimensión inesperada de embedding: ' . count($vector) . '; esperada ' . $dimensions);
         }
 
+        foreach ($vector as $value) {
+            if (!is_numeric($value) || !is_finite((float)$value)) throw new RuntimeException('Embedding contiene valores no numéricos o no finitos');
+        }
+
         return [
             'embedding'=>$vector,
             'inputTokens'=>$inputTokens,
@@ -531,29 +506,6 @@ final class SessionAttachmentKnowledgeService
             throw new RuntimeException('No se pudo guardar embedding: ' . $error);
         }
         $stmt->close();
-    }
-
-    private function existingIndexText(int $sessionId, string $s3Key, int $maxChars): string
-    {
-        $stmt = $this->db->prepare("SELECT content_preview FROM SessionContextBlocks WHERE session_id_=? AND s3_path=? AND block_type='file_chunk' ORDER BY created_at ASC,id_ ASC");
-        if (!$stmt) return '';
-        $stmt->bind_param('is', $sessionId, $s3Key);
-        $stmt->execute();
-        $res = $stmt->get_result();
-        $out = '';
-        while ($row = $res->fetch_assoc()) {
-            $part = trim((string)$row['content_preview']);
-            if ($part === '') continue;
-            $prefix = $out === '' ? '' : "\n\n";
-            if (mb_strlen($out) + mb_strlen($prefix) + mb_strlen($part) > $maxChars) {
-                $left = $maxChars - mb_strlen($out) - mb_strlen($prefix);
-                if ($left > 0) $out .= $prefix . mb_substr($part, 0, $left);
-                break;
-            }
-            $out .= $prefix . $part;
-        }
-        $stmt->close();
-        return trim($out);
     }
 
     private function looksLikeCode(string $name, string $text): bool

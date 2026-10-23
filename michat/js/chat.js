@@ -1830,6 +1830,9 @@ function wireFileActions(container) {
         case 'download':
           downloadSessionFile(s3Key, filename);
           break;
+        case 'unlink':
+          unlinkDriveKnowledge(fileId);
+          break;
         case 'delete':
           deleteSessionFile(fileId, s3Key, filename, btn);
           break;
@@ -4050,7 +4053,7 @@ function updateKnowledgePipelineSummary(files, error = '') {
       : 'Selecciona una conversación para consultar el estado de su conocimiento.';
     return;
   }
-  const ragReady = files.filter(file => file.index_status === 'indexed' || file.semantic_status === 'ready').length;
+  const ragReady = files.filter(file => !file.extraction_partial && (file.index_status === 'indexed' || (file.semantic_type === 'visual_summary' && file.semantic_status === 'ready'))).length;
   const semanticReady = files.filter(file => file.semantic_status === 'ready').length;
   const chunks = files.reduce((n, file) => n + Math.max(0, Number(file.chunks_total || 0)), 0);
   const embeddedChunks = files.reduce((n, file) => n + Math.max(0, Number(file.chunks_with_embedding || 0)), 0);
@@ -4183,7 +4186,7 @@ async function loadSessionAttachments(sessionId) {
           </div>
 
           <div class="chat-session-file-index-state" style="font-size:.62rem; margin:.2rem 0; display:flex; gap:.25rem; flex-wrap:wrap;">
-            ${file.index_status === 'indexed' ? '<span class="badge badge-success">RAG listo</span>' : file.index_status === 'embedding_disabled' ? '<span class="badge badge-secondary">Embeddings desactivados</span>' : file.index_status === 'processing' ? '<span class="badge badge-warning">Embedding pendiente</span>' : file.index_status === 'stale_embedding' ? '<span class="badge badge-danger">Reindexar · modelo cambió</span>' : file.chunks_total > 0 ? '<span class="badge badge-warning">Chunks sin vector</span>' : '<span class="badge badge-secondary">Sin indexar</span>'}
+            ${file.index_status === 'extraction_partial' ? '<span class="badge badge-warning">Extracción parcial · consultar con límites</span>' : file.index_status === 'indexed' ? '<span class="badge badge-success">RAG listo</span>' : file.index_status === 'embedding_disabled' ? '<span class="badge badge-secondary">Embeddings desactivados</span>' : file.index_status === 'processing' ? '<span class="badge badge-warning">Embedding pendiente</span>' : file.index_status === 'stale_embedding' ? '<span class="badge badge-danger">Reindexar · modelo cambió</span>' : file.chunks_total > 0 ? '<span class="badge badge-warning">Chunks sin vector</span>' : '<span class="badge badge-secondary">Sin indexar</span>'}
             ${file.semantic_status === 'ready' ? '<span class="badge badge-info">Semántica lista</span>' : file.semantic_status === 'embedding_disabled' ? '<span class="badge badge-secondary">Semántica sin vector</span>' : file.semantic_status === 'pending_embedding' ? '<span class="badge badge-warning">Semántica pendiente</span>' : file.semantic_status === 'stale_embedding' ? '<span class="badge badge-danger">Semántica requiere nuevo embedding</span>' : ''}
           </div>
 
@@ -4218,12 +4221,12 @@ async function loadSessionAttachments(sessionId) {
               data-action="compare" data-file-id="${fileId}" data-filename="${filename}">
               <i class="fas fa-exchange-alt"></i>
             </button>
-            ${isCodeFile ? `<button type="button" class="chat-file-action" title="Pedir mejoras y revisión de código a la IA"
+            ${isCodeFile && !file.drive_linked ? `<button type="button" class="chat-file-action" title="Pedir mejoras y revisión de código a la IA"
               data-action="improve" data-file-id="${fileId}" data-filename="${filename}"><i class="fas fa-code"></i></button>
               <button type="button" class="chat-file-action" title="Subir una nueva versión de este código sin sobrescribir el original"
               data-action="version" data-file-id="${fileId}" data-filename="${filename}"><i class="fas fa-code-branch"></i></button>` : ''}
-            <button type="button" class="chat-file-action chat-file-action-danger" title="Eliminar archivo"
-              data-action="delete" data-file-id="${fileId}">
+            <button type="button" class="chat-file-action chat-file-action-danger" title="${file.drive_linked ? 'Desvincular de esta conversación' : 'Eliminar archivo'}"
+              data-action="${file.drive_linked ? 'unlink' : 'delete'}" data-file-id="${fileId}">
               <i class="fas fa-trash"></i>
             </button>
           </div>
@@ -4806,6 +4809,59 @@ window.chatUtils = {
     buildS3Url: buildS3Url,
     mdToHtml: mdToHtml
 };
+// Drive links reuse the existing S3 object. Searching/linking never reloads chat messages.
+let driveKnowledgeCsrf = '';
+document.getElementById('driveKnowledgeSearch')?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const target = document.getElementById('driveKnowledgeResults');
+  if (!currentSessionId || !target) return;
+  const sid = currentSessionId;
+  target.textContent = 'Buscando…';
+  try {
+    const q = document.getElementById('driveKnowledgeQuery').value;
+    const response = await fetch('drive_knowledge.php?' + new URLSearchParams({session_id: sid, q}), {credentials:'same-origin'});
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo buscar');
+    if (sid !== currentSessionId) return;
+    driveKnowledgeCsrf = data.csrf;
+    target.replaceChildren();
+    for (const file of data.files) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'btn btn-sm btn-outline-secondary d-block mt-1';
+      button.textContent = file.Nombre + ' · ' + file.Ruta;
+      button.addEventListener('click', async () => {
+        if (sid !== currentSessionId) return;
+        button.disabled = true;
+        try {
+          await changeDriveKnowledge(file.id_, 'link', sid);
+          button.textContent = 'Vinculado. Usa Indexar para preparar su contenido.';
+          if (sid === currentSessionId) await loadSessionAttachments(sid);
+        } catch (error) { button.disabled = false; showToast('Drive', error.message, 'error'); }
+      });
+      target.append(button);
+    }
+    if (!data.files.length) target.textContent = 'No hay coincidencias entre los archivos propios compatibles.';
+  } catch (error) { target.textContent = error.message; }
+});
+async function changeDriveKnowledge(fileId, action, sid) {
+  if (!driveKnowledgeCsrf) {
+    const response = await fetch('drive_knowledge.php?' + new URLSearchParams({session_id:sid,q:''}), {credentials:'same-origin'});
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Acceso denegado');
+    driveKnowledgeCsrf = data.csrf;
+  }
+  const body = new FormData();
+  body.append('session_id', sid); body.append('file_id', fileId); body.append('action',action); body.append('csrf',driveKnowledgeCsrf);
+  const response = await fetch('drive_knowledge.php', {method:'POST',credentials:'same-origin',body});
+  const data = await response.json();
+  if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo actualizar el vínculo');
+}
+async function unlinkDriveKnowledge(fileId) {
+  const sid = currentSessionId;
+  try { await changeDriveKnowledge(fileId, 'unlink', sid); if (sid === currentSessionId) await loadSessionAttachments(sid); }
+  catch (error) { showToast('Drive', error.message, 'error'); }
+}
+
   // === FIN DEL ARCHIVO chat.js CORREGIDO ===
   }); // cierra DOMContentLoaded
 })(); // cierra IIFE

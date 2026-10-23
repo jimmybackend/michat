@@ -497,6 +497,15 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
   <div class="chat-files-drawer-body">
     <p class="chat-files-help">Los archivos se almacenan en S3 y al subirlos se intenta extraer su contenido, dividirlo en fragmentos, generar un resumen semántico y crear embeddings para RAG. Si algo queda pendiente, aquí puedes comprobarlo y reintentarlo. El clip junto a Imagen sube archivos; este panel permite analizarlos, compararlos y crear versiones.</p>
     <p id="chatFilesPipelineSummary" class="chat-files-scope-note" role="status" aria-live="polite">Selecciona una conversación para revisar sus archivos.</p>
+    <details class="chat-files-scope-note">
+      <summary>Vincular un archivo propio de ArcadeCloud Drive</summary>
+      <form id="driveKnowledgeSearch" class="mt-2">
+        <label for="driveKnowledgeQuery">Nombre del archivo</label>
+        <input id="driveKnowledgeQuery" class="form-control form-control-sm" maxlength="100" placeholder="Buscar en mis archivos">
+        <button class="btn btn-sm btn-secondary mt-1" type="submit">Buscar</button>
+      </form>
+      <div id="driveKnowledgeResults" role="status" aria-live="polite"></div>
+    </details>
     <div class="sidebar-section adjuntos-section">
 
   <div class="section-label-row">

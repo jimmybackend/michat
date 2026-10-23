@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/S3Manager.php';
 require_once __DIR__ . '/ai_agent_runtime.php';
 require_once __DIR__ . '/session_file_extractor.php';
+require_once __DIR__ . '/Memory/DocumentAccessRepository.php';
 
 /**
  * Convierte adjuntos de imagen en conocimiento textual reutilizable por el RAG.
@@ -110,7 +111,8 @@ final class SessionImageKnowledgeService
             $format,
             $image['width'],
             $image['height'],
-            $embedding
+            $embedding,
+            (string)($image['etag'] ?? '')
         );
 
         $embeddingResult = $embedding['active']
@@ -138,6 +140,7 @@ final class SessionImageKnowledgeService
             'semantic' => [
                 'ok' => true,
                 'type' => 'visual_summary',
+            'source_etag' => $sourceEtag,
                 'model' => $vision['model_id'],
                 'embedding_ready' => $embeddingReady,
             ],
@@ -153,29 +156,7 @@ final class SessionImageKnowledgeService
     /** @return array<string,mixed> */
     private function ownedFile(int $userId, int $sessionId, int $fileId): array
     {
-        if ($userId <= 0 || $sessionId <= 0 || $fileId <= 0) {
-            throw new InvalidArgumentException('user_id, session_id y file_id son obligatorios');
-        }
-
-        $session = $this->db->prepare('SELECT id_ FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1');
-        if (!$session) throw new RuntimeException('No se pudo validar la sesión');
-        $session->bind_param('ii', $sessionId, $userId);
-        $session->execute();
-        $owned = $session->get_result()->num_rows > 0;
-        $session->close();
-        if (!$owned) throw new RuntimeException('La sesión no existe o no es tuya');
-
-        $stmt = $this->db->prepare('SELECT id_,Nombre,Encriptado,Ruta,Found FROM FileS3 WHERE id_=? AND user_id_=? AND Found=1 LIMIT 1');
-        if (!$stmt) throw new RuntimeException('No se pudo consultar FileS3');
-        $stmt->bind_param('ii', $fileId, $userId);
-        $stmt->execute();
-        $file = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        if (!$file) throw new RuntimeException('El archivo no existe o no es tuyo');
-        if (!idx_file_belongs_to_chat_session($file, $userId, $sessionId)) {
-            throw new RuntimeException('El archivo no pertenece a esta sesión de chat');
-        }
-        return $file;
+        return (new DocumentAccessRepository($this->db))->requireFile($userId, $sessionId, $fileId);
     }
 
     /** @return array{bytes:string,width:?int,height:?int} */
@@ -216,7 +197,7 @@ final class SessionImageKnowledgeService
                 $height = isset($size[1]) ? (int)$size[1] : null;
             }
         }
-        return ['bytes' => $bytes, 'width' => $width, 'height' => $height];
+        return ['bytes' => $bytes, 'width' => $width, 'height' => $height, 'etag'=>(string)($result['ETag'] ?? '')];
     }
 
     private function assertBedrockImageLimits(string $bytes, ?int $width, ?int $height): void
@@ -321,12 +302,14 @@ final class SessionImageKnowledgeService
         string $format,
         ?int $width,
         ?int $height,
-        array $embedding
+        array $embedding,
+        string $sourceEtag = ''
     ): int {
         $meta = json_encode([
             'filename' => (string)$file['Nombre'],
             'files3_id' => $fileId,
             'type' => 'visual_summary',
+            'source_etag' => $sourceEtag,
             'visual_model' => $modelId,
             'visual_agent' => $sourceAgent,
             'extractor' => 'bedrock_converse_vision',
@@ -531,6 +514,10 @@ final class SessionImageKnowledgeService
         if (count($vector) !== $dimensions) {
             throw new RuntimeException('Dimensión inesperada de embedding: ' . count($vector) . '; esperada ' . $dimensions);
         }
+        foreach ($vector as $value) {
+            if (!is_numeric($value) || !is_finite((float)$value)) throw new RuntimeException('Embedding contiene valores no numéricos o no finitos');
+        }
+
         return [
             'embedding'=>$vector,
             'inputTokens'=>$inputTokens,
