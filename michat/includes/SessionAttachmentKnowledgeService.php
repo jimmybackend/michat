@@ -30,7 +30,7 @@ final class SessionAttachmentKnowledgeService
     /** @return array<string,mixed> */
     public function process(int $userId, int $sessionId, int $fileId): array
     {
-        $this->loadRuntime($userId);
+        $runtimeWarnings = $this->loadIndexRuntime($userId);
         $file = $this->ownedFile($userId, $sessionId, $fileId);
         if (getenv('MICHAT_DOCUMENT_KNOWLEDGE_ENABLED')==='1') {
             require_once __DIR__.'/Documents/DocumentKnowledgeService.php';
@@ -38,7 +38,7 @@ final class SessionAttachmentKnowledgeService
             return (new DocumentKnowledgeService($this->db,new BedrockDocumentKnowledgeRuntime($this->db)))->enqueue($userId,$sessionId,$fileId);
         }
         $extracted = idx_extract_files3_text($file, IDX_MAX_EXTRACTED_CHARS);
-        $index = $this->indexPrepared($sessionId, $fileId, $file, $extracted);
+        $index = $this->indexPrepared($sessionId, $fileId, $file, $extracted, $runtimeWarnings);
 
         try {
             $semantic = $this->semanticPrepared($sessionId, $fileId, $file, $extracted);
@@ -66,10 +66,10 @@ final class SessionAttachmentKnowledgeService
     /** @return array<string,mixed> */
     public function index(int $userId, int $sessionId, int $fileId): array
     {
-        $this->loadRuntime($userId);
+        $runtimeWarnings = $this->loadIndexRuntime($userId);
         $file = $this->ownedFile($userId, $sessionId, $fileId);
         $extracted = idx_extract_files3_text($file, IDX_MAX_EXTRACTED_CHARS);
-        return $this->indexPrepared($sessionId, $fileId, $file, $extracted);
+        return $this->indexPrepared($sessionId, $fileId, $file, $extracted, $runtimeWarnings);
     }
 
     /** @return array<string,mixed> */
@@ -103,6 +103,18 @@ final class SessionAttachmentKnowledgeService
         aiRuntimeLoad($this->db, $userId);
     }
 
+    /** Text extraction is useful even when optional AI configuration is broken. */
+    private function loadIndexRuntime(int $userId): array
+    {
+        if ($userId <= 0) throw new RuntimeException('Sesión inválida');
+        try { $this->loadRuntime($userId); return []; }
+        catch (Throwable $e) {
+            $GLOBALS['AI_AGENT_CONFIGS'] = []; // Never inherit a previous user's runtime.
+            error_log('ATTACHMENT_AI_CONFIG: ' . get_class($e) . ' code=' . $e->getCode());
+            return ['No se pudo cargar la configuración de IA. Se extrajo texto sin embeddings; revisa la configuración y reintenta para vectorizar.'];
+        }
+    }
+
     /** @return array<string,mixed> */
     private function ownedFile(int $userId, int $sessionId, int $fileId): array
     {
@@ -114,7 +126,7 @@ final class SessionAttachmentKnowledgeService
      * @param array<string,mixed> $extracted
      * @return array<string,mixed>
      */
-    private function indexPrepared(int $sessionId, int $fileId, array $file, array $extracted): array
+    private function indexPrepared(int $sessionId, int $fileId, array $file, array $extracted, array $warnings = []): array
     {
         $content = (string)($extracted['content'] ?? '');
         $ext = strtolower((string)($extracted['ext'] ?? ''));
@@ -124,12 +136,17 @@ final class SessionAttachmentKnowledgeService
         $chunks = idx_located_chunks($content, $ext, IDX_CHUNK_MAX_LEN);
         if (!$chunks) throw new RuntimeException('El archivo no generó chunks indexables');
 
-        $embedding = $this->embeddingState();
+        try { $embedding = $this->embeddingState(); }
+        catch (Throwable $e) {
+            error_log('ATTACHMENT_EMBEDDING_CONFIG: ' . $e->getMessage());
+            $embedding = ['active'=>false, 'model'=>null];
+            $warnings[] = 'Embeddings sin modelo válido. El texto se conserva para consultas con citas; configura embedding_main y reintenta para vectorizar.';
+        }
         $blockIds = [];
 
         $this->db->begin_transaction();
         try {
-            $this->deleteBlocks($sessionId, $s3Key, 'file_chunk');
+            $replacedIds = $this->deleteBlocks($sessionId, $s3Key, 'file_chunk', false);
 
             foreach ($chunks as $i => $located) {
                 $chunkText = $located['content'];
@@ -160,9 +177,6 @@ final class SessionAttachmentKnowledgeService
                 $ins->close();
                 $blockIds[] = $blockId;
 
-                if ($embedding['active']) {
-                    $this->queueEmbedding($blockId, (string)$embedding['model']);
-                }
             }
             $this->db->commit();
         } catch (Throwable $e) {
@@ -170,9 +184,29 @@ final class SessionAttachmentKnowledgeService
             throw $e;
         }
 
-        $embeddingResult = $embedding['active']
-            ? $this->embedBlocksNow($sessionId, $blockIds, (string)$embedding['model'])
-            : ['ready' => 0, 'pending' => 0, 'errors' => []];
+        // Persist literal evidence before touching the optional embedding queue.
+        try { $this->deleteEmbeddingJobs($replacedIds); }
+        catch (Throwable $e) {
+            error_log('ATTACHMENT_QUEUE_CLEANUP: ' . get_class($e) . ' code=' . $e->getCode());
+            $warnings[] = 'No se pudo limpiar la cola del índice anterior. El texto nuevo está guardado; revisa la cola de embeddings.';
+        }
+        $queued = []; $queueFailed = 0;
+        if ($embedding['active']) {
+            foreach ($blockIds as $blockId) {
+                try { $this->queueEmbedding($blockId, (string)$embedding['model']); $queued[] = $blockId; }
+                catch (Throwable $e) { $queueFailed++; error_log('ATTACHMENT_QUEUE: ' . get_class($e) . ' code=' . $e->getCode()); }
+            }
+        }
+        try {
+            $embeddingResult = $embedding['active'] && $queued
+                ? $this->embedBlocksNow($sessionId, $queued, (string)$embedding['model'])
+                : ['ready' => 0, 'pending' => 0, 'errors' => []];
+        } catch (Throwable $e) {
+            error_log('ATTACHMENT_EMBEDDING: ' . get_class($e) . ' code=' . $e->getCode());
+            $embeddingResult = ['ready'=>0,'pending'=>count($queued),'errors'=>['No se completó la vectorización; revisa la cola y reintenta.']];
+        }
+        if ($queueFailed) $warnings[] = 'El texto está guardado, pero no se pudieron encolar todos los embeddings. Revisa la cola y reintenta la indexación.';
+        if ($embeddingResult['pending']) $warnings[] = 'Hay embeddings pendientes; el texto ya está disponible para consultas con citas.';
 
         return [
             'ok' => true,
@@ -184,6 +218,8 @@ final class SessionAttachmentKnowledgeService
             'embedding_ready' => $embedding['active'] && $embeddingResult['ready'] === count($blockIds),
             'embedding_ready_count' => $embeddingResult['ready'],
             'embedding_pending_count' => $embeddingResult['pending'],
+            'embedding_unqueued_count' => $queueFailed,
+            'warnings' => $warnings,
             'embedding_errors' => $embeddingResult['errors'],
             'semantic_preserved' => true,
         ];
@@ -311,7 +347,7 @@ final class SessionAttachmentKnowledgeService
         ];
     }
 
-    private function deleteBlocks(int $sessionId, string $s3Key, string $blockType): void
+    private function deleteBlocks(int $sessionId, string $s3Key, string $blockType, bool $cleanupJobs = true): array
     {
         $ids = [];
         $stmt = $this->db->prepare('SELECT id_ FROM SessionContextBlocks WHERE session_id_=? AND s3_path=? AND block_type=?');
@@ -322,6 +358,18 @@ final class SessionAttachmentKnowledgeService
         while ($row = $res->fetch_assoc()) $ids[] = (int)$row['id_'];
         $stmt->close();
 
+        if ($cleanupJobs) $this->deleteEmbeddingJobs($ids);
+
+        $del = $this->db->prepare('DELETE FROM SessionContextBlocks WHERE session_id_=? AND s3_path=? AND block_type=?');
+        if (!$del) throw new RuntimeException('No se pudieron eliminar bloques previos');
+        $del->bind_param('iss', $sessionId, $s3Key, $blockType);
+        $del->execute();
+        $del->close();
+        return $ids;
+    }
+
+    private function deleteEmbeddingJobs(array $ids): void
+    {
         if ($ids) {
             $placeholders = implode(',', array_fill(0, count($ids), '?'));
             $types = str_repeat('i', count($ids));
@@ -332,12 +380,6 @@ final class SessionAttachmentKnowledgeService
                 $jobs->close();
             }
         }
-
-        $del = $this->db->prepare('DELETE FROM SessionContextBlocks WHERE session_id_=? AND s3_path=? AND block_type=?');
-        if (!$del) throw new RuntimeException('No se pudieron eliminar bloques previos');
-        $del->bind_param('iss', $sessionId, $s3Key, $blockType);
-        $del->execute();
-        $del->close();
     }
 
     /** @return array{active:bool,model:?string} */

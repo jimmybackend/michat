@@ -18,16 +18,21 @@ final class DriveAnalysisService
     {
         $states=new FileKnowledgeState($this->db);
         $this->access->requireFile($user,$session,$fileId);
+        $stage='lock';
         try {
-            return $this->locked($user,$fileId,function() use($user,$session,$fileId,$states) {
+            return $this->locked($user,$fileId,function() use($user,$session,$fileId,$states,&$stage) {
+                $stage='access_recheck';
                 $file=$this->access->requireFile($user,$session,$fileId);
+                $stage='state_persistence';
                 $states->save($user,$session,$fileId,['status'=>'extracting','message'=>'Archivo vinculado. Comprobando contenido e índice.']);
                 $warnings=[];$state=null;
+                $stage='source_verification';
                 $source=$this->store->identity($file);
                 try { $state=$this->store->read($file,$source); }
                 catch(Throwable $e) { error_log('analysis cache read: '.$e->getMessage());$warnings[]='No se pudo leer el JSON auxiliar; se intentará preparar el contenido sin sobrescribirlo.'; }
                 $analysis=$state['analysis'] ?? null;$reused=is_array($analysis);
                 $image=in_array(strtolower(pathinfo($file['Nombre'],PATHINFO_EXTENSION)),['jpg','jpeg','png','webp','gif'],true);
+                $stage='index_lookup';
                 $chunks=$this->chunks($session,$source);
                 if (!$chunks && !empty($analysis['chunks'])) {
                     try { $this->importChunks($session,$source,$analysis['chunks']);$chunks=$this->chunks($session,$source); }
@@ -35,14 +40,17 @@ final class DriveAnalysisService
                 }
                 // Literal evidence is independent of summarization, embeddings and sidecar persistence.
                 if (!$chunks && !$image) {
-                    if (is_callable($this->indexer)) ($this->indexer)($user,$session,$fileId);
+                    $stage='extraction_index';
+                    if (is_callable($this->indexer)) $indexed=($this->indexer)($user,$session,$fileId);
                     else {
                         require_once dirname(__DIR__).'/SessionAttachmentKnowledgeService.php';
-                        (new SessionAttachmentKnowledgeService($this->db))->index($user,$session,$fileId);
+                        $indexed=(new SessionAttachmentKnowledgeService($this->db))->index($user,$session,$fileId);
                     }
+                    $warnings=array_merge($warnings,(array)($indexed['warnings'] ?? []));
                     $chunks=$this->chunks($session,$source);
                     if (!$chunks) throw new RuntimeException('La extracción no produjo fragmentos verificables');
                 }
+                $stage='summary';
                 if (!$reused) {
                     $block=$this->existingSummary($session,$source);
                     if (!$block) {
@@ -69,8 +77,10 @@ final class DriveAnalysisService
                 }
                 $analysis['chunks']=$chunks;
                 if (array_filter($chunks,static fn($chunk)=>!empty($chunk['meta']['truncated']))) $analysis['coverage']='partial';
+                $stage='source_recheck';
                 $file=$this->access->requireFile($user,$session,$fileId);
                 if (AnalysisSidecarStore::revisionKey($this->store->identity($file))!==AnalysisSidecarStore::revisionKey($source)) throw new RuntimeException('El original cambió durante el procesamiento; reintenta');
+                $stage='summary_persistence';
                 if (!empty($analysis['summary'])) $this->import($session,$file,['source'=>$source,'revision_key'=>AnalysisSidecarStore::revisionKey($source)],$analysis);
                 $saved=false;
                 if ($state!==null) {
@@ -78,6 +88,7 @@ final class DriveAnalysisService
                     catch(Throwable $e) { error_log('analysis cache write: '.$e->getMessage());$warnings[]='El contenido está disponible, pero no se pudo guardar el JSON auxiliar.'; }
                 }
                 $message=$chunks?'Texto extraído y fragmentos disponibles para responder con citas.':'Descripción visual disponible; no equivale a texto literal del original.';
+                $stage='state_persistence';
                 $states->save($user,$session,$fileId,['status'=>$chunks?'text_ready':'summary_ready','message'=>$message,'source_etag'=>$source['etag'],
                     'chunks'=>count($chunks),'semantic_available'=>!empty($analysis['summary']),'sidecar_saved'=>$saved,'warnings'=>$warnings]);
                 return ['ok'=>true,'file_id'=>$fileId,'filename'=>$file['Nombre'],'reused'=>$reused,'summary'=>$analysis['summary'],
@@ -86,9 +97,10 @@ final class DriveAnalysisService
                     'sidecar_name'=>basename(AnalysisSidecarStore::key($file)),'sidecar_saved'=>$saved];
             });
         } catch(Throwable $e) {
-            error_log('selected file: '.$e->getMessage());$state=FileKnowledgeState::failure($e);
-            $states->save($user,$session,$fileId,$state);
-            return ['ok'=>false,'pending'=>$e instanceof PdfOcrPendingException,'retry_after'=>15,'file_id'=>$fileId,'error'=>$state['message'],'error_code'=>$state['error_code']];
+            $state=FileKnowledgeState::reportFailure($e,$stage,['user_id'=>$user,'session_id'=>$session,'file_id'=>$fileId]);
+            try { $states->save($user,$session,$fileId,$state); }
+            catch(Throwable $saveError) { error_log('FILE_ANALYSIS_STATE '.($state['error_id'] ?? 'ocr_pending').' '.get_class($saveError).' code='.$saveError->getCode()); }
+            return ['ok'=>false,'pending'=>$e instanceof PdfOcrPendingException,'retry_after'=>15,'file_id'=>$fileId,'error'=>$state['message'],'error_code'=>$state['error_code'],'error_id'=>$state['error_id'] ?? null,'stage'=>$stage];
         }
     }
     private function chunks(int $session,array $source): array

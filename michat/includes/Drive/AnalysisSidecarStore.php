@@ -13,6 +13,7 @@ final class AnalysisSidecarStore
     }
     public function identity(array $file): array
     {
+        if (trim($this->bucket)==='' || $this->bucket==='yours3bucket') throw new RuntimeException('AWS_S3_BUCKET no configurado');
         $key=idx_build_s3_key($file);
         $head=$this->s3->headObject(['Bucket'=>$this->bucket,'Key'=>$key]);
         $etag=(string)($head['ETag'] ?? '');
