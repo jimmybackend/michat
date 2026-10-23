@@ -3535,6 +3535,20 @@ const btnIndexPending = document.getElementById('btnIndexPending');
 if (btnIndexPending) {
   btnIndexPending.addEventListener('click', indexPendingSources);
 }
+    // El panel conserva las acciones originales de los archivos; el clip
+    // inferior sigue dedicado exclusivamente a seleccionar/subir.
+    const knowledgePanel = document.getElementById('chat2KnowledgePanel');
+    document.getElementById('chat2FilesKnowledge')?.addEventListener('click', async () => {
+      if (!knowledgePanel) return;
+      knowledgePanel.hidden = !knowledgePanel.hidden;
+      if (!knowledgePanel.hidden) {
+        await loadSessionAttachments(currentSessionId);
+        knowledgePanel.scrollIntoView({block:'nearest',behavior:'smooth'});
+      }
+    });
+    document.getElementById('chat2KnowledgeClose')?.addEventListener('click', () => {
+      if (knowledgePanel) knowledgePanel.hidden = true;
+    });
     if (el.file) el.file.addEventListener('change', () => {
       const selected = Array.from(el.file.files || []);
       el.file.value = '';
