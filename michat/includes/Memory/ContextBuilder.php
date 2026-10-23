@@ -53,7 +53,7 @@ final class ContextBuilder
         // No depender del clasificador de intención para recuperar adjuntos
         // que ya pertenecen a esta conversación.
         $explicitFileQuestion = (bool)preg_match(
-            '/(?:archiv\\w*|aechiv\\w*|adjunt\\w*|document\\w*|pdf|ficher\\w*|c[oó]digo|fragment\\w*|indexa\\w*|versi[oó]n|compar\\w*|qu[eé] dice|\.php\\b|\.js\\b|\.sql\\b|\.json\\b)/iu',
+            '/(?:archiv\\w*|aechiv\\w*|adjunt\\w*|document\\w*|pdf|ficher\\w*|c[oó]digo|fragment\\w*|indexa\\w*|versi[oó]n|compar\\w*|qu[eé] dice|p[aá]gina|diapositiv\\w*|celda\\w*|f[oó]rmula\\w*|hoja\\w*|presentaci\\w*|excel|referenci\\w*|funci[oó]n|contradi\\w*|\.php\\b|\.js\\b|\.sql\\b|\.json\\b)/iu',
             $queryText
         );
         if ($stage === 'respond' && $explicitFileQuestion && !$memoryRoute->uses('use_attachment_context')) {

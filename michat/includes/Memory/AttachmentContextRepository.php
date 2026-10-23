@@ -34,6 +34,7 @@ final class AttachmentContextRepository
         $limit = max(1000, min(48000, (int)aiAgentExtra('embedding_main', 'attachment_rag_max_chars', 16000)));
         preg_match_all('/["“]([^"”]+)["”]/u',$queryText,$quoted);
         $requestedNames = array_values(array_filter(array_map('mb_strtolower',$quoted[1]), static fn($name)=>in_array(strtolower(pathinfo($name,PATHINFO_EXTENSION)),array_merge(idx_text_extensions(),idx_extractable_extensions(),['jpg','jpeg','png','webp','gif']),true)));
+        if (preg_match('/busca|referenci/iu',$queryText)) $requestedNames=[];
         $last = 0; $best = []; $files = []; $revisions = []; $started = microtime(true);
         do {
             $s = $this->db->prepare("SELECT id_,block_type,content_preview,s3_path,source_ids,embedding_json,embedding_model FROM SessionContextBlocks WHERE session_id_=? AND id_>? AND block_type IN ('file','file_chunk') ORDER BY id_ LIMIT 200");
