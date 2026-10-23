@@ -3173,22 +3173,6 @@ async function saveProject(e) {
         alert('Error agregando fuentes: ' + e.message); 
       }
     }
-    async function executeTool(toolName) {
-      if (!currentProjectId) { 
-        alert('⚠️ Primero selecciona o crea un proyecto en el panel lateral izquierdo.'); 
-        return; 
-      }
-      if (!currentSessionId) { 
-        alert('⚠️ Primero crea o selecciona una sesión de chat.'); 
-        return; 
-      }
-      pushLocal('user', `[Herramienta: ${toolName}] Solicitando ejecución en el proyecto activo...`);
-      setStatus(`Ejecutando ${toolName}...`);
-      setTimeout(() => {
-        pushLocal('assistant', `⚙️ La herramienta **${toolName}** está configurada y lista.\n\nEl backend está preparado para procesar solicitudes para el proyecto #${currentProjectId}.\n\n*(Próximo paso: Implementar el modal de parámetros específicos para "${toolName}")*`);
-        setStatus('');
-      }, 600);
-    }
 //para el modal de subir archivos
 function openProjectSourcesModal() {
     if (!currentProjectId) {
@@ -3548,13 +3532,6 @@ const chat2IndexPending = document.getElementById('chat2IndexPending');
 if (chat2IndexPending) {
   chat2IndexPending.addEventListener('click', indexPendingFromPanel);
 }
-    document.querySelectorAll('[data-tool]').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        const tool = btn.dataset.tool;
-        executeTool(tool);
-      });
-    });
     const projectForm = document.getElementById('projectForm');
     if (projectForm) projectForm.addEventListener('submit', saveProject);
     const btnCancelProject = document.getElementById('btnCancelProject');
