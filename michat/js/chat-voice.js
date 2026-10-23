@@ -128,7 +128,7 @@
     new Uint8Array(buffer, 44).set(pcmBytes);
     return new Blob([buffer], { type: 'audio/wav' });
   }
-  async function playResponse(base64, sampleRate) {
+  async function playResponse(base64, sampleRate, inCurrentChat) {
     if (!base64) return;
     const blob = wavBlob(base64Bytes(base64), Number(sampleRate || 24000));
     const url = URL.createObjectURL(blob);
@@ -144,7 +144,7 @@
       // Android/iOS pueden bloquear la reproducción después del fetch.
       // Nunca descartar el audio silenciosamente: ofrecer controles táctiles.
       manualPlayback = true;
-      const container = $('#chat2Messages .chat-msg.assistant:last-child') || $('#chat2Status');
+      const container = (inCurrentChat ? $('#chat2Messages .chat-msg.assistant:last-child') : null) || $('#chat2Status');
       if (!container) { revoke(); return; }
       const wrap = document.createElement('div');
       wrap.className = 'chat-voice-playback';
@@ -224,7 +224,7 @@
       if (usageNode) usageNode.textContent = `Voz: ${Number(usage.input_tokens || 0)} in / ${Number(usage.output_tokens || 0)} out · ${Number(usage.total_tokens || 0)} tokens`;
       const added = window.chatUtils?.appendVoiceTurn?.(data) === true;
       status(added ? '🔊 Respuesta de voz lista.' : '🔊 Turno de voz guardado en su conversación.', false);
-      await playResponse(data.audio_pcm_base64 || '', data.output_sample_rate || 24000);
+      await playResponse(data.audio_pcm_base64 || '', data.output_sample_rate || 24000, added);
     } finally {
       processing = false;
       button.disabled = false;
