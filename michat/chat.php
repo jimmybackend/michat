@@ -581,7 +581,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
   <div class="chat-composer-actions">
     <div class="chat-composer-tools-scroll" aria-label="Herramientas del chat">
       <div class="chat-composer-primary-tools">
-        <input id="chat2File" type="file" hidden multiple accept=".php,.js,.ts,.py,.java,.c,.cpp,.cs,.go,.rs,.rb,.html,.css,.scss,.json,.xml,.yaml,.yml,.md,.txt,.sql,.sh,.bash,.pdf,.jpg,.jpeg,.png,.gif,.mp4,.webm,.mp3,.wav,.docx,.xlsx,.pptx" aria-label="Elegir archivos para adjuntar a la conversación">
+        <input id="chat2File" type="file" hidden multiple accept=".pdf,.doc,.docx,.dotx,.ppt,.pptx,.ppsx,.xls,.xlsx,.xlsm,.xltx,.xltm,.csv,.tsv,.txt,.md,.markdown,.json,.jsonl,.ndjson,.yaml,.yml,.xml,.sql,.db,.sqlite,.sqlite3,.rtf,.epub,.odt,.ods,.odp,.php,.js,.ts,.py,.java,.c,.cpp,.cs,.go,.rs,.rb,.html,.css,.scss,.sh,.bash,.log,.jpg,.jpeg,.png,.gif,.webp,.mp4,.webm,.mp3,.wav" aria-label="Elegir archivos para adjuntar a la conversación">
         <button id="chat2Attach" class="btn btn-sm btn-outline-secondary" type="button" title="Adjuntar archivos (subida e indexación RAG automática)" aria-label="Adjuntar archivos a la conversación"><i class="fas fa-paperclip" aria-hidden="true"></i></button>
         <button id="chat2BtnGenImg" class="btn btn-sm btn-outline-primary" title="Generar imagen" aria-label="Generar imagen"><i class="fas fa-image"></i></button>
         <button id="chat2BtnGenVid" class="btn btn-sm btn-outline-primary" title="Generar video" aria-label="Generar video"><i class="fas fa-film"></i></button>
@@ -738,7 +738,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <div class="form-group">
 <label for="projectFilesInput"><i class="fas fa-upload"></i> Selecciona archivos nuevos</label>
 <input type="file" class="form-control-file" id="projectFilesInput" multiple
-accept=".php,.js,.ts,.py,.java,.c,.cpp,.cs,.go,.rs,.rb,.html,.css,.scss,.json,.xml,.yaml,.yml,.md,.txt,.sql,.sh,.bash,.pdf,.jpg,.png,.gif">
+accept=".pdf,.doc,.docx,.dotx,.ppt,.pptx,.ppsx,.xls,.xlsx,.xlsm,.xltx,.xltm,.csv,.tsv,.txt,.md,.markdown,.json,.jsonl,.ndjson,.yaml,.yml,.xml,.sql,.db,.sqlite,.sqlite3,.rtf,.epub,.odt,.ods,.odp,.php,.js,.ts,.py,.java,.c,.cpp,.cs,.go,.rs,.rb,.html,.css,.scss,.sh,.bash,.log,.jpg,.jpeg,.png,.gif,.webp,.mp4,.webm,.mp3,.wav">
 <small class="form-text text-muted">
 Puedes seleccionar múltiples archivos. Se registrarán como "Pendientes" para ser indexados por la IA.
 </small>
@@ -824,7 +824,7 @@ role="progressbar" style="width: 0%">0%</div>
 <!-- Preferencias primero: expone chatPreferencesReady/modelo antes de crear sesiones. -->
 <script src="js/user_preferences.js"></script>
 <!-- chat.js administra sesiones/proyectos y exporta window.chatUtils. -->
-<script src="js/chat.js?v=20261023-single-brain-rag"></script>
+<script src="js/chat.js?v=20261022-multiformat-rag"></script>
 <!-- El micrófono utiliza Nova 2 Sonic: cargar su controlador tras chat.js. -->
 <script src="js/chat-voice.js?v=20261023-sonic-diagnostics"></script>
 <script src="js/context-viewer.js"></script> 

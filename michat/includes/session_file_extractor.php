@@ -113,6 +113,17 @@ function idx_textract_detect_text(string $bucket, string $s3Key): string {
     return implode("\n", $lines);
 }
 
+/** Añade localizadores de página cuando el extractor PDF devuelve saltos FF. */
+function idx_pdf_page_labels(string $text): string {
+    $pages = explode("\f", $text);
+    if (count($pages) < 2) return $text;
+    $out = [];
+    foreach ($pages as $i => $page) {
+        if (trim($page) !== '') $out[] = '[Página ' . ($i + 1) . "]\n" . trim($page);
+    }
+    return implode("\n\n", $out);
+}
+
 function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$extractor, string &$error): string {
     // 1) Parser PHP opcional: composer require smalot/pdfparser
     if (class_exists('Smalot\PdfParser\Parser')) {
@@ -120,6 +131,14 @@ function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$ex
             $parser = new Smalot\PdfParser\Parser();
             $pdf = $parser->parseFile($tmp);
             $text = (string)$pdf->getText();
+            if (method_exists($pdf, 'getPages')) {
+                $paged = [];
+                foreach ($pdf->getPages() as $pageNumber => $page) {
+                    $pageText = trim((string)$page->getText());
+                    if ($pageText !== '') $paged[] = '[Página ' . ((int)$pageNumber + 1) . "]\n" . $pageText;
+                }
+                if ($paged) $text = implode("\n\n", $paged);
+            }
 
             if (trim($text) !== '') {
                 $extractor = 'pdfparser-php';
@@ -142,7 +161,7 @@ function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$ex
 
             if (trim($text) !== '') {
                 $extractor = 'pdftotext';
-                return $text;
+                return idx_pdf_page_labels($text);
             }
         }
     }
@@ -406,6 +425,12 @@ function idx_extract_xlsx(string $tmp, string &$extractor, string &$error): stri
                     }
 
                     $value = trim($value);
+                    // Conservar fórmulas y valores cacheados; de otro modo el
+                    // asistente no puede explicar cómo se calculó una celda.
+                    if (preg_match('/<f(?:\s[^>]*)?>(.*?)<\/f>/s', $cellXml, $formulaMatch)) {
+                        $formula = '=' . idx_xml_decode($formulaMatch[1]);
+                        $value = $value === '' ? $formula : $value . ' [fórmula ' . $formula . ']';
+                    }
                     if ($value !== '') $cells[] = $address . ': ' . $value;
                 }
             }
@@ -640,6 +665,94 @@ function idx_extract_legacy_office(string $tmp, string $ext, string $filename, s
     return '';
 }
 
+/**
+ * Lee una base SQLite (extensiones .db/.sqlite/.sqlite3) SIN ejecutar SQL
+ * suministrado por el archivo ni escribir en él. La extracción es una muestra
+ * acotada, no una exportación completa: evita cargas excesivas en PHP-FPM.
+ * Bases Access, MySQL y otros formatos .db se rechazan explícitamente.
+ */
+function idx_extract_sqlite(string $tmp, string &$extractor, string &$error): string {
+    if (!class_exists('SQLite3')) {
+        $error = 'Falta extensión PHP sqlite3 para analizar bases SQLite.';
+        return '';
+    }
+    $head = @file_get_contents($tmp, false, null, 0, 16);
+    if ($head !== "SQLite format 3\x00") {
+        $error = 'El archivo .db no es una base SQLite reconocible. Otros motores requieren un extractor propio.';
+        return '';
+    }
+
+    $db = null;
+    try {
+        $db = new SQLite3($tmp, SQLITE3_OPEN_READONLY);
+        $db->busyTimeout(100);
+        $db->exec('PRAGMA query_only=ON');
+        $db->exec('PRAGMA trusted_schema=OFF');
+        $list = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name LIMIT 51");
+        if (!$list) throw new RuntimeException('No se pudo enumerar el esquema SQLite');
+
+        $out = ["[BASE SQLITE: esquema y muestra de datos de SOLO LECTURA]"];
+        $count = 0;
+        $partial = false;
+        $maxChars = 120000;
+        while (($tableRow = $list->fetchArray(SQLITE3_ASSOC)) !== false) {
+            if (++$count > 50) { $partial = true; break; }
+            $table = (string)$tableRow['name'];
+            $quoted = '"' . str_replace('"', '""', $table) . '"';
+            $columnRows = $db->query('PRAGMA table_info(' . $quoted . ')');
+            if (!$columnRows) continue;
+            $columns = [];
+            $types = [];
+            while (($c = $columnRows->fetchArray(SQLITE3_ASSOC)) !== false) {
+                $columns[] = (string)$c['name'];
+                $types[] = (string)$c['name'] . ' ' . (string)$c['type'];
+            }
+            if (!$columns) continue;
+            $out[] = "\n[Tabla: {$table}]";
+            $out[] = 'Columnas: ' . implode(' | ', $types);
+            // Leer un máximo de 40 filas y 24 columnas por tabla; los valores
+            // largos se acotan ANTES de devolverlos a PHP.
+            $selected = array_slice($columns, 0, 24);
+            if (count($columns) > 24) $partial = true;
+            $expr = [];
+            foreach ($selected as $col) {
+                $q = '"' . str_replace('"', '""', $col) . '"';
+                $expr[] = 'substr(CAST(' . $q . ' AS TEXT),1,1501) AS ' . $q;
+            }
+            $rows = $db->query('SELECT ' . implode(',', $expr) . ' FROM ' . $quoted . ' LIMIT 41');
+            if (!$rows) { $partial = true; continue; }
+            $rowNum = 0;
+            while (($row = $rows->fetchArray(SQLITE3_ASSOC)) !== false) {
+                if (++$rowNum > 40) { $partial = true; break; }
+                $values = [];
+                foreach ($selected as $col) {
+                    $v = $row[$col] ?? null;
+                    $v = $v === null ? 'NULL' : (string)$v;
+                    if (mb_strlen($v) > 1500) {
+                        $partial = true;
+                        $v = mb_substr($v, 0, 1500);
+                    }
+                    $v = idx_normalize_extracted_text($v);
+                    if ($v !== '') $values[] = $col . '=' . $v;
+                }
+                $out[] = '[Fila ' . $rowNum . '] ' . implode(' | ', $values);
+                if (strlen(implode("\n", $out)) > $maxChars) {
+                    $partial = true;
+                    break 2;
+                }
+            }
+        }
+        if ($partial) $out[] = '[MUESTRA PARCIAL: hay tablas, columnas, filas o valores no representados. No se debe afirmar que contiene todos los registros.]';
+        $extractor = 'sqlite3-readonly-sample';
+        return implode("\n", $out);
+    } catch (Throwable $e) {
+        $error = 'No se pudo inspeccionar SQLite de solo lectura: ' . $e->getMessage();
+        return '';
+    } finally {
+        if ($db instanceof SQLite3) $db->close();
+    }
+}
+
 function idx_extract_file(
     string $tmp,
     string $ext,
@@ -654,6 +767,12 @@ function idx_extract_file(
     $text = '';
 
     switch ($ext) {
+        case 'db':
+        case 'sqlite':
+        case 'sqlite3':
+            $text = idx_extract_sqlite($tmp, $extractor, $error);
+            break;
+
         case 'pdf':
             $text = idx_extract_pdf($tmp, $bucket, $s3Key, $extractor, $error);
             break;
@@ -712,28 +831,31 @@ function idx_extract_file(
 }
 
 function idx_chunk_text_preserve_lines(string $content, int $max_len): array {
-    if (mb_strlen($content) <= $max_len) {
-        return [$content];
-    }
+    if ($max_len < 1) throw new InvalidArgumentException('Tamaño de chunk inválido');
+    if (trim($content) === '') return [];
+    if (mb_strlen($content) <= $max_len) return [$content];
 
     $chunks = [];
-    $cur = '';
-
-    $lines = explode("\n", $content);
-
-    foreach ($lines as $l) {
-        if (mb_strlen($cur . "\n" . $l) > $max_len && trim($cur) !== '') {
-            $chunks[] = trim($cur);
-            $cur = $l;
+    $current = '';
+    foreach (explode("\n", $content) as $line) {
+        // Una línea de código o una celda muy larga también necesita cortes
+        // reales. La implementación previa dejaba chunks arbitrariamente grandes.
+        while (mb_strlen($line) > $max_len) {
+            if (trim($current) !== '') $chunks[] = $current;
+            $current = '';
+            $part = mb_substr($line, 0, $max_len);
+            $chunks[] = $part;
+            $line = mb_substr($line, $max_len);
+        }
+        $candidate = $current === '' ? $line : $current . "\n" . $line;
+        if (mb_strlen($candidate) > $max_len) {
+            if (trim($current) !== '') $chunks[] = $current;
+            $current = $line;
         } else {
-            $cur .= ($cur === '' ? '' : "\n") . $l;
+            $current = $candidate;
         }
     }
-
-    if (trim($cur) !== '') {
-        $chunks[] = trim($cur);
-    }
-
+    if (trim($current) !== '') $chunks[] = $current;
     return $chunks;
 }
 
@@ -831,14 +953,14 @@ function idx_text_extensions(): array {
         'html','htm','json','xml','yaml','yml','ini','conf','cfg','txt','md','markdown',
         'sql','sh','bash','zsh','bat','cmd','ps1','py','rb','java','c','h','cpp','hpp',
         'cs','go','rs','swift','kt','kts','vue','csv','tsv','log','srt','vtt','env',
-        'gitignore','htaccess'
+        'gitignore','htaccess','jsonl','ndjson','toml','properties','dbml'
     ];
 }
 
 function idx_extractable_extensions(): array {
     return [
         'pdf','docx','dotx','xlsx','xlsm','xltx','xltm','pptx','ppsx',
-        'odt','ods','odp','rtf','epub','doc','xls','ppt'
+        'odt','ods','odp','rtf','epub','doc','xls','ppt','db','sqlite','sqlite3'
     ];
 }
 
@@ -922,7 +1044,9 @@ function idx_extract_s3_text(
             throw new RuntimeException($extractError ?: 'El archivo no contiene texto extraíble.');
         }
 
-        $truncated = false;
+        // La extracción SQLite es intencionadamente una muestra; identificar
+        // explícitamente la cobertura parcial, incluso sin exceder maxChars.
+        $truncated = strpos($content, '[MUESTRA PARCIAL:') !== false;
         if (mb_strlen($content) > $maxChars) {
             $content = trim(mb_substr($content, 0, $maxChars));
             $truncated = true;
