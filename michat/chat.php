@@ -888,6 +888,8 @@ role="progressbar" style="width: 0%">0%</div>
 <script src="js/user_preferences.js"></script>
 <!-- chat.js administra sesiones/proyectos y exporta window.chatUtils. -->
 <script src="js/chat.js?v=20261023-remove-placeholder-tools"></script>
+<!-- El micrófono utiliza Nova 2 Sonic: cargar su controlador tras chat.js. -->
+<script src="js/chat-voice.js?v=20261023-voice-mic-fix"></script>
 <script src="js/context-viewer.js"></script> 
 <script src="js/ai-data-control.js"></script>
 <!-- Módulos que dependen de chat.js -->
