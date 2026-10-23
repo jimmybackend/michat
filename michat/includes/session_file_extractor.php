@@ -113,6 +113,17 @@ function idx_textract_detect_text(string $bucket, string $s3Key): string {
     return implode("\n", $lines);
 }
 
+/** Añade localizadores de página cuando el extractor PDF devuelve saltos FF. */
+function idx_pdf_page_labels(string $text): string {
+    $pages = explode("\f", $text);
+    if (count($pages) < 2) return $text;
+    $out = [];
+    foreach ($pages as $i => $page) {
+        if (trim($page) !== '') $out[] = '[Página ' . ($i + 1) . "]\n" . trim($page);
+    }
+    return implode("\n\n", $out);
+}
+
 function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$extractor, string &$error): string {
     // 1) Parser PHP opcional: composer require smalot/pdfparser
     if (class_exists('Smalot\PdfParser\Parser')) {
@@ -120,6 +131,14 @@ function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$ex
             $parser = new Smalot\PdfParser\Parser();
             $pdf = $parser->parseFile($tmp);
             $text = (string)$pdf->getText();
+            if (method_exists($pdf, 'getPages')) {
+                $paged = [];
+                foreach ($pdf->getPages() as $pageNumber => $page) {
+                    $pageText = trim((string)$page->getText());
+                    if ($pageText !== '') $paged[] = '[Página ' . ((int)$pageNumber + 1) . "]\n" . $pageText;
+                }
+                if ($paged) $text = implode("\n\n", $paged);
+            }
 
             if (trim($text) !== '') {
                 $extractor = 'pdfparser-php';
@@ -142,7 +161,7 @@ function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$ex
 
             if (trim($text) !== '') {
                 $extractor = 'pdftotext';
-                return $text;
+                return idx_pdf_page_labels($text);
             }
         }
     }
@@ -406,6 +425,12 @@ function idx_extract_xlsx(string $tmp, string &$extractor, string &$error): stri
                     }
 
                     $value = trim($value);
+                    // Conservar fórmulas y valores cacheados; de otro modo el
+                    // asistente no puede explicar cómo se calculó una celda.
+                    if (preg_match('/<f(?:\s[^>]*)?>(.*?)<\/f>/s', $cellXml, $formulaMatch)) {
+                        $formula = '=' . idx_xml_decode($formulaMatch[1]);
+                        $value = $value === '' ? $formula : $value . ' [fórmula ' . $formula . ']';
+                    }
                     if ($value !== '') $cells[] = $address . ': ' . $value;
                 }
             }
@@ -924,7 +949,7 @@ function idx_text_extensions(): array {
         'html','htm','json','xml','yaml','yml','ini','conf','cfg','txt','md','markdown',
         'sql','sh','bash','zsh','bat','cmd','ps1','py','rb','java','c','h','cpp','hpp',
         'cs','go','rs','swift','kt','kts','vue','csv','tsv','log','srt','vtt','env',
-        'gitignore','htaccess'
+        'gitignore','htaccess','jsonl','ndjson','toml','properties','dbml'
     ];
 }
 
