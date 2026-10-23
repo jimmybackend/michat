@@ -106,6 +106,7 @@
     let sessions = [];
     let sessionsRequestSerial = 0;
     let hasMoreSessions = false;
+    let nextSessionsOffset = 0;
     let projects = [];
     let projectSources = [];
     let isSending = false;
@@ -1194,6 +1195,9 @@ async function loadSessions() {
     if (requestSerial !== sessionsRequestSerial) return;
     sessions = Array.isArray(j.sessions) ? j.sessions : [];
     hasMoreSessions = j.has_more === true;
+    nextSessionsOffset = sessions.length;
+    const list = el.sbChatList || el.sessionsList;
+    if (list) list.scrollTop = 0;
     renderSessionsList();
   } catch (e) {
     console.error(e);
@@ -1210,7 +1214,7 @@ async function loadMoreSessions() {
   if (!hasMoreSessions) return;
   const requestSerial = ++sessionsRequestSerial;
   const view = el.sbChatView?.value || 'open';
-  const qs = new URLSearchParams({status: view, offset: String(sessions.length)});
+  const qs = new URLSearchParams({status: view, offset: String(nextSessionsOffset)});
   const uid = getUserId();
   if (uid) qs.set('user_id', uid);
   try {
@@ -1218,8 +1222,10 @@ async function loadMoreSessions() {
     const j = toJSONorThrow(await r.text(), r.status, 'Más conversaciones');
     if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
     if (requestSerial !== sessionsRequestSerial || view !== (el.sbChatView?.value || 'open')) return;
+    const incoming = Array.isArray(j.sessions) ? j.sessions : [];
+    nextSessionsOffset += incoming.length;
     const ids = new Set(sessions.map(x => Number(x.id)));
-    for (const item of (Array.isArray(j.sessions) ? j.sessions : [])) {
+    for (const item of incoming) {
       if (!ids.has(Number(item.id))) { sessions.push(item); ids.add(Number(item.id)); }
     }
     hasMoreSessions = j.has_more === true;
@@ -1303,8 +1309,10 @@ function renderSessionsList() {
   const projectItems = projectSessions.length
     ? '<div class="sb-group-label">Chats de proyectos</div>' + projectSessions.map(renderItem).join('')
     : '';
+  const previousScroll = targetList.scrollTop;
   targetList.innerHTML = items + projectItems
     + (hasMoreSessions ? '<button type="button" class="btn btn-sm btn-outline-secondary w-100 mt-2 js-more-sessions">Cargar más conversaciones</button>' : '');
+  targetList.scrollTop = previousScroll;
   targetList.querySelector('.js-more-sessions')?.addEventListener('click', loadMoreSessions);
   targetList.querySelectorAll('.sb-item').forEach(item => {
     item.addEventListener('click', (ev) => {
