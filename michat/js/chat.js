@@ -106,6 +106,8 @@
     let currentProjectId = null;
     let sessions = [];
     let sessionsRequestSerial = 0;
+    let sessionSelectionSerial = 0;
+    let sessionSearchQuery = '';
     let hasMoreSessions = false;
     let nextSessionsOffset = 0;
     let projects = [];
@@ -1357,10 +1359,25 @@ function groupFreeSessionsByDate(list) {
   });
   return Object.entries(groups).filter(([, arr]) => arr.length > 0);
 }
+function handleSessionSearchInput(event) {
+  const input = el.sbChatSearch || el.search;
+  if (!input) return;
+  // Password managers may fill this field after boot or when a row is clicked.
+  // A restored DOM value must never silently become the conversation filter.
+  let autofilled = false;
+  try { autofilled = input.matches(':autofill, :-webkit-autofill'); } catch (_) {}
+  if (autofilled) {
+    input.value = '';
+    sessionSearchQuery = '';
+  } else {
+    sessionSearchQuery = input.value.trim().toLocaleLowerCase();
+  }
+  renderSessionsList();
+}
 function renderSessionsList() {
   const targetList = el.sbChatList || el.sessionsList;
   if (!targetList) return;
-  const search = (el.sbChatSearch?.value || '').trim().toLocaleLowerCase();
+  const search = sessionSearchQuery;
   const displayedSessions = search
     ? sessions.filter(s => String(s.title || '').toLocaleLowerCase().includes(search)
         || String(s.id ?? s.id_ ?? '').includes(search)
@@ -1571,52 +1588,51 @@ function renderSessionsList() {
         '¿Mover esta conversación a Eliminadas? Sus mensajes se conservarán y podrás recuperarla.');
     }
     async function selectSession(id) {
-      if (!id || Number.isNaN(id)) return;
+      id = Number(id);
+      if (!Number.isSafeInteger(id) || id <= 0) return;
+      const requestSerial = ++sessionSelectionSerial;
+      const isCurrentSelection = () => requestSerial === sessionSelectionSerial;
       const previousSessionId = currentSessionId;
-      if (previousSessionId && Number(previousSessionId) !== Number(id)) {
-        await discardEmptySession(previousSessionId, { silent:true, keepCurrent:true });
-      }
       currentSessionId = id;
       compareFilesSelected = [];
-      // Una búsqueda (incluso autocompletada por el navegador) puede ocultar
-      // todas las conversaciones. Al abrir una, restaurar el listado completo.
+      sessionSearchQuery = '';
       const sessionSearch = el.sbChatSearch || el.search;
-      if (sessionSearch && sessionSearch.value.trim()) {
-        sessionSearch.value = '';
-        renderSessionsList();
-      } else {
-        renderSessionsList();
-      }
-      syncTraceExplorerButton();
-      const s = sessions.find(x => x.id === id);
-      if (el.title) el.title.textContent = s ? (s.title || `Sesión #${id}`) : `Sesión #${id}`;
-      if (el.sbCurrentSession) el.sbCurrentSession.textContent = s ? (s.title || `Sesión #${id}`) : 'Ninguna';
-      if (s && s.project_id) {
-        currentProjectId = s.project_id;
-        await selectProject(s.project_id);
-      } else {
-        currentProjectId = null;
-        await selectProject(null);
-      }
-      updateCurrentSessionState(s ? s.status : currentSessionStatus);
-      updateChatFilesDrawerContext();
+      if (sessionSearch) sessionSearch.value = '';
       setStatus('Cargando mensajes…');
       try {
+        renderSessionsList();
+        syncTraceExplorerButton();
+        const s = sessions.find(x => Number(x.id ?? x.id_) === id);
+        const title = s?.title || `Sesión #${id}`;
+        if (el.title) el.title.textContent = title;
+        if (el.sbCurrentSession) el.sbCurrentSession.textContent = title;
+        updateCurrentSessionState(s ? s.status : currentSessionStatus);
+        updateChatFilesDrawerContext();
+        // Project metadata must not delay or prevent loading the conversation.
+        const projectLoad = Promise.resolve().then(() => selectProject(s?.project_id || s?.project_id_ || null));
+        projectLoad.catch(e => console.error('Error cargando proyecto:', e));
+        if (previousSessionId && Number(previousSessionId) !== id) {
+          // Cleanup is independent of navigation; it must not reorder rapid clicks.
+          discardEmptySession(previousSessionId, { silent:true, keepCurrent:true });
+        }
         const qs = new URLSearchParams({ session_id: String(id) });
         const r = await fetch(`${API.messages}?${qs.toString()}`, { credentials: 'same-origin' });
         const j = toJSONorThrow(await r.text(), r.status, 'Mensajes de la sesión');
+        if (!isCurrentSelection()) return;
         if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
-        currentMemoryScope = j.session && j.session.memory_scope ? j.session.memory_scope : null;
+        currentMemoryScope = j.session?.memory_scope || null;
         renderMessages(j.messages || []);
         renderSessionsList();
         await loadSessionAttachments(id);
+        if (!isCurrentSelection()) return;
         await loadAttachmentRagMode(id);
-        setTimeout(() => wireCodeCopyButtons(el.messages), 0);
+        if (isCurrentSelection()) setTimeout(() => wireCodeCopyButtons(el.messages), 0);
       } catch (e) {
+        if (!isCurrentSelection()) return;
         console.error(e);
-        el.messages.innerHTML = `<div class="text-danger">Error cargando mensajes: ${e.message}</div>`;
+        if (el.messages) el.messages.innerHTML = `<div class="text-danger">Error cargando mensajes: ${esc(e.message)}</div>`;
       } finally {
-        setStatus('');
+        if (isCurrentSelection()) setStatus('');
       }
     }
     window.selectSessionChat1 = selectSession;
@@ -3653,7 +3669,7 @@ if (btnIndexPending) {
         }
       });
     }
-    if (el.sbChatSearch) el.sbChatSearch.addEventListener('input', () => renderSessionsList());
+    if (el.sbChatSearch) el.sbChatSearch.addEventListener('input', handleSessionSearchInput);
     if (el.sbChatView) el.sbChatView.addEventListener('change', () => loadSessions());
     if (el.sbNewProject) el.sbNewProject.addEventListener('click', openProjectManager);
     if (el.sbManageProjects) el.sbManageProjects.addEventListener('click', openProjectManager);
@@ -3684,7 +3700,7 @@ if (btnIndexPending) {
       });
     }
     if (el.reload) el.reload.addEventListener('click', () => loadSessions());
-    if (el.search) el.search.addEventListener('input', () => loadSessions());
+    if (el.search && el.search !== el.sbChatSearch) el.search.addEventListener('input', handleSessionSearchInput);
     if (el.showArchived) el.showArchived.addEventListener('change', () => loadSessions());
     if (el.rename) el.rename.addEventListener('click', () => currentSessionId && promptRename(currentSessionId));
     if (el.archive) el.archive.addEventListener('click', () => currentSessionId && doArchive(currentSessionId));
