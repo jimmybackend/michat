@@ -105,6 +105,7 @@
     let currentProjectId = null;
     let sessions = [];
     let sessionsRequestSerial = 0;
+    let hasMoreSessions = false;
     let projects = [];
     let projectSources = [];
     let isSending = false;
@@ -1184,6 +1185,7 @@ async function loadSessions() {
     // Siempre pedir el listado completo. El filtro de texto es exclusivamente
     // visual: no puede borrar las otras sesiones ni cambiar los datos cargados.
     qs.set('status', el.sbChatView?.value || 'open');
+    qs.set('offset', '0');
     const uid = getUserId();
     if (uid) qs.set('user_id', uid);
     const r = await fetch(`${API.sessions}?${qs.toString()}`, { credentials: 'same-origin' });
@@ -1191,6 +1193,7 @@ async function loadSessions() {
     if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
     if (requestSerial !== sessionsRequestSerial) return;
     sessions = Array.isArray(j.sessions) ? j.sessions : [];
+    hasMoreSessions = j.has_more === true;
     renderSessionsList();
   } catch (e) {
     console.error(e);
@@ -1201,6 +1204,28 @@ async function loadSessions() {
     }
   } finally {
     setStatus('');
+  }
+}
+async function loadMoreSessions() {
+  if (!hasMoreSessions) return;
+  const requestSerial = ++sessionsRequestSerial;
+  const view = el.sbChatView?.value || 'open';
+  const qs = new URLSearchParams({status: view, offset: String(sessions.length)});
+  const uid = getUserId();
+  if (uid) qs.set('user_id', uid);
+  try {
+    const r = await fetch(`${API.sessions}?${qs.toString()}`, { credentials: 'same-origin' });
+    const j = toJSONorThrow(await r.text(), r.status, 'Más conversaciones');
+    if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+    if (requestSerial !== sessionsRequestSerial || view !== (el.sbChatView?.value || 'open')) return;
+    const ids = new Set(sessions.map(x => Number(x.id)));
+    for (const item of (Array.isArray(j.sessions) ? j.sessions : [])) {
+      if (!ids.has(Number(item.id))) { sessions.push(item); ids.add(Number(item.id)); }
+    }
+    hasMoreSessions = j.has_more === true;
+    renderSessionsList();
+  } catch (e) {
+    if (requestSerial === sessionsRequestSerial) window.alert('No se pudieron cargar más conversaciones: ' + e.message);
   }
 }
 function formatSessionMeta(dtStr) {
@@ -1278,7 +1303,9 @@ function renderSessionsList() {
   const projectItems = projectSessions.length
     ? '<div class="sb-group-label">Chats de proyectos</div>' + projectSessions.map(renderItem).join('')
     : '';
-  targetList.innerHTML = items + projectItems;
+  targetList.innerHTML = items + projectItems
+    + (hasMoreSessions ? '<button type="button" class="btn btn-sm btn-outline-secondary w-100 mt-2 js-more-sessions">Cargar más conversaciones</button>' : '');
+  targetList.querySelector('.js-more-sessions')?.addEventListener('click', loadMoreSessions);
   targetList.querySelectorAll('.sb-item').forEach(item => {
     item.addEventListener('click', (ev) => {
       if (ev.target.closest('.js-rename,.js-archive,.js-restore,.js-delete')) return;
