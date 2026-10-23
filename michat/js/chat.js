@@ -1360,43 +1360,60 @@ function renderSessionsList() {
       if (id === currentSessionId && el.title) el.title.textContent = title;
       setStatus('');
     }
-    async function doArchive(id) {
-      setStatus('Archivando…');
-      const fd = new FormData();
-      fd.append('session_id', id);
-      const r = await fetch(API.archiveSession, { method:'POST', credentials:'same-origin', body: fd });
-      const j = toJSONorThrow(await r.text(), r.status, 'Archivar sesión');
-      if (!r.ok || j.ok === false) { setStatus(''); alert(j.error || `HTTP ${r.status}`); return; }
-      await loadSessions();
-      if (id === currentSessionId) {
-        const s = sessions.find(x => x.id === id);
-        if (el.badge) {
-          if (s && s.archived) { el.badge.textContent = 'archivada'; el.badge.classList.remove('d-none'); }
-          else { el.badge.textContent = ''; el.badge.classList.add('d-none'); }
-        }
-        if (el.restore) el.restore.classList.toggle('d-none', !(s && s.archived));
-        if (el.archive) el.archive.classList.toggle('d-none', !!(s && s.archived));
+    function updateCurrentSessionState(status) {
+      currentSessionStatus = ['open','archived','closed'].includes(status) ? status : 'open';
+      const isArchived = currentSessionStatus === 'archived';
+      const isDeleted = currentSessionStatus === 'closed';
+      if (el.badge) {
+        el.badge.textContent = isDeleted ? 'eliminada · conservada para auditoría' : isArchived ? 'archivada' : '';
+        el.badge.classList.toggle('d-none', !isArchived && !isDeleted);
       }
-      setStatus('');
+      if (el.restore) el.restore.classList.toggle('d-none', !isArchived && !isDeleted);
+      if (el.archive) {
+        el.archive.classList.toggle('d-none', isArchived);
+        el.archive.title = isDeleted ? 'Mover a Archivadas' : 'Archivar chat';
+      }
+      if (el.delete) el.delete.classList.toggle('d-none', isDeleted);
+      // Las conversaciones archivadas/eliminadas son de consulta hasta restaurarlas.
+      if (el.input) {
+        el.input.disabled = isArchived || isDeleted;
+        el.input.placeholder = isDeleted ? 'Recupera la conversación para continuar' : isArchived ? 'Restaura la conversación para escribir' : 'Escribe tu mensaje...';
+      }
+      if (el.send) el.send.disabled = isArchived || isDeleted;
+    }
+    async function changeSessionStatus(id, api, label, confirmation) {
+      if (isSending) {
+        window.alert('Espera a que termine la respuesta antes de mover la conversación.');
+        return;
+      }
+      if (confirmation && !window.confirm(confirmation)) return;
+      setStatus(label + '…');
+      try {
+        const fd = new FormData();
+        fd.append('session_id', String(id));
+        if (api === API.deleteSession) {
+          fd.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.content || '');
+        }
+        const r = await fetch(api, { method: 'POST', credentials: 'same-origin', body: fd });
+        const j = toJSONorThrow(await r.text(), r.status, label);
+        if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+        if (Number(currentSessionId) === Number(id)) updateCurrentSessionState(j.status);
+        await loadSessions();
+      } catch (e) {
+        window.alert(label + ': ' + e.message);
+      } finally {
+        setStatus('');
+      }
+    }
+    async function doArchive(id) {
+      await changeSessionStatus(id, API.archiveSession, 'Archivar', null);
     }
     async function doRestore(id) {
-      setStatus('Restaurando…');
-      const fd = new FormData();
-      fd.append('session_id', id);
-      const r = await fetch(API.restoreSession, { method:'POST', credentials:'same-origin', body: fd });
-      const j = toJSONorThrow(await r.text(), r.status, 'Restaurar sesión');
-      if (!r.ok || j.ok === false) { setStatus(''); alert(j.error || `HTTP ${r.status}`); return; }
-      await loadSessions();
-      if (id === currentSessionId) {
-        const s = sessions.find(x => x.id === id);
-        if (el.badge) {
-          if (s && s.archived) { el.badge.textContent = 'archivada'; el.badge.classList.remove('d-none'); }
-          else { el.badge.textContent = ''; el.badge.classList.add('d-none'); }
-        }
-        if (el.restore) el.restore.classList.toggle('d-none', !(s && s.archived));
-        if (el.archive) el.archive.classList.toggle('d-none', !!(s && s.archived));
-      }
-      setStatus('');
+      await changeSessionStatus(id, API.restoreSession, 'Recuperar', null);
+    }
+    async function doDelete(id) {
+      await changeSessionStatus(id, API.deleteSession, 'Mover a Eliminadas',
+        '¿Mover esta conversación a Eliminadas? Sus mensajes se conservarán y podrás recuperarla.');
     }
     async function selectSession(id) {
       if (!id || Number.isNaN(id)) return;
@@ -1425,12 +1442,7 @@ function renderSessionsList() {
         currentProjectId = null;
         await selectProject(null);
       }
-      if (el.badge) {
-        if (s && s.archived) { el.badge.textContent = 'archivada'; el.badge.classList.remove('d-none'); }
-        else { el.badge.textContent = ''; el.badge.classList.add('d-none'); }
-      }
-      if (el.restore) el.restore.classList.toggle('d-none', !(s && s.archived));
-      if (el.archive) el.archive.classList.toggle('d-none', !!(s && s.archived));
+      updateCurrentSessionState(s ? s.status : currentSessionStatus);
       setStatus('Cargando mensajes…');
       try {
         const qs = new URLSearchParams({ session_id: String(id) });
@@ -2049,6 +2061,10 @@ function updateQuestionMemoryStatus(response) {
 
 async function sendMessage() {
     if (isSending) return;
+    if (currentSessionId && currentSessionStatus !== 'open') {
+      window.alert('Restaura esta conversación a Activas antes de escribir.');
+      return;
+    }
 
     const text = (el.input && el.input.value) ? el.input.value.trim() : '';
     const auto = !!(el.auto && el.auto.checked);
@@ -3379,6 +3395,7 @@ if (btnIndexPending) {
     if (el.showArchived) el.showArchived.addEventListener('change', () => loadSessions());
     if (el.rename) el.rename.addEventListener('click', () => currentSessionId && promptRename(currentSessionId));
     if (el.archive) el.archive.addEventListener('click', () => currentSessionId && doArchive(currentSessionId));
+    if (el.delete) el.delete.addEventListener('click', () => currentSessionId && doDelete(currentSessionId));
     if (el.restore) el.restore.addEventListener('click', () => currentSessionId && doRestore(currentSessionId));
     if (el.traceExplorer) el.traceExplorer.addEventListener('click', openTraceExplorer);
     syncTraceExplorerButton();
