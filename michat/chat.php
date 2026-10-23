@@ -323,7 +323,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 
 <meta name="csrf-token" content="<?php echo htmlspecialchars($_SESSION['csrf_token'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
 <link rel="stylesheet" href="css/chat2.css" />
-<link rel="stylesheet" href="css/design-system.css" />
+<link rel="stylesheet" href="css/design-system.css?v=20261022-conversation-layout" />
 <link rel="stylesheet" href="css/michat-about.css?v=20261021-2" />
 </head>
 <body class="ui-theme theme-neon-green theme-light vision-normal ascii-on">
@@ -872,7 +872,7 @@ role="progressbar" style="width: 0%">0%</div>
 <!-- Preferencias primero: expone chatPreferencesReady/modelo antes de crear sesiones. -->
 <script src="js/user_preferences.js"></script>
 <!-- chat.js administra sesiones/proyectos y exporta window.chatUtils. -->
-<script src="js/chat.js?v=20261022-recoverable-trash"></script>
+<script src="js/chat.js?v=20261022-conversation-layout"></script>
 <script src="js/context-viewer.js"></script> 
 <script src="js/ai-data-control.js"></script>
 <!-- Módulos que dependen de chat.js -->

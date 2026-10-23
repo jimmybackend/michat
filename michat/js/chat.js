@@ -1278,25 +1278,25 @@ function renderSessionsList() {
   const projectSessions = displayedSessions.filter(s => s.project_id || s.project_id_);
   const renderItem = (s) => {
     const sid = s.id || s.id_;
-    const title = esc(s.title || `Sesión #${sid}`);
+    const title = String(s.title || `Sesión #${sid}`);
     const meta = formatSessionMeta(s.updated_at || s.created_at || '');
     const isArchived = s.status === 'archived';
     const isDeleted = s.status === 'closed';
     const badge = isDeleted
-      ? '<span class="badge badge-danger ml-1" style="font-size:0.6rem;">eliminada</span>'
-      : isArchived ? '<span class="badge badge-secondary ml-1" style="font-size:0.6rem;">arch</span>' : '';
+      ? '<span class="badge badge-danger ml-1" style="font-size:0.65rem;">eliminada</span>'
+      : isArchived ? '<span class="badge badge-secondary ml-1" style="font-size:0.65rem;">arch</span>' : '';
     const active = (Number(sid) === Number(currentSessionId)) ? ' active' : '';
     return `<div class="sb-item${active}" data-id="${sid}" title="${esc(title)}">
-      <div class="d-flex justify-content-between align-items-center">
-        <span class="text-truncate sb-item-title" style="max-width: 70%;">${esc(title)} ${badge}</span>
-        <div class="btn-group btn-group-sm" style="flex-shrink: 0;">
-          ${!isDeleted ? '<button class="btn btn-link p-0 js-rename" title="Renombrar"><i class="fas fa-pen" style="font-size:0.55rem;"></i></button>' : ''}
-          ${!isArchived && !isDeleted ? '<button class="btn btn-link p-0 js-archive" title="Archivar"><i class="fas fa-archive" style="font-size:0.7rem;"></i></button>' : ''}
-          ${isArchived || isDeleted ? '<button class="btn btn-link p-0 js-restore text-success" title="Recuperar a Activas"><i class="fas fa-undo" style="font-size:0.7rem;"></i></button>' : ''}
-          ${isDeleted ? '<button class="btn btn-link p-0 js-archive" title="Mover a Archivadas"><i class="fas fa-archive" style="font-size:0.7rem;"></i></button>' : '<button class="btn btn-link p-0 js-delete text-danger" title="Enviar a Eliminadas (recuperable)"><i class="fas fa-trash-alt" style="font-size:0.7rem;"></i></button>'}
+      <span class="sb-item-title">${esc(title)} ${badge}</span>
+      <div class="sb-item-footer">
+        <small class="sb-item-meta text-muted">${esc(meta)}</small>
+        <div class="sb-item-actions" role="group" aria-label="Acciones de la conversación">
+          ${!isDeleted ? '<button type="button" class="btn btn-link js-rename" title="Renombrar conversación" aria-label="Renombrar conversación"><i class="fas fa-pen" aria-hidden="true"></i></button>' : ''}
+          ${!isArchived && !isDeleted ? '<button type="button" class="btn btn-link js-archive" title="Archivar conversación" aria-label="Archivar conversación"><i class="fas fa-archive" aria-hidden="true"></i></button>' : ''}
+          ${isArchived || isDeleted ? '<button type="button" class="btn btn-link js-restore text-success" title="Recuperar a Activas" aria-label="Recuperar a Activas"><i class="fas fa-undo" aria-hidden="true"></i></button>' : ''}
+          ${isDeleted ? '<button type="button" class="btn btn-link js-archive" title="Mover a Archivadas" aria-label="Mover a Archivadas"><i class="fas fa-archive" aria-hidden="true"></i></button>' : '<button type="button" class="btn btn-link js-delete text-danger" title="Enviar a Eliminadas (recuperable)" aria-label="Enviar a Eliminadas"><i class="fas fa-trash-alt" aria-hidden="true"></i></button>'}
         </div>
       </div>
-      <small class="sb-item-meta text-muted d-block">${esc(meta)}</small>
     </div>`;
   };
   const groups = groupFreeSessionsByDate(freeSessions);
@@ -2796,18 +2796,18 @@ function renderProjectList() {
     if (projSessions.length > 0) {
       sessionsHtml = projSessions.map(s => {
         const sid = s.id || s.id_;
-        const stitle = esc(s.title || `Sesión #${sid}`);
+        const stitle = String(s.title || `Sesión #${sid}`);
         const sactive = (sid === currentSessionId) ? ' active' : '';
         const isArchived = s.archived || s.status === 'archived';
-        const badge = isArchived ? `<span class="badge badge-secondary ml-1" style="font-size:0.6rem;">arch</span>` : '';
-        return `<div class="sb-item project-session${sactive}" data-id="${sid}" title="${esc(stitle)}" 
-                style="padding-left: 1.2rem; font-size: 0.75rem; border-left: 2px solid var(--accent, #00ff88); margin-top: 2px;">
-          <div class="d-flex justify-content-between align-items-center">
-            <span class="text-truncate sb-item-title" style="max-width: 70%; font-size: 0.7rem;">
-              <i class="fas fa-comment-dots mr-1" style="font-size:0.6rem;"></i>${stitle} ${badge}
-            </span>
-            <div class="btn-group btn-group-sm" style="flex-shrink: 0;">
-              <button class="btn btn-link p-0 js-rename text-muted" title="Renombrar"><i class="fas fa-pen" style="font-size:0.5rem;"></i></button>
+        const isDeleted = s.status === 'closed';
+        const badge = isDeleted ? '<span class="badge badge-danger ml-1">eliminada</span>'
+          : isArchived ? '<span class="badge badge-secondary ml-1">arch</span>' : '';
+        return `<div class="sb-item project-session${sactive}" data-id="${sid}" title="${esc(stitle)}">
+          <span class="sb-item-title"><i class="fas fa-comment-dots mr-1" aria-hidden="true"></i>${esc(stitle)} ${badge}</span>
+          <div class="sb-item-footer">
+            <small class="sb-item-meta text-muted">${esc(formatSessionMeta(s.updated_at || s.created_at || ''))}</small>
+            <div class="sb-item-actions" role="group" aria-label="Acciones de conversación de proyecto">
+              <button type="button" class="btn btn-link js-rename" title="Renombrar conversación" aria-label="Renombrar conversación"><i class="fas fa-pen" aria-hidden="true"></i></button>
             </div>
           </div>
         </div>`;
