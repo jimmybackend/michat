@@ -3535,20 +3535,8 @@ const btnIndexPending = document.getElementById('btnIndexPending');
 if (btnIndexPending) {
   btnIndexPending.addEventListener('click', indexPendingSources);
 }
-    // El panel conserva las acciones originales de los archivos; el clip
-    // inferior sigue dedicado exclusivamente a seleccionar/subir.
-    const knowledgePanel = document.getElementById('chat2KnowledgePanel');
-    document.getElementById('chat2FilesKnowledge')?.addEventListener('click', async () => {
-      if (!knowledgePanel) return;
-      knowledgePanel.hidden = !knowledgePanel.hidden;
-      if (!knowledgePanel.hidden) {
-        await loadSessionAttachments(currentSessionId);
-        knowledgePanel.scrollIntoView({block:'nearest',behavior:'smooth'});
-      }
-    });
-    document.getElementById('chat2KnowledgeClose')?.addEventListener('click', () => {
-      if (knowledgePanel) knowledgePanel.hidden = true;
-    });
+    // El único 🧠 está en la cabecera y usa el panel completo #chatFilesDrawer.
+    // El clip inferior es la única entrada para subir archivos nuevos.
     if (el.file) el.file.addEventListener('change', () => {
       const selected = Array.from(el.file.files || []);
       el.file.value = '';
@@ -4048,13 +4036,37 @@ function wireAttachmentRagModeCheckbox() {
 
 wireAttachmentRagModeCheckbox();
 
+// Mostrar el estado real de todo el proceso, no únicamente que el S3 guardó.
+function updateKnowledgePipelineSummary(files, error = '') {
+  const label = document.getElementById('chatFilesPipelineSummary');
+  if (!label) return;
+  if (error) {
+    label.textContent = 'No se pudo consultar el estado de los archivos: ' + error;
+    return;
+  }
+  if (!Array.isArray(files) || files.length === 0) {
+    label.textContent = currentSessionId
+      ? 'Todavía no hay archivos en esta conversación. Usa el clip inferior para adjuntarlos.'
+      : 'Selecciona una conversación para consultar el estado de su conocimiento.';
+    return;
+  }
+  const ragReady = files.filter(file => file.index_status === 'indexed' || file.semantic_status === 'ready').length;
+  const semanticReady = files.filter(file => file.semantic_status === 'ready').length;
+  const chunks = files.reduce((n, file) => n + Math.max(0, Number(file.chunks_total || 0)), 0);
+  const embeddedChunks = files.reduce((n, file) => n + Math.max(0, Number(file.chunks_with_embedding || 0)), 0);
+  const pending = files.filter(file => file.index_status !== 'indexed' || file.semantic_status !== 'ready').length;
+  label.textContent = files.length + ' archivo(s) · ' + ragReady + ' con RAG listo · '
+    + semanticReady + ' con semántica lista · ' + embeddedChunks + '/' + chunks
+    + ' fragmentos con embedding del modelo activo'
+    + (pending ? ' · ' + pending + ' requieren revisión o reintento' : ' · proceso completo para los archivos compatibles');
+}
 async function loadSessionAttachments(sessionId) {
   const target = el.sbSessionFiles;
   const countEl = el.chatFilesCount;
 
   if (!target) return;
-
   if (!sessionId || Number.isNaN(Number(sessionId))) {
+    updateKnowledgePipelineSummary([]);
     sessionAttachments = [];
     target.innerHTML = `
       <div class="empty-state-sidebar chat-files-empty">
@@ -4085,8 +4097,9 @@ async function loadSessionAttachments(sessionId) {
       throw new Error(j.error || `HTTP ${r.status}`);
     }
 
-    const files = j.files || [];
+    const files = Array.isArray(j.files) ? j.files : [];
     sessionAttachments = files;
+    updateKnowledgePipelineSummary(files);
 
     if (countEl) {
       countEl.textContent = String(files.length);
@@ -4227,6 +4240,7 @@ async function loadSessionAttachments(sessionId) {
     sessionAttachments = [];
     console.error(e);
     target.innerHTML = `<div class="text-danger small">${esc(e.message)}</div>`;
+    updateKnowledgePipelineSummary([], String(e.message || 'Error'));
     if (countEl) countEl.textContent = '0';
   }
 }
