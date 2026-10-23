@@ -2,12 +2,13 @@
 declare(strict_types=1);
 require_once dirname(__DIR__).'/Memory/DocumentAccessRepository.php';
 require_once __DIR__.'/AnalysisSidecarStore.php';
+require_once __DIR__.'/FileKnowledgeState.php';
 
 /** Explicit selection starts analysis. Catalog search never instantiates this service. */
 final class DriveAnalysisService
 {
     private DocumentAccessRepository $access;
-    public function __construct(private mysqli $db,private AnalysisSidecarStore $store,private $analyzer=null)
+    public function __construct(private mysqli $db,private AnalysisSidecarStore $store,private $analyzer=null,private $indexer=null)
     { $this->access=new DocumentAccessRepository($db); }
     public static function production(mysqli $db): self
     {
@@ -15,36 +16,109 @@ final class DriveAnalysisService
     }
     public function analyze(int $user,int $session,int $fileId): array
     {
-        return $this->locked($user,$fileId,function() use($user,$session,$fileId) {
-            $file=$this->access->requireFile($user,$session,$fileId);
-            $state=$this->store->read($file); $analysis=$state['analysis']; $reused=is_array($analysis);
-            if (!$reused) {
-                $block=$this->existingSummary($session,$state['source']);
-                if (!$block) {
-                    if (is_callable($this->analyzer)) ($this->analyzer)($user,$session,$fileId);
+        $states=new FileKnowledgeState($this->db);
+        $this->access->requireFile($user,$session,$fileId);
+        try {
+            return $this->locked($user,$fileId,function() use($user,$session,$fileId,$states) {
+                $file=$this->access->requireFile($user,$session,$fileId);
+                $states->save($user,$session,$fileId,['status'=>'extracting','message'=>'Archivo vinculado. Comprobando contenido e índice.']);
+                $warnings=[];$state=null;
+                $source=$this->store->identity($file);
+                try { $state=$this->store->read($file,$source); }
+                catch(Throwable $e) { error_log('analysis cache read: '.$e->getMessage());$warnings[]='No se pudo leer el JSON auxiliar; se intentará preparar el contenido sin sobrescribirlo.'; }
+                $analysis=$state['analysis'] ?? null;$reused=is_array($analysis);
+                $image=in_array(strtolower(pathinfo($file['Nombre'],PATHINFO_EXTENSION)),['jpg','jpeg','png','webp','gif'],true);
+                $chunks=$this->chunks($session,$source);
+                if (!$chunks && !empty($analysis['chunks'])) {
+                    try { $this->importChunks($session,$source,$analysis['chunks']);$chunks=$this->chunks($session,$source); }
+                    catch(Throwable $e) { error_log('cached chunks: '.$e->getMessage());$warnings[]='No se pudo reutilizar el índice JSON; se comprobará el original.'; }
+                }
+                // Literal evidence is independent of summarization, embeddings and sidecar persistence.
+                if (!$chunks && !$image) {
+                    if (is_callable($this->indexer)) ($this->indexer)($user,$session,$fileId);
                     else {
                         require_once dirname(__DIR__).'/SessionAttachmentKnowledgeService.php';
-                        require_once dirname(__DIR__).'/SessionImageKnowledgeService.php';
-                        if (SessionImageKnowledgeService::supportsFilename((string)$file['Nombre'])) (new SessionImageKnowledgeService($this->db))->process($user,$session,$fileId);
-                        else (new SessionAttachmentKnowledgeService($this->db))->semantic($user,$session,$fileId);
+                        (new SessionAttachmentKnowledgeService($this->db))->index($user,$session,$fileId);
                     }
-                    $block=$this->existingSummary($session,$state['source']);
+                    $chunks=$this->chunks($session,$source);
+                    if (!$chunks) throw new RuntimeException('La extracción no produjo fragmentos verificables');
                 }
-                if (!$block) throw new RuntimeException('No se generó un resumen verificable para la revisión actual');
-                $meta=json_decode((string)$block['source_ids'],true) ?: [];
-                $analysis=['source'=>$state['source'],'created_at'=>gmdate('c'),'summary'=>(string)$block['content_preview'],
-                    'coverage'=>!empty($meta['truncated'])?'partial':(($meta['type'] ?? '')==='visual_summary'?'visual_description':'extracted_text'),'extractor'=>$meta['extractor'] ?? 'unknown',
-                    'model'=>$meta['semantic_model'] ?? $meta['visual_model'] ?? null,'kind'=>'generated_summary_not_original_evidence','interactions'=>[]];
-                $this->access->requireFile($user,$session,$fileId); // live permission check immediately before publication
-                $this->store->write($file,$state,$analysis);
+                if (!$reused) {
+                    $block=$this->existingSummary($session,$source);
+                    if (!$block) {
+                        try {
+                            if (is_callable($this->analyzer)) ($this->analyzer)($user,$session,$fileId);
+                            else {
+                                require_once dirname(__DIR__).'/SessionAttachmentKnowledgeService.php';
+                                require_once dirname(__DIR__).'/SessionImageKnowledgeService.php';
+                                if ($image) (new SessionImageKnowledgeService($this->db))->process($user,$session,$fileId);
+                                else (new SessionAttachmentKnowledgeService($this->db))->semantic($user,$session,$fileId);
+                            }
+                            $block=$this->existingSummary($session,$source);
+                        } catch(Throwable $e) {
+                            if (!$chunks) throw $e;
+                            error_log('selected file summary: '.$e->getMessage());
+                            $warnings[]='El texto ya se puede consultar; no se completó el resumen semántico.';
+                        }
+                    }
+                    $meta=$block?(json_decode((string)$block['source_ids'],true) ?: []):[];
+                    $analysis=['source'=>$source,'created_at'=>gmdate('c'),'summary'=>$block?(string)$block['content_preview']:'',
+                        'coverage'=>!empty($meta['truncated'])?'partial':($image?'visual_description':'extracted_text'),
+                        'extractor'=>$meta['extractor'] ?? ($chunks[0]['meta']['extractor'] ?? 'unknown'),
+                        'model'=>$meta['semantic_model'] ?? $meta['visual_model'] ?? null,'kind'=>'generated_summary_not_original_evidence','interactions'=>[]];
+                }
+                $analysis['chunks']=$chunks;
+                if (array_filter($chunks,static fn($chunk)=>!empty($chunk['meta']['truncated']))) $analysis['coverage']='partial';
+                $file=$this->access->requireFile($user,$session,$fileId);
+                if (AnalysisSidecarStore::revisionKey($this->store->identity($file))!==AnalysisSidecarStore::revisionKey($source)) throw new RuntimeException('El original cambió durante el procesamiento; reintenta');
+                if (!empty($analysis['summary'])) $this->import($session,$file,['source'=>$source,'revision_key'=>AnalysisSidecarStore::revisionKey($source)],$analysis);
+                $saved=false;
+                if ($state!==null) {
+                    try { $this->store->write($file,$state,$analysis);$saved=true; }
+                    catch(Throwable $e) { error_log('analysis cache write: '.$e->getMessage());$warnings[]='El contenido está disponible, pero no se pudo guardar el JSON auxiliar.'; }
+                }
+                $message=$chunks?'Texto extraído y fragmentos disponibles para responder con citas.':'Descripción visual disponible; no equivale a texto literal del original.';
+                $states->save($user,$session,$fileId,['status'=>$chunks?'text_ready':'summary_ready','message'=>$message,'source_etag'=>$source['etag'],
+                    'chunks'=>count($chunks),'semantic_available'=>!empty($analysis['summary']),'sidecar_saved'=>$saved,'warnings'=>$warnings]);
+                return ['ok'=>true,'file_id'=>$fileId,'filename'=>$file['Nombre'],'reused'=>$reused,'summary'=>$analysis['summary'],
+                    'coverage'=>$analysis['coverage'],'chunks'=>count($chunks),'lexical_rag_available'=>(bool)$chunks,'semantic_available'=>!empty($analysis['summary']),
+                    'message'=>$message,'warnings'=>$warnings,'interaction_count'=>count($analysis['interactions'] ?? []),
+                    'sidecar_name'=>basename(AnalysisSidecarStore::key($file)),'sidecar_saved'=>$saved];
+            });
+        } catch(Throwable $e) {
+            error_log('selected file: '.$e->getMessage());$state=FileKnowledgeState::failure($e);
+            $states->save($user,$session,$fileId,$state);
+            return ['ok'=>false,'pending'=>$e instanceof PdfOcrPendingException,'retry_after'=>15,'file_id'=>$fileId,'error'=>$state['message'],'error_code'=>$state['error_code']];
+        }
+    }
+    private function chunks(int $session,array $source): array
+    {
+        $s=$this->db->prepare("SELECT content_preview,source_ids FROM SessionContextBlocks WHERE session_id_=? AND s3_path=? AND block_type='file_chunk' ORDER BY id_ ASC");
+        $s->bind_param('is',$session,$source['key']);$s->execute();$r=$s->get_result();$out=[];
+        while($row=$r->fetch_assoc()) {
+            $meta=json_decode((string)$row['source_ids'],true) ?: [];
+            if ((int)($meta['files3_id'] ?? 0)!==$source['file_id'] || ($meta['source_etag'] ?? '')!==$source['etag']) continue;
+            $out[]=['content'=>$row['content_preview'],'meta'=>$meta,'sha256'=>hash('sha256',(string)$row['content_preview'])];
+        }
+        $s->close();return $out;
+    }
+    private function importChunks(int $session,array $source,array $chunks): void
+    {
+        if(count($chunks)>1000) throw new RuntimeException('Índice JSON excedido');
+        $this->db->begin_transaction();
+        try {
+            $seen=[];
+            foreach($chunks as $chunk) {
+                $meta=$chunk['meta'] ?? [];$text=$chunk['content'] ?? null;$ordinal=(int)($meta['chunk'] ?? 0);
+                if (!is_string($text) || $text==='' || strlen($text)>32000 || !hash_equals(hash('sha256',$text),(string)($chunk['sha256'] ?? ''))
+                    || (int)($meta['files3_id'] ?? 0)!==$source['file_id'] || ($meta['source_etag'] ?? '')!==$source['etag']
+                    || (int)($meta['total'] ?? 0)!==count($chunks) || $ordinal<1 || $ordinal>count($chunks) || isset($seen[$ordinal])) throw new RuntimeException('Fragmento JSON inválido o de otra revisión');
+                $seen[$ordinal]=true;$meta['filename']=$source['filename'];$json=json_encode($meta,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);$tokens=(int)ceil(mb_strlen($text)/4);
+                $s=$this->db->prepare("INSERT INTO SessionContextBlocks(session_id_,block_type,content_preview,s3_path,source_ids,is_locked,token_count) VALUES (?,'file_chunk',?,?,?,1,?)");
+                $s->bind_param('isssi',$session,$text,$source['key'],$json,$tokens);$s->execute();$s->close();
             }
-            $file=$this->access->requireFile($user,$session,$fileId);
-            if (AnalysisSidecarStore::revisionKey($this->store->identity($file))!==$state['revision_key']) throw new RuntimeException('El original cambió; vuelve a seleccionar el archivo');
-            $this->import($session,$file,$state,$analysis);
-            return ['ok'=>true,'file_id'=>$fileId,'filename'=>$file['Nombre'],'reused'=>$reused,
-                'summary'=>$analysis['summary'],'coverage'=>$analysis['coverage'],'interaction_count'=>count($analysis['interactions'] ?? []),
-                'sidecar_name'=>basename(AnalysisSidecarStore::key($file)),'sidecar_saved'=>true];
-        });
+            $this->db->commit();
+        } catch(Throwable $e) {$this->db->rollback();throw $e;}
     }
     private function existingSummary(int $session,array $source): ?array
     {

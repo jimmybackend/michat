@@ -60,6 +60,10 @@ try {
 } catch (InvalidArgumentException $e) {
     indexSessionFileExit(['ok'=>false,'error'=>$e->getMessage()], 400);
 } catch (Throwable $e) {
+    require_once __DIR__.'/includes/Drive/FileKnowledgeState.php';
+    $failure=FileKnowledgeState::failure($e);
+    try { (new DocumentAccessRepository($db_connection))->requireFile($userId,$sessionId,$fileId);(new FileKnowledgeState($db_connection))->save($userId,$sessionId,$fileId,$failure); } catch(Throwable $ignored) {}
+    if($e instanceof PdfOcrPendingException) indexSessionFileExit(['ok'=>false,'pending'=>true,'error'=>$failure['message']],202);
     $status = str_contains($e->getMessage(), 'no es tuya') || str_contains($e->getMessage(), 'no pertenece') ? 403 : 500;
     indexSessionFileExit(['ok'=>false,'error'=>$e->getMessage()], $status);
 }

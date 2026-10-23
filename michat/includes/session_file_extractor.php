@@ -125,7 +125,9 @@ function idx_pdf_page_labels(string $text): string {
     return implode("\n\n", $out);
 }
 
-function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$extractor, string &$error): string {
+require_once __DIR__.'/Documents/PdfTextractReader.php';
+
+function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$extractor, string &$error, array $sourceHead=[]): string {
     // 1) Parser PHP opcional: composer require smalot/pdfparser
     if (class_exists('Smalot\PdfParser\Parser')) {
         try {
@@ -170,12 +172,15 @@ function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$ex
     // 3) AWS Textract
     if (class_exists('Aws\Textract\TextractClient')) {
         try {
-            $text = idx_textract_detect_text($bucket, $s3Key);
+            $head=$sourceHead ?: Config::getS3()->headObject(['Bucket'=>$bucket,'Key'=>$s3Key]);
+            $text = (new PdfTextractReader(Config::getTextract(['http'=>['connect_timeout'=>15,'timeout'=>120]])))->read($bucket,$s3Key,$head);
 
             if (trim($text) !== '') {
-                $extractor = 'aws-textract';
+                $extractor = 'aws-textract-async';
                 return $text;
             }
+        } catch (PdfOcrPendingException $e) {
+            throw $e;
         } catch (Throwable $e) {
             $error = 'Textract: ' . $e->getMessage();
         }
@@ -791,7 +796,8 @@ function idx_extract_file(
     string $bucket,
     string $s3Key,
     string &$extractor,
-    string &$error
+    string &$error,
+    array $sourceHead=[]
 ): string {
     $extractor = '';
     $error = '';
@@ -805,7 +811,7 @@ function idx_extract_file(
             break;
 
         case 'pdf':
-            $text = idx_extract_pdf($tmp, $bucket, $s3Key, $extractor, $error);
+            $text = idx_extract_pdf($tmp, $bucket, $s3Key, $extractor, $error, $sourceHead);
             break;
 
         case 'docx':
@@ -1063,8 +1069,11 @@ function idx_extract_s3_text(
         if (in_array($ext, $textExts, true)) {
             $content = idx_read_safe_text($tmpFile);
         } else {
-            $content = idx_extract_file($tmpFile, $ext, $filename, $bucket, $s3Key, $extractor, $extractError);
+            $content = idx_extract_file($tmpFile, $ext, $filename, $bucket, $s3Key, $extractor, $extractError, $head);
         }
+
+        $after=$s3->headObject(['Bucket'=>$bucket,'Key'=>$s3Key]);
+        if (!hash_equals((string)$head['ETag'],(string)($after['ETag'] ?? ''))) throw new RuntimeException('La revisión S3 cambió durante la extracción; reintenta');
 
         if (trim($content) === '') {
             throw new RuntimeException($extractError ?: 'El archivo no contiene texto extraíble.');

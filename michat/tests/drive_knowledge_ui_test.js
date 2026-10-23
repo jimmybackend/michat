@@ -10,7 +10,7 @@ const calls=[],toasts=[];let refreshes=0;
 const c={document:{getElementById:id=>nodes[id],createElement:node},currentSessionId:7,URLSearchParams,FormData,
   closeChatFilesDrawer(){},loadSessions:async()=>{},createSession:async()=>({id:9}),selectSession:async id=>{c.currentSessionId=id;},esc:x=>x,showToast:(...x)=>toasts.push(x),loadSessionAttachments:async()=>{refreshes++;},
   fetch:async(url,options={})=>{calls.push({url,options});
-    if(url==='drive_file_analysis.php')return {ok:true,json:async()=>({ok:true,filename:'contrato.pdf',summary:'Resumen guardado',coverage:'partial',reused:true,interaction_count:2})};
+    if(url==='drive_file_analysis.php')return {ok:true,json:async()=>({ok:true,filename:'contrato.pdf',summary:'Resumen guardado',coverage:'partial',reused:true,interaction_count:2,chunks:1,sidecar_saved:true})};
     const search=options.body?.get('action')==='search_ai'||url.includes('?');
     return {ok:true,json:async()=>search?{ok:true,csrf:'csrf',files:[{id_:31,Nombre:'contrato.pdf',Ruta:'Data/',Tamano:123,Fecha:'2026-10-01'}],filters:{extensions:['pdf']},has_more:true,next_cursor:31,plan:'server-plan'}:{ok:true}};
   }};

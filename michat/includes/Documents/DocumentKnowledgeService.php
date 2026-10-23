@@ -67,6 +67,15 @@ final class DocumentKnowledgeService
             };
         } catch (DocumentKnowledgeLeaseLost $e) {
             return ['job_id'=>(int)$job['id_'],'status'=>'lease_lost'];
+        } catch (PdfOcrPendingException $e) {
+            try {
+                $this->repo->fenced($job,function() use($job,$e) {
+                    $expired=time()-strtotime((string)$job['created_at'].' UTC')>21600;
+                    $this->repo->write('UPDATE DocumentKnowledgeSources SET state=? WHERE id_=?','si',$expired?'failed':'processing',(int)$job['source_id']);
+                    $this->repo->event($job,'ocr_pending',['expired'=>$expired]);
+                    $this->repo->release($job,'extract',$expired?'failed':'retry',$expired?'OCR no terminó en seis horas; revisa el proveedor y reintenta.':$e->getMessage(),$expired?0:15);
+                });
+            } catch (DocumentKnowledgeLeaseLost $lost) { return ['job_id'=>(int)$job['id_'],'status'=>'lease_lost']; }
         } catch (Throwable $e) {
             try {
                 $this->repo->fenced($job,function() use($job,$e) {

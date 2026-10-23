@@ -27,7 +27,7 @@ final class ChatContextPreparationService
         $features=(new PipelineFeatureFlags($this->db,$request->userId))->all();
         $bundle=$this->builder->build(new MemoryRoute($route),[
             'stage'=>'respond','user_id'=>$request->userId,'session_id'=>$request->sessionId,
-            'project_id'=>$projectId,'memory_scope'=>$scope,'query_text'=>$query,
+            'project_id'=>$projectId,'memory_scope'=>$scope,'query_text'=>$query,'original_query_text'=>$request->prompt,
             'attachment_mode'=>$this->attachmentMode($request->userId,$request->sessionId),'question_memory_enabled'=>!empty($features['question_memory_read']),
             'question_memory_scope'=>$scope->semanticScope(),'log_message_id'=>$request->originMessageId,
             'pipeline_features'=>$features,

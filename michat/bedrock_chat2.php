@@ -2693,6 +2693,7 @@ if ($compilation_id > 0 && isset($_POST['compiled_prompt']) && trim($_POST['comp
         'session_id' => $session_id,
         'project_id' => $projectId,
         'memory_scope' => $memoryScope,
+        'original_query_text' => $text,
         'query_text' => $memoryRouteText !== '' ? $memoryRouteText : $text,
         'attachment_mode' => $attachmentMode,
         'question_memory_enabled' => $use_question_memory,
@@ -3204,6 +3205,12 @@ if (!empty($memoryRoute['code_operation']) && trim($text) !== '') {
             }
         }
     }
+}
+
+if (isset($contextBundle) && empty($successfulToolNames)) {
+    require_once __DIR__.'/includes/Drive/FileKnowledgeState.php';
+    $availabilityReply=FileKnowledgeState::unavailableReply($contextBundle);
+    if ($availabilityReply!==null) $reply_text=$availabilityReply;
 }
 
 // ===== Guardar respuesta del asistente =====
