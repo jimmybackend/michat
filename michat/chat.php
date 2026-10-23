@@ -507,6 +507,10 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
     <span class="chat-files-count" id="chatFilesCount">0</span>
   </div>
   <p class="chat-files-scope-note">Se usan en esta conversación; puedes indexarlos para el contexto RAG.</p>
+  <details class="chat-files-scope-note">
+    <summary>¿Qué hace cada botón del archivo?</summary>
+    <p class="mt-2 mb-0">👁 Ver · ↓ Descargar · 🔍 Reprocesar fragmentos, semántica y embeddings · 🧠 Análisis semántico · 💬 Preguntar a la IA · ⇄ Comparar dos archivos. Para código también aparecen opciones de revisión y nueva versión, sin sobrescribir el original.</p>
+  </details>
 
 
 
