@@ -73,9 +73,10 @@ final class SessionLifecycleService
         $row=$this->loadSession($userId,$sessionId); if(!$row) return false;
         if ($this->isBranchMeta($row['meta']??null)) return false;
         if (!$this->isEmpty($userId,$sessionId)) return false;
-        $stmt=$this->db->prepare("DELETE FROM ChatSessions WHERE id_=? AND user_id_=?");
+        // Mantener también los borradores vacíos en la papelera para poder recuperarlos.
+        $stmt=$this->db->prepare("UPDATE ChatSessions SET status='closed' WHERE id_=? AND user_id_=? AND status='open'");
         if(!$stmt) return false; $stmt->bind_param('ii',$sessionId,$userId); $stmt->execute();
-        $deleted=$stmt->affected_rows>0; $stmt->close(); return $deleted;
+        $discarded=$stmt->affected_rows>0; $stmt->close(); return $discarded;
     }
 
     public function cleanupStaleEmpty(int $userId, int $graceSeconds = 900, int $limit = 50): int
@@ -100,6 +101,8 @@ final class SessionLifecycleService
 
     /** @return array<string,mixed> */
     public function archive(int$userId,int$sessionId):array{return$this->setStatus($userId,$sessionId,'archived');}
+    /** @return array<string,mixed> */
+    public function trash(int$userId,int$sessionId):array{return$this->setStatus($userId,$sessionId,'closed');}
     /** @return array<string,mixed> */
     public function restore(int$userId,int$sessionId):array{return$this->setStatus($userId,$sessionId,'open');}
 
@@ -153,7 +156,7 @@ final class SessionLifecycleService
     /** @return array<string,mixed> */
     private function setStatus(int$userId,int$sessionId,string$status):array
     {
-        if(!in_array($status,['open','archived'],true))throw new InvalidArgumentException('session_status_invalid');
+        if(!in_array($status,['open','archived','closed'],true))throw new InvalidArgumentException('session_status_invalid');
         $stmt=$this->db->prepare('UPDATE ChatSessions SET status=? WHERE id_=? AND user_id_=?');if(!$stmt)throw new RuntimeException('database_error');
         $stmt->bind_param('sii',$status,$sessionId,$userId);if(!$stmt->execute())throw new RuntimeException('database_error');$affected=$stmt->affected_rows;$stmt->close();
         $row=$this->loadSession($userId,$sessionId);if(!$row)throw new OutOfBoundsException('session_not_found');

@@ -1835,7 +1835,7 @@ $compiled_prompt_input = isset($_POST['compiled_prompt']) ? trim($_POST['compile
 $compilation_id = isset($_POST['compilation_id']) ? (int)$_POST['compilation_id'] : 0;
 
 // ===== Verificar sesión =====
-$stmtS = $db_connection->prepare("SELECT id_, project_id_, meta, context_summary FROM ChatSessions WHERE id_=? AND user_id_=?");
+$stmtS = $db_connection->prepare("SELECT id_, project_id_, meta, context_summary, status FROM ChatSessions WHERE id_=? AND user_id_=?");
 if(!$stmtS) jexit(['ok'=>false,'error'=>'Error preparando SELECT sesión: '.$db_connection->error],500);
 $stmtS->bind_param('ii', $session_id, $user_id);
 if(!$stmtS->execute()){ $e=$stmtS->error; $stmtS->close(); jexit(['ok'=>false,'error'=>'Error ejecutando SELECT sesión: '.$e],500); }
@@ -1843,6 +1843,11 @@ $resS = $stmtS->get_result();
 if(!$resS || !$resS->num_rows){ $stmtS->close(); jexit(['ok'=>false,'error'=>'Sesión no encontrada'],404); }
 $sessionData = $resS->fetch_assoc();
 $stmtS->close();
+// Archivadas y eliminadas se conservan para auditoría, no reciben nuevos turnos.
+// Restaurar a Activas antes de llamar al modelo o persistir mensajes.
+if (($sessionData['status'] ?? '') !== 'open') {
+    jexit(['ok'=>false,'error'=>'La conversación está archivada o eliminada. Recupérala a Activas para continuar.'],409);
+}
 $memoryScope = (new ConversationScopeResolver($db_connection))->resolve($user_id, $session_id);
 $projectId = $memoryScope->projectId();
 $requested_question_memory_scope = $question_memory_scope;

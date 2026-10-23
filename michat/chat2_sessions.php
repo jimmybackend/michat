@@ -18,13 +18,18 @@ try{
     $cleaned=$lifecycle->cleanupStaleEmpty($userId,900,50);
 
     $q=trim((string)($_GET['q']??''));
-    $archived=((string)($_GET['archived']??'0'))==='1';
-    $where=['cs.user_id_=?',$archived?"cs.status='archived'":"cs.status<>'archived'"];
-    $types='i';$params=[$userId];
+    // Tres vistas sin eliminar físicamente ninguna conversación.
+    // Mantener el parámetro archived por compatibilidad con clientes antiguos.
+    $view=(string)($_GET['status']??(((string)($_GET['archived']??'0'))==='1'?'archived':'open'));
+    if(!in_array($view,['open','archived','closed'],true))jexit(['ok'=>false,'error'=>'status inválido'],400);
+    $where=['cs.user_id_=?','cs.status=?'];
+    $types='is';$params=[$userId,$view];
     if($q!==''){
         if(ctype_digit($q)){$where[]="(cs.id_=? OR cs.title LIKE CONCAT('%',?,'%'))";$types.='is';$params[]=(int)$q;$params[]=esc_like($q);}
         else{$where[]="cs.title LIKE CONCAT('%',?,'%')";$types.='s';$params[]=esc_like($q);}
     }
+    $offset=max(0,min(1000000,(int)($_GET['offset']??0)));
+    $types.='i';$params[]=$offset;
     $sql="SELECT cs.id_,cs.user_id_,cs.project_id_,cs.title,cs.model_id,cs.provider,cs.status,cs.meta,cs.created_at,cs.updated_at,
                  (SELECT COUNT(*) FROM ChatMessages cm WHERE cm.session_id_=cs.id_) AS message_count,
                  EXISTS(SELECT 1 FROM SessionContextBlocks scb WHERE scb.session_id_=cs.id_ LIMIT 1) AS has_context_blocks,
@@ -35,7 +40,7 @@ try{
                       AND f.Ruta LIKE CONCAT('Data/Chat/Uploads/', cs.user_id_, '/%/', cs.id_, '/%')
                     LIMIT 1
                  ) AS has_files
-          FROM ChatSessions cs WHERE ".implode(' AND ',$where)." ORDER BY cs.updated_at DESC LIMIT 200";
+          FROM ChatSessions cs WHERE ".implode(' AND ',$where)." ORDER BY cs.updated_at DESC LIMIT 201 OFFSET ?";
     $stmt=$db->prepare($sql);if(!$stmt)throw new RuntimeException($db->error);$stmt->bind_param($types,...$params);$stmt->execute();$res=$stmt->get_result();$sessions=[];
     while($row=$res->fetch_assoc()){
         $meta=[];if(is_string($row['meta'])&&trim($row['meta'])!==''){$d=json_decode($row['meta'],true);if(is_array($d))$meta=$d;}
@@ -44,10 +49,13 @@ try{
         $sessions[]=[
             'id'=>(int)$row['id_'],'user_id'=>(int)$row['user_id_'],'project_id'=>$row['project_id_']!==null?(int)$row['project_id_']:null,
             'title'=>(string)$row['title'],'model_id'=>(string)$row['model_id'],'provider'=>$row['provider']!==null?(string)$row['provider']:null,
-            'status'=>(string)$row['status'],'archived'=>(string)$row['status']==='archived','created_at'=>(string)$row['created_at'],'updated_at'=>(string)$row['updated_at'],
+            'status'=>(string)$row['status'],'archived'=>(string)$row['status']==='archived','deleted'=>(string)$row['status']==='closed','created_at'=>(string)$row['created_at'],'updated_at'=>(string)$row['updated_at'],
             'message_count'=>$messageCount,'is_empty'=>$messageCount===0&&!$hasBlocks&&!$hasFiles,'has_files'=>$hasFiles,'is_branch'=>$branch!==null,
             'branch'=>$branch,
         ];
     }
-    $stmt->close();jexit(['ok'=>true,'cleanup_deleted'=>$cleaned,'sessions'=>$sessions]);
+    $stmt->close();
+    $hasMore=count($sessions)>200;
+    if($hasMore)array_pop($sessions);
+    jexit(['ok'=>true,'cleanup_deleted'=>$cleaned,'sessions'=>$sessions,'has_more'=>$hasMore]);
 }catch(Throwable $e){jexit(['ok'=>false,'error'=>$e->getMessage()],500);}

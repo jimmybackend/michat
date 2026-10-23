@@ -367,8 +367,16 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 
 <div class="sidebar-section conversations-section">
-<div class="section-label">CONVERSACIONES</div>
-<div id="sbChatList" class="sessions-list">
+<div class="section-label-row" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+  <div class="section-label">CONVERSACIONES</div>
+  <select id="sbChatView" aria-label="Filtrar conversaciones por estado" title="Ver conversaciones activas, archivadas o eliminadas"
+    style="max-width:146px;min-width:0;padding:5px 6px;border-radius:7px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:0.75rem;">
+    <option value="open">Activas</option>
+    <option value="archived">Archivadas</option>
+    <option value="closed">Eliminadas</option>
+  </select>
+</div>
+<div id="sbChatList" class="sessions-list" aria-live="polite">
 <div class="empty-state-sidebar">Cargando...</div>
 </div>
 </div>
@@ -441,8 +449,11 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
     <button id="chat2Archive" class="btn-icon-sm" title="Archivar chat" type="button">
       <i class="fas fa-archive"></i>
     </button>
-    <button id="chat2Restore" class="btn-icon-sm d-none" title="Restaurar chat" type="button">
+    <button id="chat2Restore" class="btn-icon-sm d-none" title="Restaurar a conversaciones activas" type="button">
       <i class="fas fa-undo"></i>
+    </button>
+    <button id="chat2Delete" class="btn-icon-sm" title="Mover conversación a Eliminadas (recuperable)" type="button">
+      <i class="fas fa-trash-alt"></i>
     </button>
   </div>
   <div class="header-right">
@@ -861,7 +872,7 @@ role="progressbar" style="width: 0%">0%</div>
 <!-- Preferencias primero: expone chatPreferencesReady/modelo antes de crear sesiones. -->
 <script src="js/user_preferences.js"></script>
 <!-- chat.js administra sesiones/proyectos y exporta window.chatUtils. -->
-<script src="js/chat.js?v=20261022-ajax-replies"></script>
+<script src="js/chat.js?v=20261022-recoverable-trash"></script>
 <script src="js/context-viewer.js"></script> 
 <script src="js/ai-data-control.js"></script>
 <!-- Módulos que dependen de chat.js -->

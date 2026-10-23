@@ -10,6 +10,7 @@
       renameSession: 'chat2_session_title.php',
       archiveSession: 'chat2_session_archive.php',
       restoreSession: 'chat2_session_restore.php',
+      deleteSession: 'chat2_session_delete.php',
       messages: 'chat2_messages.php',
       genImage: 'chat_gen_image.php',
       genVideoStart: 'chat_gen_video_start.php',
@@ -36,6 +37,7 @@
       pane: $('#pane-Chat2'),
       sbChatList: $('#sbChatList'),
       sbChatSearch: $('#sbChatSearch'),
+      sbChatView: $('#sbChatView'),
       sbNewChat: $('#sbNewChat'),
       sbProjectList: $('#sbProjectList'),
       sbNewProject: $('#sbNewProject'),
@@ -53,6 +55,7 @@
       rename: $('#chat2Rename'),
       archive: $('#chat2Archive'),
       restore: $('#chat2Restore'),
+      delete: $('#chat2Delete'),
       traceExplorer: $('#chatTraceExplorerBtn'),
       model: $('#chat2Model'),
         temp: $('#chat2Temp'),
@@ -98,9 +101,12 @@
       chatFilesCount: $('#chatFilesCount'),   
     };
     let currentSessionId = null;
+    let currentSessionStatus = 'open';
     let currentProjectId = null;
     let sessions = [];
     let sessionsRequestSerial = 0;
+    let hasMoreSessions = false;
+    let nextSessionsOffset = 0;
     let projects = [];
     let projectSources = [];
     let isSending = false;
@@ -1179,7 +1185,8 @@ async function loadSessions() {
     const qs = new URLSearchParams();
     // Siempre pedir el listado completo. El filtro de texto es exclusivamente
     // visual: no puede borrar las otras sesiones ni cambiar los datos cargados.
-    if (el.showArchived && el.showArchived.checked) qs.set('archived', '1');
+    qs.set('status', el.sbChatView?.value || 'open');
+    qs.set('offset', '0');
     const uid = getUserId();
     if (uid) qs.set('user_id', uid);
     const r = await fetch(`${API.sessions}?${qs.toString()}`, { credentials: 'same-origin' });
@@ -1187,6 +1194,10 @@ async function loadSessions() {
     if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
     if (requestSerial !== sessionsRequestSerial) return;
     sessions = Array.isArray(j.sessions) ? j.sessions : [];
+    hasMoreSessions = j.has_more === true;
+    nextSessionsOffset = sessions.length;
+    const list = el.sbChatList || el.sessionsList;
+    if (list) list.scrollTop = 0;
     renderSessionsList();
   } catch (e) {
     console.error(e);
@@ -1197,6 +1208,30 @@ async function loadSessions() {
     }
   } finally {
     setStatus('');
+  }
+}
+async function loadMoreSessions() {
+  if (!hasMoreSessions) return;
+  const requestSerial = ++sessionsRequestSerial;
+  const view = el.sbChatView?.value || 'open';
+  const qs = new URLSearchParams({status: view, offset: String(nextSessionsOffset)});
+  const uid = getUserId();
+  if (uid) qs.set('user_id', uid);
+  try {
+    const r = await fetch(`${API.sessions}?${qs.toString()}`, { credentials: 'same-origin' });
+    const j = toJSONorThrow(await r.text(), r.status, 'Más conversaciones');
+    if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+    if (requestSerial !== sessionsRequestSerial || view !== (el.sbChatView?.value || 'open')) return;
+    const incoming = Array.isArray(j.sessions) ? j.sessions : [];
+    nextSessionsOffset += incoming.length;
+    const ids = new Set(sessions.map(x => Number(x.id)));
+    for (const item of incoming) {
+      if (!ids.has(Number(item.id))) { sessions.push(item); ids.add(Number(item.id)); }
+    }
+    hasMoreSessions = j.has_more === true;
+    renderSessionsList();
+  } catch (e) {
+    if (requestSerial === sessionsRequestSerial) window.alert('No se pudieron cargar más conversaciones: ' + e.message);
   }
 }
 function formatSessionMeta(dtStr) {
@@ -1238,23 +1273,27 @@ function renderSessionsList() {
         || String(s.id ?? s.id_ ?? '').includes(search)
         || Number(s.id ?? s.id_) === Number(currentSessionId))
     : sessions;
+  const view = el.sbChatView?.value || 'open';
   const freeSessions = displayedSessions.filter(s => !s.project_id && !s.project_id_);
   const projectSessions = displayedSessions.filter(s => s.project_id || s.project_id_);
   const renderItem = (s) => {
     const sid = s.id || s.id_;
     const title = esc(s.title || `Sesión #${sid}`);
     const meta = formatSessionMeta(s.updated_at || s.created_at || '');
-    const isArchived = s.archived || s.status === 'archived';
-    const badge = isArchived ? `<span class="badge badge-secondary ml-1" style="font-size:0.6rem;">arch</span>` : '';
+    const isArchived = s.status === 'archived';
+    const isDeleted = s.status === 'closed';
+    const badge = isDeleted
+      ? '<span class="badge badge-danger ml-1" style="font-size:0.6rem;">eliminada</span>'
+      : isArchived ? '<span class="badge badge-secondary ml-1" style="font-size:0.6rem;">arch</span>' : '';
     const active = (Number(sid) === Number(currentSessionId)) ? ' active' : '';
     return `<div class="sb-item${active}" data-id="${sid}" title="${esc(title)}">
       <div class="d-flex justify-content-between align-items-center">
         <span class="text-truncate sb-item-title" style="max-width: 70%;">${esc(title)} ${badge}</span>
         <div class="btn-group btn-group-sm" style="flex-shrink: 0;">
-          <button class="btn btn-link p-0 js-rename" title="Renombrar"><i class="fas fa-pen" style="font-size:0.55rem;"></i></button>
-          ${isArchived
-            ? `<button class="btn btn-link p-0 js-restore text-success" title="Restaurar"><i class="fas fa-undo" style="font-size:0.55rem;"></i></button>`
-            : `<button class="btn btn-link p-0 js-archive text-danger" title="Archivar"><i class="fas fa-archive" style="font-size:0.55rem;"></i></button>`}
+          ${!isDeleted ? '<button class="btn btn-link p-0 js-rename" title="Renombrar"><i class="fas fa-pen" style="font-size:0.55rem;"></i></button>' : ''}
+          ${!isArchived && !isDeleted ? '<button class="btn btn-link p-0 js-archive" title="Archivar"><i class="fas fa-archive" style="font-size:0.7rem;"></i></button>' : ''}
+          ${isArchived || isDeleted ? '<button class="btn btn-link p-0 js-restore text-success" title="Recuperar a Activas"><i class="fas fa-undo" style="font-size:0.7rem;"></i></button>' : ''}
+          ${isDeleted ? '<button class="btn btn-link p-0 js-archive" title="Mover a Archivadas"><i class="fas fa-archive" style="font-size:0.7rem;"></i></button>' : '<button class="btn btn-link p-0 js-delete text-danger" title="Enviar a Eliminadas (recuperable)"><i class="fas fa-trash-alt" style="font-size:0.7rem;"></i></button>'}
         </div>
       </div>
       <small class="sb-item-meta text-muted d-block">${esc(meta)}</small>
@@ -1266,23 +1305,29 @@ function renderSessionsList() {
         <div class="sb-group-label">${esc(label)}</div>
         ${arr.map(renderItem).join('')}
       `).join('')
-    : `<div class="text-muted small">Sin chats libres</div>`;
+    : projectSessions.length ? '' : `<div class="text-muted small">${view === 'closed' ? 'No hay conversaciones eliminadas' : view === 'archived' ? 'No hay conversaciones archivadas' : 'No hay conversaciones activas'}</div>`;
   const projectItems = projectSessions.length
     ? '<div class="sb-group-label">Chats de proyectos</div>' + projectSessions.map(renderItem).join('')
     : '';
-  targetList.innerHTML = items + projectItems;
+  const previousScroll = targetList.scrollTop;
+  targetList.innerHTML = items + projectItems
+    + (hasMoreSessions ? '<button type="button" class="btn btn-sm btn-outline-secondary w-100 mt-2 js-more-sessions">Cargar más conversaciones</button>' : '');
+  targetList.scrollTop = previousScroll;
+  targetList.querySelector('.js-more-sessions')?.addEventListener('click', loadMoreSessions);
   targetList.querySelectorAll('.sb-item').forEach(item => {
     item.addEventListener('click', (ev) => {
-      if (ev.target.closest('.js-rename,.js-archive,.js-restore')) return;
+      if (ev.target.closest('.js-rename,.js-archive,.js-restore,.js-delete')) return;
       selectSession(parseInt(item.getAttribute('data-id'), 10));
     });
     const sid = parseInt(item.getAttribute('data-id'), 10);
     const btnRename = item.querySelector('.js-rename');
     const btnArchive = item.querySelector('.js-archive');
     const btnRestore = item.querySelector('.js-restore');
+    const btnDelete = item.querySelector('.js-delete');
     if (btnRename) btnRename.addEventListener('click', (e) => { e.stopPropagation(); promptRename(sid); });
     if (btnArchive) btnArchive.addEventListener('click', (e) => { e.stopPropagation(); doArchive(sid); });
     if (btnRestore) btnRestore.addEventListener('click', (e) => { e.stopPropagation(); doRestore(sid); });
+    if (btnDelete) btnDelete.addEventListener('click', (e) => { e.stopPropagation(); doDelete(sid); });
   });
 }
 
@@ -1329,6 +1374,8 @@ function renderSessionsList() {
       const r = await fetch(API.createSession, { method:'POST', credentials:'same-origin', body: fd });
       const j = toJSONorThrow(await r.text(), r.status, 'Crear sesión');
       if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+      if (el.sbChatView) el.sbChatView.value = 'open';
+      currentSessionStatus = 'open';
       setStatus('');
       return j;
     }
@@ -1348,43 +1395,79 @@ function renderSessionsList() {
       if (id === currentSessionId && el.title) el.title.textContent = title;
       setStatus('');
     }
-    async function doArchive(id) {
-      setStatus('Archivando…');
-      const fd = new FormData();
-      fd.append('session_id', id);
-      const r = await fetch(API.archiveSession, { method:'POST', credentials:'same-origin', body: fd });
-      const j = toJSONorThrow(await r.text(), r.status, 'Archivar sesión');
-      if (!r.ok || j.ok === false) { setStatus(''); alert(j.error || `HTTP ${r.status}`); return; }
-      await loadSessions();
-      if (id === currentSessionId) {
-        const s = sessions.find(x => x.id === id);
-        if (el.badge) {
-          if (s && s.archived) { el.badge.textContent = 'archivada'; el.badge.classList.remove('d-none'); }
-          else { el.badge.textContent = ''; el.badge.classList.add('d-none'); }
-        }
-        if (el.restore) el.restore.classList.toggle('d-none', !(s && s.archived));
-        if (el.archive) el.archive.classList.toggle('d-none', !!(s && s.archived));
+    function updateCurrentSessionState(status) {
+      currentSessionStatus = ['open','archived','closed'].includes(status) ? status : 'open';
+      const isArchived = currentSessionStatus === 'archived';
+      const isDeleted = currentSessionStatus === 'closed';
+      if (el.badge) {
+        el.badge.textContent = isDeleted ? 'eliminada · conservada para auditoría' : isArchived ? 'archivada' : '';
+        el.badge.classList.toggle('d-none', !isArchived && !isDeleted);
       }
-      setStatus('');
+      if (el.restore) el.restore.classList.toggle('d-none', !isArchived && !isDeleted);
+      if (el.archive) {
+        el.archive.classList.toggle('d-none', isArchived);
+        el.archive.title = isDeleted ? 'Mover a Archivadas' : 'Archivar chat';
+      }
+      if (el.delete) el.delete.classList.toggle('d-none', isDeleted);
+      // Las conversaciones archivadas/eliminadas son de consulta hasta restaurarlas.
+      if (el.input) {
+        el.input.disabled = isArchived || isDeleted;
+        el.input.placeholder = isDeleted ? 'Recupera la conversación para continuar' : isArchived ? 'Restaura la conversación para escribir' : 'Escribe tu mensaje...';
+      }
+      const readOnly = isArchived || isDeleted;
+      if (el.send) el.send.disabled = readOnly;
+      // La vista de auditoría no debe ofrecer edición, adjuntos ni nuevas generaciones.
+      for (const control of [el.rename, el.attach, el.file, el.btnGenImg, el.btnGenVid, el.btnSonic, el.attachmentsAdd]) {
+        if (control) control.disabled = readOnly;
+      }
+    }
+    async function changeSessionStatus(id, api, label, confirmation) {
+      if (isSending) {
+        window.alert('Espera a que termine la respuesta antes de mover la conversación.');
+        return;
+      }
+      if (confirmation && !window.confirm(confirmation)) return;
+      setStatus(label + '…');
+      try {
+        const fd = new FormData();
+        fd.append('session_id', String(id));
+        if (api === API.deleteSession) {
+          fd.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.content || '');
+        }
+        const r = await fetch(api, { method: 'POST', credentials: 'same-origin', body: fd });
+        const j = toJSONorThrow(await r.text(), r.status, label);
+        if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+        const wasSelected = Number(currentSessionId) === Number(id);
+        if (wasSelected) updateCurrentSessionState(j.status);
+        await loadSessions();
+        // Si la conversación salió de la vista seleccionada, limpiar también
+        // su visor. Los mensajes siguen intactos y disponibles en su carpeta.
+        if (wasSelected && (el.sbChatView?.value || 'open') !== j.status) {
+          currentSessionId = null;
+          currentSessionStatus = 'open';
+          currentMemoryScope = null;
+          if (el.title) el.title.textContent = 'Nueva conversación';
+          if (el.sbCurrentSession) el.sbCurrentSession.textContent = 'Ninguna';
+          if (el.messages) el.messages.textContent = '';
+          updateCurrentSessionState('open');
+          syncTraceExplorerButton();
+          renderSessionsList();
+        }
+      } catch (e) {
+        window.alert(label + ': ' + e.message);
+      } finally {
+        setStatus('');
+      }
+    }
+    async function doArchive(id) {
+      await changeSessionStatus(id, API.archiveSession, 'Archivar', null);
     }
     async function doRestore(id) {
-      setStatus('Restaurando…');
-      const fd = new FormData();
-      fd.append('session_id', id);
-      const r = await fetch(API.restoreSession, { method:'POST', credentials:'same-origin', body: fd });
-      const j = toJSONorThrow(await r.text(), r.status, 'Restaurar sesión');
-      if (!r.ok || j.ok === false) { setStatus(''); alert(j.error || `HTTP ${r.status}`); return; }
-      await loadSessions();
-      if (id === currentSessionId) {
-        const s = sessions.find(x => x.id === id);
-        if (el.badge) {
-          if (s && s.archived) { el.badge.textContent = 'archivada'; el.badge.classList.remove('d-none'); }
-          else { el.badge.textContent = ''; el.badge.classList.add('d-none'); }
-        }
-        if (el.restore) el.restore.classList.toggle('d-none', !(s && s.archived));
-        if (el.archive) el.archive.classList.toggle('d-none', !!(s && s.archived));
-      }
-      setStatus('');
+      await changeSessionStatus(id, API.restoreSession, 'Recuperar', null);
+    }
+    async function doDelete(id) {
+      await changeSessionStatus(id, API.deleteSession, 'Mover a Eliminadas',
+        '¿Mover esta conversación a Eliminadas? Sus mensajes se conservarán y podrás recuperarla.');
     }
     async function selectSession(id) {
       if (!id || Number.isNaN(id)) return;
@@ -1413,12 +1496,7 @@ function renderSessionsList() {
         currentProjectId = null;
         await selectProject(null);
       }
-      if (el.badge) {
-        if (s && s.archived) { el.badge.textContent = 'archivada'; el.badge.classList.remove('d-none'); }
-        else { el.badge.textContent = ''; el.badge.classList.add('d-none'); }
-      }
-      if (el.restore) el.restore.classList.toggle('d-none', !(s && s.archived));
-      if (el.archive) el.archive.classList.toggle('d-none', !!(s && s.archived));
+      updateCurrentSessionState(s ? s.status : currentSessionStatus);
       setStatus('Cargando mensajes…');
       try {
         const qs = new URLSearchParams({ session_id: String(id) });
@@ -2037,6 +2115,10 @@ function updateQuestionMemoryStatus(response) {
 
 async function sendMessage() {
     if (isSending) return;
+    if (currentSessionId && currentSessionStatus !== 'open') {
+      window.alert('Restaura esta conversación a Activas antes de escribir.');
+      return;
+    }
 
     const text = (el.input && el.input.value) ? el.input.value.trim() : '';
     const auto = !!(el.auto && el.auto.checked);
@@ -3333,6 +3415,7 @@ if (btnIndexPending) {
       });
     }
     if (el.sbChatSearch) el.sbChatSearch.addEventListener('input', () => renderSessionsList());
+    if (el.sbChatView) el.sbChatView.addEventListener('change', () => loadSessions());
     if (el.sbNewProject) el.sbNewProject.addEventListener('click', openProjectManager);
     if (el.sbManageProjects) el.sbManageProjects.addEventListener('click', openProjectManager);
     if (el.btnGenImg) {
@@ -3366,6 +3449,7 @@ if (btnIndexPending) {
     if (el.showArchived) el.showArchived.addEventListener('change', () => loadSessions());
     if (el.rename) el.rename.addEventListener('click', () => currentSessionId && promptRename(currentSessionId));
     if (el.archive) el.archive.addEventListener('click', () => currentSessionId && doArchive(currentSessionId));
+    if (el.delete) el.delete.addEventListener('click', () => currentSessionId && doDelete(currentSessionId));
     if (el.restore) el.restore.addEventListener('click', () => currentSessionId && doRestore(currentSessionId));
     if (el.traceExplorer) el.traceExplorer.addEventListener('click', openTraceExplorer);
     syncTraceExplorerButton();
