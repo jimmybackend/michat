@@ -72,7 +72,8 @@ try {
         $parts=idx_located_chunks($digital,'pdf',100);
         $hit=array_values(array_filter($parts,static fn($p)=>str_contains($p['content'],'41837')))[0];
         evidenceCheck(($hit['locator']['page']??0)===2,'PDF evidence locator matches page containing figure');
-    } else echo "SKIP PDF Poppler: pdftotext unavailable\n";
+    } elseif (getenv('DOCUMENT_REQUIRE_PDF')==='1') { throw new RuntimeException('Required PDF integration dependency pdftotext unavailable'); }
+    else echo "SKIP PDF Poppler: pdftotext unavailable\n";
     evidenceCheck(AttachmentEvidence::lexical('99123',$text)>0,'Exact numeric lookup without embeddings');
     evidenceCheck(AttachmentEvidence::cosine([1,0],[1,0])===1.0,'Valid semantic similarity');
     evidenceCheck(AttachmentEvidence::cosine([1,0],[1])===null,'Mismatched vectors rejected');

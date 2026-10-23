@@ -35,6 +35,7 @@ jobs:
       DOCUMENT_TEST_DB_USER: root
       DOCUMENT_TEST_DB_NAME: document_evidence_test
       DOCUMENT_TEST_DB_PORT: 3306
+      DOCUMENT_REQUIRE_PDF: 1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,6 +53,11 @@ jobs:
           extensions: mysqli, mbstring, curl, openssl, fileinfo, dom, xml, zip, sqlite3
           tools: composer:v2
           coverage: none
+
+      - name: PDF extraction dependency
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends poppler-utils
 
       - name: Composer
         run: composer install --no-interaction --prefer-dist --no-progress
