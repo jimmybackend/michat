@@ -133,9 +133,30 @@
     const blob = wavBlob(base64Bytes(base64), Number(sampleRate || 24000));
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    audio.addEventListener('ended', () => URL.revokeObjectURL(url), { once: true });
-    audio.addEventListener('error', () => URL.revokeObjectURL(url), { once: true });
-    try { await audio.play(); } catch (_) { URL.revokeObjectURL(url); }
+    let manualPlayback = false;
+    const revoke = () => URL.revokeObjectURL(url);
+    audio.addEventListener('ended', () => { if (!manualPlayback) revoke(); }, { once: true });
+    audio.addEventListener('error', revoke, { once: true });
+    window.addEventListener('pagehide', revoke, { once: true });
+    try {
+      await audio.play();
+    } catch (_) {
+      // Android/iOS pueden bloquear la reproducción después del fetch.
+      // Nunca descartar el audio silenciosamente: ofrecer controles táctiles.
+      manualPlayback = true;
+      const container = $('#chat2Messages .chat-msg.assistant:last-child') || $('#chat2Status');
+      if (!container) { revoke(); return; }
+      const wrap = document.createElement('div');
+      wrap.className = 'chat-voice-playback';
+      wrap.style.marginTop = '8px';
+      audio.controls = true;
+      audio.preload = 'metadata';
+      audio.setAttribute('aria-label', 'Reproducir respuesta de voz');
+      audio.style.maxWidth = '100%';
+      wrap.appendChild(audio);
+      container.appendChild(wrap);
+      status('🔊 Pulsa reproducir para escuchar la respuesta.', false);
+    }
   }
   async function start() {
     if (processing || recording) return;
