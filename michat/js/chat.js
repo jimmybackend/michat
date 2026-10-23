@@ -10,6 +10,7 @@
       renameSession: 'chat2_session_title.php',
       archiveSession: 'chat2_session_archive.php',
       restoreSession: 'chat2_session_restore.php',
+      deleteSession: 'chat2_session_delete.php',
       messages: 'chat2_messages.php',
       genImage: 'chat_gen_image.php',
       genVideoStart: 'chat_gen_video_start.php',
@@ -36,6 +37,7 @@
       pane: $('#pane-Chat2'),
       sbChatList: $('#sbChatList'),
       sbChatSearch: $('#sbChatSearch'),
+      sbChatView: $('#sbChatView'),
       sbNewChat: $('#sbNewChat'),
       sbProjectList: $('#sbProjectList'),
       sbNewProject: $('#sbNewProject'),
@@ -53,6 +55,7 @@
       rename: $('#chat2Rename'),
       archive: $('#chat2Archive'),
       restore: $('#chat2Restore'),
+      delete: $('#chat2Delete'),
       traceExplorer: $('#chatTraceExplorerBtn'),
       model: $('#chat2Model'),
         temp: $('#chat2Temp'),
@@ -98,6 +101,7 @@
       chatFilesCount: $('#chatFilesCount'),   
     };
     let currentSessionId = null;
+    let currentSessionStatus = 'open';
     let currentProjectId = null;
     let sessions = [];
     let sessionsRequestSerial = 0;
@@ -1179,7 +1183,7 @@ async function loadSessions() {
     const qs = new URLSearchParams();
     // Siempre pedir el listado completo. El filtro de texto es exclusivamente
     // visual: no puede borrar las otras sesiones ni cambiar los datos cargados.
-    if (el.showArchived && el.showArchived.checked) qs.set('archived', '1');
+    qs.set('status', el.sbChatView?.value || 'open');
     const uid = getUserId();
     if (uid) qs.set('user_id', uid);
     const r = await fetch(`${API.sessions}?${qs.toString()}`, { credentials: 'same-origin' });
@@ -1238,23 +1242,27 @@ function renderSessionsList() {
         || String(s.id ?? s.id_ ?? '').includes(search)
         || Number(s.id ?? s.id_) === Number(currentSessionId))
     : sessions;
+  const view = el.sbChatView?.value || 'open';
   const freeSessions = displayedSessions.filter(s => !s.project_id && !s.project_id_);
   const projectSessions = displayedSessions.filter(s => s.project_id || s.project_id_);
   const renderItem = (s) => {
     const sid = s.id || s.id_;
     const title = esc(s.title || `Sesión #${sid}`);
     const meta = formatSessionMeta(s.updated_at || s.created_at || '');
-    const isArchived = s.archived || s.status === 'archived';
-    const badge = isArchived ? `<span class="badge badge-secondary ml-1" style="font-size:0.6rem;">arch</span>` : '';
+    const isArchived = s.status === 'archived';
+    const isDeleted = s.status === 'closed';
+    const badge = isDeleted
+      ? '<span class="badge badge-danger ml-1" style="font-size:0.6rem;">eliminada</span>'
+      : isArchived ? '<span class="badge badge-secondary ml-1" style="font-size:0.6rem;">arch</span>' : '';
     const active = (Number(sid) === Number(currentSessionId)) ? ' active' : '';
     return `<div class="sb-item${active}" data-id="${sid}" title="${esc(title)}">
       <div class="d-flex justify-content-between align-items-center">
         <span class="text-truncate sb-item-title" style="max-width: 70%;">${esc(title)} ${badge}</span>
         <div class="btn-group btn-group-sm" style="flex-shrink: 0;">
-          <button class="btn btn-link p-0 js-rename" title="Renombrar"><i class="fas fa-pen" style="font-size:0.55rem;"></i></button>
-          ${isArchived
-            ? `<button class="btn btn-link p-0 js-restore text-success" title="Restaurar"><i class="fas fa-undo" style="font-size:0.55rem;"></i></button>`
-            : `<button class="btn btn-link p-0 js-archive text-danger" title="Archivar"><i class="fas fa-archive" style="font-size:0.55rem;"></i></button>`}
+          ${!isDeleted ? '<button class="btn btn-link p-0 js-rename" title="Renombrar"><i class="fas fa-pen" style="font-size:0.55rem;"></i></button>' : ''}
+          ${!isArchived && !isDeleted ? '<button class="btn btn-link p-0 js-archive" title="Archivar"><i class="fas fa-archive" style="font-size:0.7rem;"></i></button>' : ''}
+          ${isArchived || isDeleted ? '<button class="btn btn-link p-0 js-restore text-success" title="Recuperar a Activas"><i class="fas fa-undo" style="font-size:0.7rem;"></i></button>' : ''}
+          ${isDeleted ? '<button class="btn btn-link p-0 js-archive" title="Mover a Archivadas"><i class="fas fa-archive" style="font-size:0.7rem;"></i></button>' : '<button class="btn btn-link p-0 js-delete text-danger" title="Enviar a Eliminadas (recuperable)"><i class="fas fa-trash-alt" style="font-size:0.7rem;"></i></button>'}
         </div>
       </div>
       <small class="sb-item-meta text-muted d-block">${esc(meta)}</small>
@@ -1266,23 +1274,25 @@ function renderSessionsList() {
         <div class="sb-group-label">${esc(label)}</div>
         ${arr.map(renderItem).join('')}
       `).join('')
-    : `<div class="text-muted small">Sin chats libres</div>`;
+    : projectSessions.length ? '' : `<div class="text-muted small">${view === 'closed' ? 'No hay conversaciones eliminadas' : view === 'archived' ? 'No hay conversaciones archivadas' : 'No hay conversaciones activas'}</div>`;
   const projectItems = projectSessions.length
     ? '<div class="sb-group-label">Chats de proyectos</div>' + projectSessions.map(renderItem).join('')
     : '';
   targetList.innerHTML = items + projectItems;
   targetList.querySelectorAll('.sb-item').forEach(item => {
     item.addEventListener('click', (ev) => {
-      if (ev.target.closest('.js-rename,.js-archive,.js-restore')) return;
+      if (ev.target.closest('.js-rename,.js-archive,.js-restore,.js-delete')) return;
       selectSession(parseInt(item.getAttribute('data-id'), 10));
     });
     const sid = parseInt(item.getAttribute('data-id'), 10);
     const btnRename = item.querySelector('.js-rename');
     const btnArchive = item.querySelector('.js-archive');
     const btnRestore = item.querySelector('.js-restore');
+    const btnDelete = item.querySelector('.js-delete');
     if (btnRename) btnRename.addEventListener('click', (e) => { e.stopPropagation(); promptRename(sid); });
     if (btnArchive) btnArchive.addEventListener('click', (e) => { e.stopPropagation(); doArchive(sid); });
     if (btnRestore) btnRestore.addEventListener('click', (e) => { e.stopPropagation(); doRestore(sid); });
+    if (btnDelete) btnDelete.addEventListener('click', (e) => { e.stopPropagation(); doDelete(sid); });
   });
 }
 
@@ -1329,6 +1339,8 @@ function renderSessionsList() {
       const r = await fetch(API.createSession, { method:'POST', credentials:'same-origin', body: fd });
       const j = toJSONorThrow(await r.text(), r.status, 'Crear sesión');
       if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+      if (el.sbChatView) el.sbChatView.value = 'open';
+      currentSessionStatus = 'open';
       setStatus('');
       return j;
     }
@@ -3333,6 +3345,7 @@ if (btnIndexPending) {
       });
     }
     if (el.sbChatSearch) el.sbChatSearch.addEventListener('input', () => renderSessionsList());
+    if (el.sbChatView) el.sbChatView.addEventListener('change', () => loadSessions());
     if (el.sbNewProject) el.sbNewProject.addEventListener('click', openProjectManager);
     if (el.sbManageProjects) el.sbManageProjects.addEventListener('click', openProjectManager);
     if (el.btnGenImg) {
