@@ -15,33 +15,49 @@ $user = ChatIdentity::resolveUserId($db_connection);
 if ($user <= 0) driveKnowledgeExit(['ok'=>false,'error'=>'No autenticado'],401);
 $access = new DocumentAccessRepository($db_connection);
 $sessionId = (int)($_GET['session_id'] ?? $_POST['session_id'] ?? 0);
-$session = $access->session($user,$sessionId);
-if (!$session) driveKnowledgeExit(['ok'=>false,'error'=>'Acceso denegado'],403);
+$session = $sessionId>0 ? $access->session($user,$sessionId) : null;
+if ($sessionId>0 && !$session) driveKnowledgeExit(['ok'=>false,'error'=>'Acceso denegado'],403);
 $method = $_SERVER['REQUEST_METHOD'] ?? '';
-if ($method === 'GET') {
-    // This token only authorizes linking, never uploading, reading or sharing arbitrary keys.
-    if (empty($_SESSION['document_link_csrf'])) $_SESSION['document_link_csrf'] = bin2hex(random_bytes(24));
-    $query = mb_substr(trim((string)($_GET['q'] ?? '')),0,100);
-    $search = '%' . str_replace(['!','%','_'], ['!!','!%','!_'], $query) . '%';
-    $s = $db_connection->prepare("SELECT id_,Nombre,Ruta,Tamano FROM FileS3 WHERE user_id_=? AND Found=1 AND AccessType<>'secure' AND Nombre LIKE ? ESCAPE '!' ORDER BY id_ DESC LIMIT 40");
-    $s->bind_param('is',$user,$search); $s->execute(); $r = $s->get_result(); $files=[];
-    while ($row=$r->fetch_assoc()) {
-        $ext=strtolower(pathinfo($row['Nombre'],PATHINFO_EXTENSION));
-        if (in_array($ext,array_merge(idx_text_extensions(),idx_extractable_extensions(),['jpg','jpeg','png','gif','webp']),true)) $files[]=$row;
-    }
-    $s->close();
-    driveKnowledgeExit(['ok'=>true,'files'=>$files,'csrf'=>$_SESSION['document_link_csrf'],'limited'=>true]);
+if (empty($_SESSION['document_link_csrf'])) $_SESSION['document_link_csrf'] = bin2hex(random_bytes(24));
+$validCsrf = isset($_POST['csrf']) && hash_equals($_SESSION['document_link_csrf'],(string)$_POST['csrf']);
+$action = (string)($_POST['action'] ?? '');
+if ($method === 'GET' || ($method === 'POST' && $action === 'search_ai')) {
+    try {
+        require_once __DIR__.'/includes/Drive/MetadataSearchService.php';
+        require_once __DIR__.'/includes/Drive/BedrockMetadataPlanner.php';
+        $ai = $action === 'search_ai';
+        if ($ai && (!$validCsrf || !$session)) driveKnowledgeExit(['ok'=>false,'error'=>'Selecciona una conversación y vuelve a abrir el navegador para buscar con IA.'],403);
+        $request = $ai ? $_POST : $_GET;
+        $q = mb_substr(trim((string)($request['q'] ?? '')),0,500);
+        $cursor = max(0,(int)($request['cursor'] ?? 0));
+        $explicit = ['extensions'=>array_filter(explode(',',strtolower((string)($request['extensions'] ?? '')))),
+            'date_from'=>$request['date_from'] ?? null,'date_to'=>$request['date_to'] ?? null];
+        $plan = (string)($request['plan'] ?? '');
+        if ($plan !== '') {
+            $saved = $_SESSION['drive_metadata_plan'] ?? [];
+            if (($saved['user'] ?? 0)!==$user || !hash_equals((string)($saved['token'] ?? ''),$plan)) throw new InvalidArgumentException('La búsqueda expiró; vuelve a buscar.');
+            $q='';$explicit=$saved['filters'];
+        }
+        $planner = $plan !== '' ? static fn()=> $saved['filters'] : new BedrockMetadataPlanner($db_connection,$user,$sessionId);
+        // Reusing a server-held plan pages the DB results without another model call.
+        $result = (new MetadataSearchService($db_connection,$planner))->search($user,$plan!==''?'cached':$q,$ai || $plan!=='',$explicit,$cursor);
+        if ($ai) { $plan=bin2hex(random_bytes(18)); $_SESSION['drive_metadata_plan']=['user'=>$user,'token'=>$plan,'filters'=>$result['filters']]; }
+        driveKnowledgeExit(['ok'=>true,'csrf'=>$_SESSION['document_link_csrf'],'plan'=>$plan]+$result);
+    } catch (InvalidArgumentException $e) { driveKnowledgeExit(['ok'=>false,'error'=>$e->getMessage()],400); }
+    catch (Throwable $e) { error_log('drive_search: '.$e->getMessage()); driveKnowledgeExit(['ok'=>false,'error'=>'No se pudo realizar la búsqueda. Revisa el modelo o utiliza búsqueda literal.'],503); }
 }
 if ($method !== 'POST') driveKnowledgeExit(['ok'=>false,'error'=>'Método no permitido'],405);
-if (!isset($_POST['csrf'],$_SESSION['document_link_csrf']) || !hash_equals($_SESSION['document_link_csrf'],(string)$_POST['csrf'])) driveKnowledgeExit(['ok'=>false,'error'=>'Token inválido'],403);
+if (!$validCsrf) driveKnowledgeExit(['ok'=>false,'error'=>'Token inválido'],403);
+if (!$session) driveKnowledgeExit(['ok'=>false,'error'=>'Selecciona una conversación'],400);
 if ($session['status'] !== 'open') driveKnowledgeExit(['ok'=>false,'error'=>'La conversación está archivada'],409);
+if (!in_array($action,['link','unlink'],true)) driveKnowledgeExit(['ok'=>false,'error'=>'Acción inválida'],400);
 $fileId=(int)($_POST['file_id'] ?? 0);
 if (!$access->file($user,$fileId)) driveKnowledgeExit(['ok'=>false,'error'=>'Archivo no autorizado o bloqueado'],403);
 try {
     $db_connection->begin_transaction();
-    $s=$db_connection->prepare('SELECT meta FROM ChatSessions WHERE id_=? AND user_id_=? FOR UPDATE');
+    $s=$db_connection->prepare('SELECT meta,status FROM ChatSessions WHERE id_=? AND user_id_=? FOR UPDATE');
     $s->bind_param('ii',$sessionId,$user);$s->execute();$row=$s->get_result()->fetch_assoc();$s->close();
-    if (!$row) throw new RuntimeException('Acceso revocado');
+    if (!$row || $row['status']!=='open' || !$access->file($user,$fileId)) throw new RuntimeException('Acceso revocado');
     $meta=json_decode((string)$row['meta'],true) ?: [];
     $ids=array_values(array_unique(array_map('intval',(array)($meta['knowledge_file_ids'] ?? []))));
     if (($_POST['action'] ?? 'link') === 'unlink') $ids=array_values(array_diff($ids,[$fileId]));

@@ -497,15 +497,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
   <div class="chat-files-drawer-body">
     <p class="chat-files-help">Los archivos se almacenan en S3 y al subirlos se intenta extraer su contenido, dividirlo en fragmentos, generar un resumen semántico y crear embeddings para RAG. Si algo queda pendiente, aquí puedes comprobarlo y reintentarlo. El clip junto a Imagen sube archivos; este panel permite analizarlos, compararlos y crear versiones.</p>
     <p id="chatFilesPipelineSummary" class="chat-files-scope-note" role="status" aria-live="polite">Selecciona una conversación para revisar sus archivos.</p>
-    <details class="chat-files-scope-note">
-      <summary>Vincular un archivo propio de ArcadeCloud Drive</summary>
-      <form id="driveKnowledgeSearch" class="mt-2">
-        <label for="driveKnowledgeQuery">Nombre del archivo</label>
-        <input id="driveKnowledgeQuery" class="form-control form-control-sm" maxlength="100" placeholder="Buscar en mis archivos">
-        <button class="btn btn-sm btn-secondary mt-1" type="submit">Buscar</button>
-      </form>
-      <div id="driveKnowledgeResults" role="status" aria-live="polite"></div>
-    </details>
+    <button id="driveKnowledgeOpen" type="button" class="btn btn-outline-primary w-100 mb-2" data-toggle="modal" data-target="#driveKnowledgeModal">Ver en ArcadeCloud · Buscar archivos</button>
     <div class="sidebar-section adjuntos-section">
 
   <div class="section-label-row">
@@ -821,6 +813,31 @@ role="progressbar" style="width: 0%">0%</div>
     </div>
 </div>
 
+</div>
+
+<div class="modal fade" id="driveKnowledgeModal" tabindex="-1" role="dialog" aria-labelledby="driveKnowledgeTitle" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable" role="document"><div class="modal-content">
+    <div class="modal-header"><h2 class="modal-title h5" id="driveKnowledgeTitle">Buscar en ArcadeCloud</h2>
+      <button type="button" class="close" data-dismiss="modal" aria-label="Cerrar"><span aria-hidden="true">&times;</span></button></div>
+    <div class="modal-body">
+      <p>Busca entre tus archivos por nombre, carpeta, tipo y fecha. El contenido solo se analiza cuando seleccionas un archivo.</p>
+      <form id="driveKnowledgeSearch">
+        <label for="driveKnowledgeQuery">¿Qué archivo buscas?</label>
+        <input type="search" id="driveKnowledgeQuery" name="drive_metadata_query" class="form-control" maxlength="500" autocomplete="off" placeholder="Por ejemplo: contratos PDF de septiembre de 2026">
+        <div class="form-row mt-2">
+          <div class="col-sm-4"><label for="driveKnowledgeExtensions">Tipos (pdf,xlsx…)</label><input id="driveKnowledgeExtensions" class="form-control" maxlength="120"></div>
+          <div class="col-sm-4"><label for="driveKnowledgeFrom">Desde</label><input type="date" id="driveKnowledgeFrom" class="form-control"></div>
+          <div class="col-sm-4"><label for="driveKnowledgeTo">Hasta</label><input type="date" id="driveKnowledgeTo" class="form-control"></div>
+        </div>
+        <label class="mt-2"><input type="checkbox" id="driveKnowledgeAi"> Interpretar mi búsqueda con IA (requiere conversación seleccionada)</label>
+        <button class="btn btn-primary d-block" id="driveKnowledgeSubmit" type="submit">Buscar archivos</button>
+      </form>
+      <p id="driveKnowledgeFilters" class="small text-muted mt-2"></p>
+      <div id="driveKnowledgeResults" role="status" aria-live="polite" class="mt-2"></div>
+      <button id="driveKnowledgeMore" type="button" class="btn btn-outline-secondary mt-2" hidden>Mostrar más</button>
+      <div id="driveKnowledgeAnalysis" role="status" aria-live="polite" class="mt-3" style="white-space:pre-wrap"></div>
+    </div>
+  </div></div>
 </div>
 
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>

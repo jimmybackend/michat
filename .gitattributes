@@ -1,2 +1,3 @@
 # Preserve this existing CRLF PHP/HTML file while retaining whitespace checks.
 michat/session_attachment_viewer.php whitespace=trailing-space,space-before-tab,cr-at-eol
+michat/dashboard_viewer.php whitespace=trailing-space,space-before-tab,cr-at-eol

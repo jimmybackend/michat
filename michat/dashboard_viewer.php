@@ -24,13 +24,14 @@ if (!isset($db_connection) || !($db_connection instanceof mysqli)) {
 
 // Mes por defecto: mes actual
 $selectedMonth = isset($_GET['month']) ? trim($_GET['month']) : date('Y-m');
-if (!preg_match('/^\d{4}-\d{2}$/', $selectedMonth)) {
+if (!preg_match('/^\d{4}-(0[1-9]|1[0-2])$/D', $selectedMonth)) {
     $selectedMonth = date('Y-m');
 }
 
 // Formatear nombre del mes para mostrar
 $monthTimestamp = strtotime($selectedMonth . '-01');
-$monthName = $monthTimestamp ? strftime('%B de %Y', $monthTimestamp) : $selectedMonth;
+$monthNames = [1=>'enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+$monthName = $monthNames[(int)substr($selectedMonth,5,2)] . ' de ' . substr($selectedMonth,0,4);
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -491,7 +492,7 @@ $monthName = $monthTimestamp ? strftime('%B de %Y', $monthTimestamp) : $selected
 
 <div class="dashboard-header">
     <div style="display: flex; align-items: center; gap: 16px;">
-        <a href="index.php" class="btn-back">
+        <a href="chat.php" class="btn-back">
             <i class="fas fa-arrow-left"></i> Volver al chat
         </a>
         <div>
@@ -535,7 +536,7 @@ monthFilter.addEventListener('change', () => {
 
 function renderPhaseChart(byPhase) {
     const canvas = document.getElementById('chartTokenUsage');
-    if (!canvas) return;
+    if (!canvas || typeof Chart === 'undefined') return;
 
     if (window.tokenPhaseChart) {
         window.tokenPhaseChart.destroy();
@@ -544,14 +545,9 @@ function renderPhaseChart(byPhase) {
     window.tokenPhaseChart = new Chart(canvas, {
         type: 'doughnut',
         data: {
-            labels: ['Compilación', 'Respuesta', 'Corrección Lint', 'Embeddings'],
+            labels: Object.keys(byPhase),
             datasets: [{
-                data: [
-                    byPhase.compile || 0,
-                    byPhase.respond || 0,
-                    byPhase.lint_fix || 0,
-                    byPhase.embedding || 0
-                ],
+                data: Object.values(byPhase),
                 backgroundColor: [
                     '#ffc107',
                     '#3fb950',
@@ -626,7 +622,8 @@ function renderDashboard(data) {
     const ladderSuccess = calculateLadderSuccess(data.ladder);
     const byPhase = data.tokens && data.tokens.by_phase ? data.tokens.by_phase : {};
 
-    let html = `
+    let html = `<p class="text-muted">${escapeHtml(data.cost_note || '')}</p>
+        ${(data.warnings || []).map(w => `<p role="status">${escapeHtml(w)}</p>`).join('')}
         <!-- Tarjetas principales -->
         <div class="stats-grid">
             <div class="stat-card info">
@@ -639,7 +636,7 @@ function renderDashboard(data) {
             <div class="stat-card success">
                 <i class="fas fa-dollar-sign stat-icon"></i>
                 <div class="stat-label">Costo Estimado</div>
-                <div class="stat-value cost">$${totalCost.toFixed(4)}</div>
+                <div class="stat-value cost">$${totalCost.toFixed(6)}</div>
                 <div class="stat-description">Consumo del mes (USD)</div>
             </div>
 
@@ -684,10 +681,7 @@ function renderDashboard(data) {
                     </tr>
                 </thead>
                 <tbody>
-                    ${renderPhaseRow('Compilación', byPhase.compile || 0, totalTokens, 'compile')}
-                    ${renderPhaseRow('Respuesta', byPhase.respond || 0, totalTokens, 'respond')}
-                    ${renderPhaseRow('Embeddings', byPhase.embedding || 0, totalTokens, 'embedding')}
-                    ${renderPhaseRow('Corrección Lint', byPhase.lint_fix || 0, totalTokens, 'lint_fix')}
+                    ${Object.entries(byPhase).map(([phase,count]) => renderPhaseRow(escapeHtml(phase),count,totalTokens,escapeHtml(phase))).join('')}
                 </tbody>
             </table>
         </div>
