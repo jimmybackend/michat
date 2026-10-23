@@ -464,3 +464,7 @@ La subida guarda S3 y encola extracción/chunks/embeddings; un mismo archivo/rev
 Operación, límites, rollback y pruebas: [docs/central-document-queue.md](docs/central-document-queue.md).
 
 La validación real de este incremento confirmó Fase 13 desde el baseline actual. La ruta histórica post-Fase10D → Fase 11B tiene un bloqueo previo de llave foránea documentado en el informe; no se certifica ni se fuerza esa actualización modificando migraciones publicadas.
+
+### Catálogo de Drive y análisis reutilizable
+
+El panel 🧠 abre un navegador modal de archivos propios por metadatos de FileS3, con filtros opcionales interpretados por IA. Buscar no lee ni indexa contenido. Seleccionar un archivo permite analizarlo o reutilizar su JSON privado junto al original; las respuestas que usen su contexto actualizan ese registro. El dashboard muestra las estimaciones de costo registradas del usuario y es compatible con MariaDB. Véanse [flujo, permisos, límites y pruebas](docs/drive-metadata-analysis-cache.md). No requiere migraciones.

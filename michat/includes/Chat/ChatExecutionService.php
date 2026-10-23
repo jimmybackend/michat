@@ -43,6 +43,16 @@ final class ChatExecutionService
                 $route=(array)($request->taskContext['prepared_context']['route']??[]);
                 $this->memory->finalize($request->userId,$request->sessionId,$request->projectId,$questionId,$messageId,$route,[]);
             }
+            if (isset($prepared['bundle']) && $prepared['bundle']->selectedItems('attachments')) {
+                try {
+                    require_once dirname(__DIR__).'/Drive/DriveAnalysisService.php';
+                    $sidecarErrors=DriveAnalysisService::production($this->db)->recordTurn($request->userId,$request->sessionId,(int)$request->originMessageId,$messageId,$prepared['bundle']);
+                    if ($sidecarErrors) throw new RuntimeException(implode('; ',$sidecarErrors));
+                } catch (Throwable $e) {
+                    error_log('Task analysis sidecar: '.$e->getMessage());
+                    $result=new ChatExecutionResult($result->replyText,$messageId,$result->modelId,$result->traceId,$result->tokenUsage,$result->tools,$result->artifacts,array_merge($result->warnings,['No se pudo actualizar el JSON de análisis del archivo.']),$result->stopReason,$result->latencyMs,$result->controlDecision);
+                }
+            }
             $this->activity?->emit($request->traceId,$request->userId,$request->sessionId,'respond','finalization_completed','completed','Respuesta finalizada','Assistant, TokenUsage y memoria final quedaron persistidos.',['assistant_message_id'=>$messageId,'usage'=>$result->tokenUsage],$result->modelId,max(0,(int)round((microtime(true)-$startedAt)*1000)));
         }
         $heartbeat && $heartbeat();

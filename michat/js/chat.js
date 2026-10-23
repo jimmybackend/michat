@@ -4840,57 +4840,115 @@ function scheduleDocumentKnowledgeRefresh(files, sid) {
   },5000);
 }
 
-// Drive links reuse the existing S3 object. Searching/linking never reloads chat messages.
+// Drive links reuse the existing S3 object. Searching never reads its contents.
 let driveKnowledgeCsrf = '';
-document.getElementById('driveKnowledgeSearch')?.addEventListener('submit', async event => {
-  event.preventDefault();
-  const target = document.getElementById('driveKnowledgeResults');
-  if (!currentSessionId || !target) return;
-  const sid = currentSessionId;
-  target.textContent = 'Buscando…';
-  try {
-    const q = document.getElementById('driveKnowledgeQuery').value;
-    const response = await fetch('drive_knowledge.php?' + new URLSearchParams({session_id: sid, q}), {credentials:'same-origin'});
-    const data = await response.json();
-    if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo buscar');
-    if (sid !== currentSessionId) return;
-    driveKnowledgeCsrf = data.csrf;
-    target.replaceChildren();
-    for (const file of data.files) {
-      const button = document.createElement('button');
-      button.type = 'button'; button.className = 'btn btn-sm btn-outline-secondary d-block mt-1';
-      button.textContent = file.Nombre + ' · ' + file.Ruta;
-      button.addEventListener('click', async () => {
-        if (sid !== currentSessionId) return;
-        button.disabled = true;
-        try {
-          await changeDriveKnowledge(file.id_, 'link', sid);
-          button.textContent = 'Vinculado. Usa Indexar para preparar su contenido.';
-          if (sid === currentSessionId) await loadSessionAttachments(sid);
-        } catch (error) { button.disabled = false; showToast('Drive', error.message, 'error'); }
-      });
-      target.append(button);
-    }
-    if (!data.files.length) target.textContent = 'No hay coincidencias entre los archivos propios compatibles.';
-  } catch (error) { target.textContent = error.message; }
+let driveSearchSerial = 0;
+let driveSearchPlan = '';
+let driveSearchCursor = 0;
+let driveSearchQuery = null;
+let driveSearchBusy = false;
+let driveAutoCreatedSessionId = null;
+const driveNode = id => document.getElementById(id);
+driveNode('driveKnowledgeOpen')?.addEventListener('click', () => {
+  closeChatFilesDrawer(false);
+  searchDriveMetadata(false);
 });
+driveNode('driveKnowledgeSearch')?.addEventListener('submit', event => {
+  event.preventDefault(); searchDriveMetadata(false);
+});
+driveNode('driveKnowledgeMore')?.addEventListener('click', () => searchDriveMetadata(true));
+async function searchDriveMetadata(more) {
+  const target=driveNode('driveKnowledgeResults');
+  if (!target || driveSearchBusy) return;
+  const serial=++driveSearchSerial, sid=currentSessionId;
+  driveSearchBusy=true;
+  const submit=driveNode('driveKnowledgeSubmit'), next=driveNode('driveKnowledgeMore');
+  if (submit) submit.disabled=true;
+  if (next) next.disabled=true;
+  if (!more) {
+    target.textContent='Buscando…'; driveSearchPlan=''; driveSearchCursor=0; driveAutoCreatedSessionId=null;
+    driveSearchQuery={q:driveNode('driveKnowledgeQuery')?.value || '',extensions:driveNode('driveKnowledgeExtensions')?.value || '',
+      date_from:driveNode('driveKnowledgeFrom')?.value || '',date_to:driveNode('driveKnowledgeTo')?.value || ''};
+  }
+  try {
+    const useAi=!more && !!driveNode('driveKnowledgeAi')?.checked;
+    if (useAi && !sid) throw new Error('Selecciona una conversación antes de buscar con IA. Puedes navegar con búsqueda literal.');
+    if (!driveKnowledgeCsrf && useAi) await changeDriveKnowledge(null,'token',sid);
+    const params=new URLSearchParams({...driveSearchQuery,session_id:sid || 0,cursor:more?driveSearchCursor:0});
+    let options={credentials:'same-origin'};
+    if (more && driveSearchPlan) params.set('plan',driveSearchPlan);
+    if (useAi) {
+      params.set('action','search_ai');params.set('csrf',driveKnowledgeCsrf);
+      options={...options,method:'POST',body:params};
+    }
+    const response=await fetch('drive_knowledge.php'+(useAi?'':'?'+params),options);
+    const data=await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo buscar');
+    if (serial!==driveSearchSerial || sid!==currentSessionId) return;
+    driveKnowledgeCsrf=data.csrf;driveSearchPlan=data.plan || '';driveSearchCursor=data.next_cursor || 0;
+    if (!more) target.replaceChildren();
+    const filters=driveNode('driveKnowledgeFilters');
+    if (filters) filters.textContent='Filtros aplicados: '+JSON.stringify(data.filters || {})+(data.ai_used?' · interpretados con IA':'');
+    for (const file of data.files || []) {
+      const row=document.createElement('div');row.className='border rounded p-2 mt-2';
+      const label=document.createElement('div');
+      label.textContent=file.Nombre+' · '+file.Ruta+' · '+Number(file.Tamano || 0).toLocaleString()+' bytes · '+(file.Fecha || '');
+      row.append(label);
+      const button=document.createElement('button');button.type='button';button.className='btn btn-sm btn-outline-primary mt-1';
+      button.textContent='Seleccionar y analizar';
+      button.addEventListener('click',()=>selectDriveAnalysis(file,button,sid));row.append(button);target.append(row);
+    }
+    if (!(data.files || []).length && !more) target.textContent='No hay coincidencias entre tus archivos accesibles.';
+    if (next) next.hidden=!data.has_more;
+  } catch (error) { if(serial===driveSearchSerial) { if(!more) target.textContent=error.message; else showToast('ArcadeCloud',esc(error.message),'warning'); } }
+  finally { driveSearchBusy=false; if(submit) submit.disabled=false;if(next) next.disabled=false; }
+}
+async function selectDriveAnalysis(file,button,searchSession) {
+  if (searchSession!==currentSessionId && !(searchSession===null && currentSessionId===driveAutoCreatedSessionId)) return;
+  const output=driveNode('driveKnowledgeAnalysis');button.disabled=true;
+  try {
+    if (!currentSessionId) {
+      const created=await createSession('Análisis: '+file.Nombre,{allowModelFallback:true});
+      await loadSessions();await selectSession(created.id);driveAutoCreatedSessionId=Number(created.id);
+    }
+    const sid=currentSessionId;
+    await changeDriveKnowledge(file.id_,'link',sid);
+    if(output) output.textContent='Comprobando análisis guardado de '+file.Nombre+'…';
+    const body=new URLSearchParams({session_id:sid,file_id:file.id_,csrf:driveKnowledgeCsrf});
+    const response=await fetch('drive_file_analysis.php',{method:'POST',credentials:'same-origin',body});
+    const data=await response.json();
+    if(!response.ok || !data.ok) throw new Error(data.error || 'No se pudo analizar');
+    if(sid!==currentSessionId) return;
+    if(output) {
+      output.textContent=(data.reused?'Análisis reutilizado sin volver a analizar el original.':'Análisis creado y JSON guardado junto al original.')
+        +'\nArchivo: '+data.filename+'\nCobertura: '+data.coverage+'\nInteracciones guardadas: '+data.interaction_count+'\n\n'+data.summary+'\n';
+      const download=document.createElement('a');download.className='btn btn-sm btn-outline-secondary';
+      download.textContent='Descargar JSON guardado';download.href='drive_file_analysis.php?'+new URLSearchParams({session_id:sid,file_id:file.id_,action:'download'});
+      output.append(download);
+    }
+    button.textContent='Archivo analizado';await loadSessionAttachments(sid);
+  } catch(error) {if(output) output.textContent=error.message;}
+  finally {button.disabled=false;}
+}
 async function changeDriveKnowledge(fileId, action, sid) {
   if (!driveKnowledgeCsrf) {
-    const response = await fetch('drive_knowledge.php?' + new URLSearchParams({session_id:sid,q:''}), {credentials:'same-origin'});
+    const response = await fetch('drive_knowledge.php?' + new URLSearchParams({session_id:sid || 0,q:''}), {credentials:'same-origin'});
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || 'Acceso denegado');
     driveKnowledgeCsrf = data.csrf;
   }
+  if(action==='token') return;
   const body = new FormData();
   body.append('session_id', sid); body.append('file_id', fileId); body.append('action',action); body.append('csrf',driveKnowledgeCsrf);
   const response = await fetch('drive_knowledge.php', {method:'POST',credentials:'same-origin',body});
   const data = await response.json();
   if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo actualizar el vínculo');
+  return data;
 }
 async function unlinkDriveKnowledge(fileId) {
   const sid = currentSessionId;
   try { await changeDriveKnowledge(fileId, 'unlink', sid); if (sid === currentSessionId) await loadSessionAttachments(sid); }
-  catch (error) { showToast('Drive', error.message, 'error'); }
+  catch (error) { showToast('Drive', esc(error.message), 'warning'); }
 }
 
   // === FIN DEL ARCHIVO chat.js CORREGIDO ===

@@ -123,7 +123,7 @@ final class AttachmentContextRepository
             $content = mb_substr((string)$row['content_preview'], 0, min(4500, $available));
             $meta = json_decode((string)$row['source_ids'], true) ?: [];
             $parts[] = $citation . "\n" . $content; $chars += mb_strlen(end($parts)) + 2;
-            $metadata = ['session_id'=>$sessionId,'files3_id'=>(int)($meta['files3_id'] ?? 0),'filename'=>$row['filename'],'mode'=>$mode,'citation'=>$citation,'locator'=>$meta['locator'] ?? [],'truncated'=>!empty($meta['truncated']),'scan_complete'=>$t['scan_complete']];
+            $metadata = ['session_id'=>$sessionId,'files3_id'=>(int)($meta['files3_id'] ?? 0),'source_etag'=>(string)($meta['source_etag'] ?? ''),'filename'=>$row['filename'],'mode'=>$mode,'citation'=>$citation,'locator'=>$meta['locator'] ?? [],'truncated'=>!empty($meta['truncated']),'scan_complete'=>$t['scan_complete']];
             if (($row['source_table']??'')==='DocumentKnowledgeChunks') $metadata['evidence_url']='session_attachment_viewer.php?session_id='.$sessionId.'&central_chunk_id='.(int)$row['id_'];
             $items[] = new ContextItem($row['source_table']??'SessionContextBlocks',(int)$row['id_'],$row['block_type'],'session_attachment',$content,(float)$row['score'],null,$metadata);
             $t['selected'][] = ['block_id'=>(int)$row['id_'],'source_table'=>$row['source_table']??'SessionContextBlocks','block_type'=>$row['block_type'],'filename'=>$row['filename'],'content'=>$content,'score'=>$row['score'],'lexical_score'=>$row['lexical_score'],'semantic_score'=>$row['semantic_score'],'citation'=>$citation];

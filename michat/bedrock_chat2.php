@@ -3250,6 +3250,15 @@ if ($activityTraceId !== '') {
     );
 }
 
+// Persist only the file context actually used for this answer, without another LLM call.
+if (isset($contextBundle) && $saved_user_text_id && $assistant_id && $contextBundle->selectedItems('attachments')) {
+    try {
+        require_once __DIR__.'/includes/Drive/DriveAnalysisService.php';
+        $sidecarErrors = DriveAnalysisService::production($db_connection)->recordTurn($user_id,$session_id,(int)$saved_user_text_id,(int)$assistant_id,$contextBundle);
+        $errors = array_merge($errors,$sidecarErrors);
+    } catch (Throwable $e) { $errors[] = 'No se pudo actualizar el JSON de análisis del archivo.'; error_log('analysis sidecar: '.$e->getMessage()); }
+}
+
 // ====================================================================
 // ✅ MEMORIA SELECTIVA: guardar Q&A crudo y encolar SOLO embedding
 // ====================================================================
