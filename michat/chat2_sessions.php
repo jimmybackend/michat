@@ -18,9 +18,12 @@ try{
     $cleaned=$lifecycle->cleanupStaleEmpty($userId,900,50);
 
     $q=trim((string)($_GET['q']??''));
-    $archived=((string)($_GET['archived']??'0'))==='1';
-    $where=['cs.user_id_=?',$archived?"cs.status='archived'":"cs.status<>'archived'"];
-    $types='i';$params=[$userId];
+    // Tres vistas sin eliminar físicamente ninguna conversación.
+    // Mantener el parámetro archived por compatibilidad con clientes antiguos.
+    $view=(string)($_GET['status']??(((string)($_GET['archived']??'0'))==='1'?'archived':'open'));
+    if(!in_array($view,['open','archived','closed'],true))jexit(['ok'=>false,'error'=>'status inválido'],400);
+    $where=['cs.user_id_=?','cs.status=?'];
+    $types='is';$params=[$userId,$view];
     if($q!==''){
         if(ctype_digit($q)){$where[]="(cs.id_=? OR cs.title LIKE CONCAT('%',?,'%'))";$types.='is';$params[]=(int)$q;$params[]=esc_like($q);}
         else{$where[]="cs.title LIKE CONCAT('%',?,'%')";$types.='s';$params[]=esc_like($q);}
@@ -44,7 +47,7 @@ try{
         $sessions[]=[
             'id'=>(int)$row['id_'],'user_id'=>(int)$row['user_id_'],'project_id'=>$row['project_id_']!==null?(int)$row['project_id_']:null,
             'title'=>(string)$row['title'],'model_id'=>(string)$row['model_id'],'provider'=>$row['provider']!==null?(string)$row['provider']:null,
-            'status'=>(string)$row['status'],'archived'=>(string)$row['status']==='archived','created_at'=>(string)$row['created_at'],'updated_at'=>(string)$row['updated_at'],
+            'status'=>(string)$row['status'],'archived'=>(string)$row['status']==='archived','deleted'=>(string)$row['status']==='closed','created_at'=>(string)$row['created_at'],'updated_at'=>(string)$row['updated_at'],
             'message_count'=>$messageCount,'is_empty'=>$messageCount===0&&!$hasBlocks&&!$hasFiles,'has_files'=>$hasFiles,'is_branch'=>$branch!==null,
             'branch'=>$branch,
         ];
