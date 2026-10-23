@@ -1873,6 +1873,12 @@ function wireFileActions(container) {
           el.input.focus();
           break;
         }
+        case 'improve':
+          if (!currentSessionId) return;
+          el.input.value = 'Revisa el código del archivo "' + filename + '". Identifica errores, seguridad, rendimiento y pruebas. Propón una versión mejorada, explica los cambios y muestra código concreto. Conserva el original y no afirmes que guardaste una versión si no se ha subido realmente.';
+          closeChatFilesDrawer();
+          el.input.focus();
+          break;
         case 'version':
           if (currentSessionStatus !== 'open') {
             showToast('Versiones', 'Restaura la conversación para añadir versiones.', 'warning');
@@ -4182,7 +4188,9 @@ async function loadSessionAttachments(sessionId) {
               data-action="compare" data-file-id="${fileId}" data-filename="${filename}">
               <i class="fas fa-exchange-alt"></i>
             </button>
-            ${isCodeFile ? `<button type="button" class="chat-file-action" title="Subir una nueva versión de este código sin sobrescribir el original"
+            ${isCodeFile ? `<button type="button" class="chat-file-action" title="Pedir mejoras y revisión de código a la IA"
+              data-action="improve" data-file-id="${fileId}" data-filename="${filename}"><i class="fas fa-code"></i></button>
+              <button type="button" class="chat-file-action" title="Subir una nueva versión de este código sin sobrescribir el original"
               data-action="version" data-file-id="${fileId}" data-filename="${filename}"><i class="fas fa-code-branch"></i></button>` : ''}
             <button type="button" class="chat-file-action chat-file-action-danger" title="Eliminar archivo"
               data-action="delete" data-file-id="${fileId}">
