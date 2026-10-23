@@ -578,6 +578,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
       <div class="chat-composer-primary-tools">
         <input id="chat2File" type="file" hidden multiple accept=".php,.js,.ts,.py,.java,.c,.cpp,.cs,.go,.rs,.rb,.html,.css,.scss,.json,.xml,.yaml,.yml,.md,.txt,.sql,.sh,.bash,.pdf,.jpg,.jpeg,.png,.gif,.mp4,.webm,.mp3,.wav,.docx,.xlsx,.pptx" aria-label="Elegir archivos para adjuntar a la conversación">
         <button id="chat2Attach" class="btn btn-sm btn-outline-secondary" type="button" title="Adjuntar archivos (subida e indexación RAG automática)" aria-label="Adjuntar archivos a la conversación"><i class="fas fa-paperclip" aria-hidden="true"></i></button>
+        <button id="chat2FilesKnowledge" class="btn btn-sm btn-outline-secondary" type="button" title="Archivos de esta conversación: indexación, 🧠 semántica, RAG, comparación y versiones" aria-label="Gestionar conocimiento de archivos"><i class="fas fa-brain" aria-hidden="true"></i></button>
         <button id="chat2BtnGenImg" class="btn btn-sm btn-outline-primary" title="Generar imagen" aria-label="Generar imagen"><i class="fas fa-image"></i></button>
         <button id="chat2BtnGenVid" class="btn btn-sm btn-outline-primary" title="Generar video" aria-label="Generar video"><i class="fas fa-film"></i></button>
         <button id="chat2BtnSonic" class="btn btn-sm btn-outline-secondary" title="Voz" aria-label="Voz"><i class="fas fa-microphone"></i></button>
@@ -588,6 +589,20 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
     </button>
   </div>
 
+  <section id="chat2KnowledgePanel" class="card mt-2" hidden aria-label="Conocimiento de archivos de esta conversación" style="max-height:45vh;overflow:auto;">
+    <div class="card-header d-flex align-items-center justify-content-between py-2">
+      <strong><i class="fas fa-brain"></i> Archivos, RAG y versiones</strong>
+      <button type="button" id="chat2KnowledgeClose" class="btn btn-sm btn-outline-secondary" aria-label="Cerrar archivos">✕</button>
+    </div>
+    <div class="card-body p-2">
+      <div class="small text-muted mb-2">Cada archivo subido se guarda en S3 y se intenta indexar, resumir y vectorizar automáticamente. Aquí puedes inspeccionar, reintentar, consultar, comparar y versionar.</div>
+      <div id="chatSessionFilesList" aria-live="polite"></div>
+      <div class="mt-2 d-flex flex-wrap" style="gap:.35rem;">
+        <button type="button" id="btnAttachmentInspector" class="btn btn-sm btn-outline-info"><i class="fas fa-microscope"></i> Inspector</button>
+        <button type="button" id="btnIndexSessionAttachments" class="btn btn-sm btn-outline-success"><i class="fas fa-sync"></i> Indexar pendientes</button>
+      </div>
+    </div>
+  </section>
   <div id="chatToasts" class="chat-toasts"></div>
   <div id="incomingToasts" class="chat-toasts"></div>
 </div>
