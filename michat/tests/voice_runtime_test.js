@@ -5,6 +5,7 @@ const path = require('path');
 const child = require('child_process');
 const root = path.resolve(__dirname, '..');
 const browser = fs.readFileSync(path.join(root, 'js/chat-voice.js'), 'utf8');
+const page = fs.readFileSync(path.join(root, 'chat.php'), 'utf8');
 const sonic = fs.readFileSync(path.join(root, 'voice/sonic_turn.mjs'), 'utf8');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'voice/package.json'), 'utf8'));
 
@@ -16,6 +17,8 @@ function check(ok, label) {
 }
 
 check(browser.includes("#chat2BtnSonic"), 'cliente enlaza el botón de micrófono existente');
+check(page.includes('js/chat-voice.js?v='), 'chat.php incluye el controlador del micrófono');
+check(browser.includes('appendVoiceTurn?.(data)'), 'voz agrega mensajes nuevos sin recargar el historial');
 check(browser.includes('navigator.mediaDevices.getUserMedia'), 'cliente solicita micrófono mediante API segura');
 check(browser.includes('downsample') && browser.includes('setInt16'), 'cliente convierte audio a PCM 16 kHz/16-bit');
 check(browser.includes("voice_turn.php"), 'cliente envía turno al endpoint autenticado');
