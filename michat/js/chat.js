@@ -3047,10 +3047,29 @@ function renderProjectSources() {
               <small class="text-muted d-block">${esc(p.description || 'Sin descripción')}</small>
               <small class="text-muted"><i class="fas fa-folder"></i> ${esc(p.root_prefix)}</small>
             </div>
+            <button type="button" class="btn btn-sm btn-outline-info btn-project-sources ml-2" data-id="${p.id}" title="Subir o indexar fuentes RAG compartidas del proyecto" aria-label="Fuentes RAG del proyecto"><i class="fas fa-folder-open"></i> Fuentes</button>
             <button class="btn btn-sm btn-outline-primary btn-edit-project ml-2" data-id="${p.id}"><i class="fas fa-edit"></i></button>
             <button class="btn btn-sm btn-outline-danger btn-delete-project ml-1" data-id="${p.id}"><i class="fas fa-trash"></i></button>
           </div>
         `).join('');
+        list.querySelectorAll('.btn-project-sources').forEach(btn => {
+          btn.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            const projectId = Number(btn.dataset.id || 0);
+            if (!projectId) return;
+            const manager = document.getElementById('modalProjectManager');
+            try {
+              await selectProject(projectId);
+              if (manager && window.jQuery && window.jQuery(manager).hasClass('show')) {
+                window.jQuery(manager).one('hidden.bs.modal', openProjectSourcesModal).modal('hide');
+              } else {
+                openProjectSourcesModal();
+              }
+            } catch (error) {
+              showToast('Fuentes RAG', esc(String(error.message || error)), 'danger');
+            }
+          });
+        });
         list.querySelectorAll('.btn-edit-project').forEach(btn => {
           btn.addEventListener('click', (e) => { e.stopPropagation(); editProject(parseInt(btn.dataset.id)); });
         });
