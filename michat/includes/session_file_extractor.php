@@ -802,28 +802,31 @@ function idx_extract_file(
 }
 
 function idx_chunk_text_preserve_lines(string $content, int $max_len): array {
-    if (mb_strlen($content) <= $max_len) {
-        return [$content];
-    }
+    if ($max_len < 1) throw new InvalidArgumentException('Tamaño de chunk inválido');
+    if (trim($content) === '') return [];
+    if (mb_strlen($content) <= $max_len) return [$content];
 
     $chunks = [];
-    $cur = '';
-
-    $lines = explode("\n", $content);
-
-    foreach ($lines as $l) {
-        if (mb_strlen($cur . "\n" . $l) > $max_len && trim($cur) !== '') {
-            $chunks[] = trim($cur);
-            $cur = $l;
+    $current = '';
+    foreach (explode("\n", $content) as $line) {
+        // Una línea de código o una celda muy larga también necesita cortes
+        // reales. La implementación previa dejaba chunks arbitrariamente grandes.
+        while (mb_strlen($line) > $max_len) {
+            if (trim($current) !== '') $chunks[] = $current;
+            $current = '';
+            $part = mb_substr($line, 0, $max_len);
+            $chunks[] = $part;
+            $line = mb_substr($line, $max_len);
+        }
+        $candidate = $current === '' ? $line : $current . "\n" . $line;
+        if (mb_strlen($candidate) > $max_len) {
+            if (trim($current) !== '') $chunks[] = $current;
+            $current = $line;
         } else {
-            $cur .= ($cur === '' ? '' : "\n") . $l;
+            $current = $candidate;
         }
     }
-
-    if (trim($cur) !== '') {
-        $chunks[] = trim($cur);
-    }
-
+    if (trim($current) !== '') $chunks[] = $current;
     return $chunks;
 }
 
