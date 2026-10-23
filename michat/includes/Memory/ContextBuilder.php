@@ -49,6 +49,18 @@ final class ContextBuilder
         $projectId = (int)($request['project_id'] ?? 0);
         $queryText = trim((string)($request['query_text'] ?? ''));
         $attachmentMode = ((string)($request['attachment_mode'] ?? 'rag') === 'always') ? 'always' : 'rag';
+        // "¿Qué dice el archivo?", "compara los PDFs", "explica Auth.php"...
+        // No depender del clasificador de intención para recuperar adjuntos
+        // que ya pertenecen a esta conversación.
+        $explicitFileQuestion = (bool)preg_match(
+            '/(?:archiv\\w*|adjunt\\w*|document\\w*|pdf|ficher\\w*|c[oó]digo|fragment\\w*|indexa\\w*|versi[oó]n|compar\\w*|qu[eé] dice|\.php\\b|\.js\\b|\.sql\\b|\.json\\b)/iu',
+            $queryText
+        );
+        if ($stage === 'respond' && $explicitFileQuestion && !$memoryRoute->uses('use_attachment_context')) {
+            $routeData = $memoryRoute->toArray();
+            $routeData['use_attachment_context'] = true;
+            $memoryRoute = new MemoryRoute($routeData);
+        }
         $questionMemoryEnabled = !empty($request['question_memory_enabled']);
         $requestedQuestionMemoryScope = ((string)($request['question_memory_scope'] ?? 'session') === 'project') ? 'project' : 'session';
         $memoryScope = ($request['memory_scope'] ?? null) instanceof ConversationScope
@@ -237,15 +249,28 @@ final class ContextBuilder
             'selected' => [],
             'has_attachment_memory' => $hasAttachments,
         ]];
-        if ($hasAttachments && ($attachmentMode === 'always' || !empty($queryVector))) {
+        // Si la pregunta habla expresamente de un archivo y el modelo de
+        // embeddings falló o todavía está pendiente, recuperar de forma
+        // determinista los fragmentos YA extraídos. No inventar contenido.
+        $effectiveAttachmentMode = ($explicitFileQuestion && empty($queryVector)) ? 'always' : $attachmentMode;
+        if ($hasAttachments && ($effectiveAttachmentMode === 'always' || !empty($queryVector))) {
             $attachmentResult = $this->attachmentRepo->retrieve(
                 $userId,
                 $sessionId,
                 $queryText,
-                $attachmentMode,
+                $effectiveAttachmentMode,
                 $queryVector ?: null,
                 $logMsgId
             );
+            if ($explicitFileQuestion && $effectiveAttachmentMode === 'rag' && empty($attachmentResult['items'])) {
+                // Un "qué dice" sobre un PDF no debe quedar sin contexto porque
+                // el nombre del archivo no se parezca al embedding de la pregunta.
+                $fallback = $this->attachmentRepo->retrieve($userId,$sessionId,$queryText,'always',null,$logMsgId);
+                if (!empty($fallback['items'])) {
+                    $attachmentResult = $fallback;
+                    $attachmentResult['telemetry']['fallback_reason'] = 'explicit_file_question_no_semantic_match';
+                }
+            }
             $attachmentResult['telemetry']['has_attachment_memory'] = true;
             $bundle->addItems('attachments', $attachmentResult['items']);
         } elseif ($hasAttachments && $attachmentMode === 'rag') {
