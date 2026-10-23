@@ -1,0 +1,72 @@
+<?php
+declare(strict_types=1);
+$host=getenv('DOCUMENT_TEST_DB_HOST');if(!$host){echo "SKIP Drive chat working copy: isolated DB missing\n";exit;}
+if(!in_array($host,['127.0.0.1','localhost','::1'],true))throw new RuntimeException('Loopback test DB only');
+define('APP_BOOTSTRAP_LOADED',true);
+require_once dirname(__DIR__).'/includes/Drive/DriveChatAttachmentService.php';
+require_once dirname(__DIR__).'/includes/Drive/DriveAnalysisService.php';
+require_once dirname(__DIR__).'/includes/Memory/bootstrap.php';
+require_once dirname(__DIR__).'/includes/Memory/AttachmentPromptGrounding.php';
+$db=new mysqli($host,getenv('DOCUMENT_TEST_DB_USER')?:'root',getenv('DOCUMENT_TEST_DB_PASSWORD')?:'',getenv('DOCUMENT_TEST_DB_NAME')?:'mysql',(int)(getenv('DOCUMENT_TEST_DB_PORT')?:3306));$db->set_charset('utf8mb4');$GLOBALS['db_connection']=$db;
+$schema=file_get_contents(dirname(__DIR__,2).'/adbbmis1_Cloud.sql');
+foreach(['FileS3','ChatSessions','ChatMessages','SessionContextBlocks','EmbeddingJobs','UserAIAgentConfigs','Projects'] as $name){preg_match('/CREATE TABLE IF NOT EXISTS `'.$name.'` \(.*?\) ENGINE=.*?;/s',$schema,$m);$db->query(str_replace(['CREATE TABLE IF NOT EXISTS','utf8mb4_0900_ai_ci','VIRTUAL NOT NULL'],['CREATE TEMPORARY TABLE','utf8mb4_unicode_ci','VIRTUAL'],$m[0]));}
+$db->query("INSERT INTO ChatSessions(id_,user_id_,title,model_id,meta) VALUES(1,1,'Current','fixture','{\"knowledge_file_ids\":[3823]}'),(2,1,'New','fixture','{}'),(3,2,'Private','fixture','{}')");
+$db->query("INSERT INTO FileS3(id_,user_id_,Nombre,Ruta,Encriptado,Tamano,Found,Metadatos) VALUES(3823,1,'thankyou-old.php','Data/Jas/Amazon Linux/','thankyou-old.php',7000,1,'{\"custom\":\"keep\"}')");
+final class WorkMissing extends RuntimeException {public function getAwsErrorCode():string{return 'NoSuchKey';}}
+final class Config {public static object $s3;public static function getS3():object{return self::$s3;}public static function getBucket():string{return 'private-bucket';}}
+$code="<?php\n".str_repeat("// Revisar bible_progress y extraer el siguiente versiculo; evidencia verificable 41837.\n",90);
+$key='Data/Jas/Amazon Linux/thankyou-old.php';
+Config::$s3=new class($key,$code){
+    public array $objects=[],$copies=[],$gets=[],$puts=[];public bool $denyCopy=false;
+    public function __construct(string $key,string $body){$this->objects[$key]=['bytes'=>$body,'etag'=>'"original-v1"'];}
+    public function headObject(array $p):array{$o=$this->objects[$p['Key']]??throw new WorkMissing();return ['ETag'=>$o['etag'],'ContentLength'=>strlen($o['bytes'])];}
+    public function getObject(array $p):array{$o=$this->objects[$p['Key']]??throw new WorkMissing();$this->gets[]=$p['Key'];if(isset($p['IfMatch'])&&$p['IfMatch']!==$o['etag'])throw new RuntimeException('Revision changed');if(isset($p['SaveAs']))file_put_contents($p['SaveAs'],$o['bytes']);return ['Body'=>$o['bytes']];}
+    public function putObject(array $p):array{$old=$this->objects[$p['Key']]??null;if(isset($p['IfMatch'])&&($old['etag']??null)!==$p['IfMatch'])throw new RuntimeException('Write conflict');if(($p['IfNoneMatch']??'')==='*'&&$old)throw new RuntimeException('Already exists');$this->puts[]=$p['Key'];$this->objects[$p['Key']]=['bytes'=>$p['Body'],'etag'=>'"'.hash('sha256',$p['Body']).'"'];return [];}
+    public function copyObject(array $p):array{if($this->denyCopy)throw new RuntimeException('Copy denied');$source=rawurldecode(substr($p['CopySource'],strlen('private-bucket/')));$o=$this->objects[$source]??throw new WorkMissing();if($p['CopySourceIfMatch']!==$o['etag'])throw new RuntimeException('Copy revision changed');$this->copies[]=$p;$this->objects[$p['Key']]=['bytes'=>$o['bytes'],'etag'=>'"copy-'.hash('sha256',$p['Key']).'"'];return [];}
+};
+$n=0;function workCheck(bool $ok,string $label):void{global $n;$n++;if(!$ok)throw new RuntimeException($label);echo "PASS $label\n";}
+$analysis=DriveAnalysisService::production($db);$prepared=$analysis->analyze(1,1,3823,false);
+workCheck($prepared['ok']&&$prepared['chunks']>=4,'Original prepared with real literal chunks and no semantic model');
+$attach=new DriveChatAttachmentService($db,Config::$s3,Config::getBucket());$file=$attach->attach(1,1,3823);$id=(int)$file['id_'];$copyKey=idx_build_s3_key($file);
+workCheck($id!==3823&&str_starts_with($copyKey,'Data/Chat/Uploads/1/'.gmdate('Y/m/d').'/1/'),'Selection creates a FileS3 working attachment in the actual conversation path');
+workCheck($file['Nombre']==='thankyou-old.php'&&Config::$s3->objects[$key]['bytes']===$code,'Visible filename retained and original bytes untouched');
+workCheck(Config::$s3->copies[0]['CopySourceIfMatch']==='"original-v1"'&&str_contains(Config::$s3->copies[0]['CopySource'],'Amazon%20Linux'),'Server-side copy pins original revision and encodes source key');
+$metadata=json_decode($file['Metadatos'],true);workCheck($metadata['drive_source']['file_id']===3823&&$metadata['drive_source']['key']===$key,'Real FileS3.Metadatos stores original identity and provenance');
+$meta=json_decode($db->query('SELECT meta FROM ChatSessions WHERE id_=1')->fetch_assoc()['meta'],true);
+workCheck($meta['knowledge_file_ids']===[$id],'Working copy replaces catalog link without duplicate original attachment');
+$again=$attach->attach(1,1,3823);workCheck((int)$again['id_']===$id&&count(Config::$s3->copies)===1,'Repeated selection reuses same revision instead of duplicating copies');
+$ready=$analysis->analyze(1,1,$id,false);
+workCheck($ready['ok']&&$ready['reused']&&$ready['chunks']>=4,'Actual working-copy analysis reuses original cached chunks');
+workCheck(!in_array($copyKey,Config::$s3->gets,true),'Cache reuse needs no download or fresh model call for the working copy');
+$rows=$db->query("SELECT source_ids FROM SessionContextBlocks WHERE s3_path='".$db->real_escape_string($copyKey)."' AND block_type='file_chunk'")->fetch_all(MYSQLI_ASSOC);
+workCheck((json_decode($rows[0]['source_ids'],true)['files3_id']??0)===$id&&(json_decode($rows[0]['source_ids'],true)['source_etag']??'')===$metadata['drive_source']['copy_etag'],'Chunks are rebound to exact working file ID and its distinct ETag');
+$db->query("INSERT INTO UserAIAgentConfigs(scope,agent_key,display_name,model_id,system_instruction,extra_config) VALUES('global','chat_main_attachment_template','Template','none','Customized template without placeholder','{}'),('global','context_ranker','Ranker','none','', '{\"bucket_thresholds\":{\"attachments\":1},\"global_optional_limit\":8}')");
+require_once dirname(__DIR__).'/includes/ai_agent_runtime.php';aiRuntimeLoad($db,1);
+$builder=new ContextBuilder($db,null);$features=['procedural_memory_read'=>false,'project_memory_read'=>false,'session_memory_read'=>false,'question_memory_read'=>false,'project_rag'=>false,'attachment_rag'=>true,'context_ranking'=>true];
+$query='Analiza el archivo "thankyou-old.php" y cita sus fragmentos';
+$bundle=$builder->build(new MemoryRoute(['intent'=>'code','use_attachment_context'=>false]),['stage'=>'respond','user_id'=>1,'session_id'=>1,'query_text'=>'Revisa el proyecto','original_query_text'=>$query,'pipeline_features'=>$features]);
+workCheck(count($bundle->selectedItems('attachments'))>=4,'Explicit named code attachment survives router rewrite and strict ranker thresholds');
+$system=AttachmentPromptGrounding::append('Custom chat_main template without context slots',$bundle);
+workCheck(str_contains($system,'41837')&&str_contains($system,'thankyou-old.php')&&str_contains($system,'líneas'),'Final prompt contains actual attachment content and citations even when both custom templates omit placeholders');
+workCheck(AttachmentPromptGrounding::named($bundle,$query),'Named attachment gets attachment grounding instead of missing-project denial');
+$follow=$builder->build(new MemoryRoute(['intent'=>'code','use_attachment_context'=>false]),['stage'=>'respond','user_id'=>1,'session_id'=>1,'query_text'=>'Qué errores tiene y cómo lo mejoramos','pipeline_features'=>$features]);
+workCheck(count($follow->selectedItems('attachments'))>=4&&AttachmentPromptGrounding::named($follow,'Qué errores tiene'),'Follow-up questions retain active working attachment without repeating filename');
+$db->query("INSERT INTO ChatMessages(id_,session_id_,user_id_,role,content,model_id) VALUES(10,1,1,'user','Explica 41837','fixture'),(11,1,1,'assistant','El código contiene 41837; véanse las líneas citadas.','fixture')");
+workCheck($analysis->recordTurn(1,1,10,11,$bundle)===[],'Actual chat interaction is recorded after working-copy retrieval');
+$sidecarKey=$key.'.michat-u1.analysis.v1.json';$doc=json_decode(Config::$s3->objects[$sidecarKey]['bytes'],true);$revision=array_values($doc['revisions'])[0];$turn=$revision['interactions']['1:10:11']??[];
+workCheck(($turn['working_file_id']??0)===$id&&($turn['question']??'')==='Explica 41837','Original sibling JSON contains Q&A plus the working-copy identity');
+workCheck(!array_filter(Config::$s3->puts,fn($p)=>str_starts_with($p,'Data/Chat/Uploads/')),'JSON history is written beside original, not scattered beside chat copies');
+workCheck(json_decode($db->query('SELECT Metadatos FROM FileS3 WHERE id_=3823')->fetch_assoc()['Metadatos'],true)===['custom'=>'keep'],'Original FileS3 metadata stays unchanged');
+$other=$attach->attach(1,2,3823);workCheck((int)$other['id_']!==$id&&idx_file_belongs_to_chat_session($other,1,2),'Another conversation gets its own isolated working copy');
+$denied=false;try{(new DocumentAccessRepository($db))->requireFile(1,1,(int)$other['id_']);}catch(Throwable){$denied=true;}workCheck($denied,'Copy from another conversation cannot be read as an attachment here');
+$denied=false;try{$attach->attach(2,3,3823);}catch(Throwable){$denied=true;}workCheck($denied,'Other users cannot copy the private original');
+$db->query("UPDATE FileS3 SET AccessType='secure' WHERE id_=3823");
+workCheck((new DocumentAccessRepository($db))->file(1,$id)===null,'Revoking original access invalidates working-copy access');
+$evidence=(new AttachmentContextRepository($db,null))->retrieve(1,1,'41837','always',null,null);workCheck($evidence['context']==='','Cached working-copy chunks do not bypass revoked access');
+$db->query("UPDATE FileS3 SET AccessType='normal' WHERE id_=3823");require_once dirname(__DIR__).'/includes/Drive/MetadataSearchService.php';
+$catalog=(new MetadataSearchService($db))->search(1,'thankyou-old.php',false);
+workCheck(count($catalog['files'])===1&&(int)$catalog['files'][0]['id_']===3823,'Catalog lists original once and hides internal chat working copies');
+Config::$s3->denyCopy=true;
+$db->query("INSERT INTO ChatSessions(id_,user_id_,title,model_id,meta) VALUES(4,1,'Copy failure','fixture','{}')");$count=(int)$db->query('SELECT COUNT(*) n FROM FileS3')->fetch_assoc()['n'];$denied=false;try{$attach->attach(1,4,3823);}catch(Throwable){$denied=true;}
+workCheck($denied&&(int)$db->query('SELECT COUNT(*) n FROM FileS3')->fetch_assoc()['n']===$count,'Failed S3 copy cannot create a fake successful attachment row');
+echo "OK $n Drive chat working-copy checks\n";

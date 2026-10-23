@@ -2805,7 +2805,9 @@ if ($compilation_id > 0 && isset($_POST['compiled_prompt']) && trim($_POST['comp
     // Fase 4.1: las reglas internas de herramientas sólo entran cuando el Router
     // autorizó una operación concreta de código/proyecto. Así no contaminan consultas
     // como "¿qué reglas tengo guardadas?".
-    $toolRulesBlock = !empty($pipelineEffective['project_tools']) && !empty($memoryRoute['use_project_tools'])
+    require_once __DIR__.'/includes/Memory/AttachmentPromptGrounding.php';
+    $namedAttachmentTurn=AttachmentPromptGrounding::named($contextBundle,$text);
+    $toolRulesBlock = !$namedAttachmentTurn && !empty($pipelineEffective['project_tools']) && !empty($memoryRoute['use_project_tools'])
         ? aiAgentInstruction('chat_main_tool_rules', '')
         : '';
     $behaviorRulesBlock = aiAgentInstruction('chat_main_behavior_rules', '');
@@ -2815,7 +2817,9 @@ if ($compilation_id > 0 && isset($_POST['compiled_prompt']) && trim($_POST['comp
     // contenido de X.php. Si hay proyecto, debe obtener evidencia real mediante
     // herramientas; sin proyecto, debe reconocer que no puede inspeccionarlo.
     if (($memoryRoute['intent'] ?? '') === 'code' || !empty($memoryRoute['use_project_tools'])) {
-        if ($projectId > 0 && !empty($pipelineEffective['project_tools'])) {
+        if ($namedAttachmentTurn) {
+            $groundingRule='[CÓDIGO ADJUNTO VERIFICADO] El archivo solicitado está en los fragmentos adjuntos recuperados. Analízalo y cita sus líneas. No busques este adjunto en las herramientas exclusivas del proyecto ni afirmes que falta un proyecto para leerlo.';
+        } elseif ($projectId > 0 && !empty($pipelineEffective['project_tools'])) {
             $groundingRule = "[GROUNDING OBLIGATORIO PARA CÓDIGO DEL PROYECTO]
 Si el usuario pide revisar, explicar, diagnosticar o modificar un archivo EXISTENTE del proyecto, DEBES usar grep, view o search antes de afirmar cómo está implementado. Basa cualquier afirmación sobre ese archivo únicamente en resultados reales de herramientas/RAG. Si el archivo no aparece o una herramienta falla, dilo explícitamente. PROHIBIDO inventar clases, métodos, regex, contenido o estructura del archivo. Las preguntas conceptuales de programación que no dependan de un archivo existente sí pueden responderse con conocimiento general.";
         } elseif ($projectId > 0) {
@@ -2862,6 +2866,8 @@ El usuario está estableciendo, recordando o consultando una regla/preferencia s
         'rag_context_block' => $ragContextBlock,
         'behavior_rules_block' => $behaviorRulesBlock,
     ]));
+
+    $systemPrompt=AttachmentPromptGrounding::append($systemPrompt,$contextBundle);
 
     $userParts = [];
     // Si el compilador está activo usamos el prompt compilado; si no, el texto original/router.
@@ -2944,6 +2950,7 @@ $converseParams = [
 // ✅ CORREGIDO: SOLO ofrecer herramientas si hay un proyecto activo. 
 // Esto evita que la IA intente usar 'grep' o 'view' en preguntas de cultura general y diga "no encontré el archivo".
 if ($projectId > 0
+    && !$namedAttachmentTurn
     && !empty($pipelineEffective['project_tools'])
     && !empty($memoryRoute['use_project_tools'])
     && (bool)aiAgentExtra('chat_main', 'tools_enabled_only_with_project', true)) {

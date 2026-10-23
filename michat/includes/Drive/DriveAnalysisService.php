@@ -14,13 +14,15 @@ final class DriveAnalysisService
     {
         return new self($db,new AnalysisSidecarStore(Config::getS3(),Config::getBucket()));
     }
-    public function analyze(int $user,int $session,int $fileId): array
+    public function analyze(int $user,int $session,int $fileId,bool $summarize=true): array
     {
         $states=new FileKnowledgeState($this->db);
-        $this->access->requireFile($user,$session,$fileId);
+        $authorized=$this->access->requireFile($user,$session,$fileId);
+        $lockFile=$this->access->original($authorized);
+        $lockId=(int)($lockFile['id_']??$fileId);
         $stage='lock';
         try {
-            return $this->locked($user,$fileId,function() use($user,$session,$fileId,$states,&$stage) {
+            return $this->locked($user,$lockId,function() use($user,$session,$fileId,$states,&$stage,$summarize) {
                 $stage='access_recheck';
                 $file=$this->access->requireFile($user,$session,$fileId);
                 $stage='state_persistence';
@@ -28,14 +30,19 @@ final class DriveAnalysisService
                 $warnings=[];$state=null;
                 $stage='source_verification';
                 $source=$this->store->identity($file);
-                try { $state=$this->store->read($file,$source); }
+                $origin=$this->access->original($file);$cacheFile=$origin?:$file;$cacheSource=$source;
+                if($origin) {
+                    $cacheSource=$this->store->identity($origin);$ref=(json_decode((string)$file['Metadatos'],true)?:[])['drive_source'];
+                    if(!hash_equals((string)$ref['etag'],$cacheSource['etag']) || !hash_equals((string)$ref['copy_etag'],$source['etag'])) throw new RuntimeException('La revisión de trabajo o del original cambió; selecciona la revisión que deseas analizar');
+                }
+                try { $state=$this->store->read($cacheFile,$cacheSource); }
                 catch(Throwable $e) { error_log('analysis cache read: '.$e->getMessage());$warnings[]='No se pudo leer el JSON auxiliar; se intentará preparar el contenido sin sobrescribirlo.'; }
                 $analysis=$state['analysis'] ?? null;$reused=is_array($analysis);
                 $image=in_array(strtolower(pathinfo($file['Nombre'],PATHINFO_EXTENSION)),['jpg','jpeg','png','webp','gif'],true);
                 $stage='index_lookup';
                 $chunks=$this->chunks($session,$source);
                 if (!$chunks && !empty($analysis['chunks'])) {
-                    try { $this->importChunks($session,$source,$analysis['chunks']);$chunks=$this->chunks($session,$source); }
+                    try { $this->importChunks($session,$source,$origin?self::remapChunks($analysis['chunks'],$cacheSource,$source):$analysis['chunks']);$chunks=$this->chunks($session,$source); }
                     catch(Throwable $e) { error_log('cached chunks: '.$e->getMessage());$warnings[]='No se pudo reutilizar el índice JSON; se comprobará el original.'; }
                 }
                 // Literal evidence is independent of summarization, embeddings and sidecar persistence.
@@ -53,7 +60,7 @@ final class DriveAnalysisService
                 $stage='summary';
                 if (!$reused) {
                     $block=$this->existingSummary($session,$source);
-                    if (!$block) {
+                    if (!$block && ($summarize || $image)) {
                         try {
                             if (is_callable($this->analyzer)) ($this->analyzer)($user,$session,$fileId);
                             else {
@@ -84,7 +91,11 @@ final class DriveAnalysisService
                 if (!empty($analysis['summary'])) $this->import($session,$file,['source'=>$source,'revision_key'=>AnalysisSidecarStore::revisionKey($source)],$analysis);
                 $saved=false;
                 if ($state!==null) {
-                    try { $this->store->write($file,$state,$analysis);$saved=true; }
+                    try {
+                        $cached=$analysis;$cached['source']=$cacheSource;
+                        if($origin) $cached['chunks']=self::remapChunks($chunks,$source,$cacheSource);
+                        $this->store->write($cacheFile,$state,$cached);$saved=true;
+                    }
                     catch(Throwable $e) { error_log('analysis cache write: '.$e->getMessage());$warnings[]='El contenido está disponible, pero no se pudo guardar el JSON auxiliar.'; }
                 }
                 $message=$chunks?'Texto extraído y fragmentos disponibles para responder con citas.':'Descripción visual disponible; no equivale a texto literal del original.';
@@ -94,7 +105,7 @@ final class DriveAnalysisService
                 return ['ok'=>true,'file_id'=>$fileId,'filename'=>$file['Nombre'],'reused'=>$reused,'summary'=>$analysis['summary'],
                     'coverage'=>$analysis['coverage'],'chunks'=>count($chunks),'lexical_rag_available'=>(bool)$chunks,'semantic_available'=>!empty($analysis['summary']),
                     'message'=>$message,'warnings'=>$warnings,'interaction_count'=>count($analysis['interactions'] ?? []),
-                    'sidecar_name'=>basename(AnalysisSidecarStore::key($file)),'sidecar_saved'=>$saved];
+                    'sidecar_name'=>basename(AnalysisSidecarStore::key($cacheFile)),'sidecar_saved'=>$saved];
             });
         } catch(Throwable $e) {
             if ($e instanceof DocumentProcessingException) $stage=$e->stage;
@@ -104,6 +115,17 @@ final class DriveAnalysisService
             return ['ok'=>false,'pending'=>$e instanceof PdfOcrPendingException,'retry_after'=>15,'file_id'=>$fileId,'error'=>$state['message'],'error_code'=>$state['error_code'],'error_id'=>$state['error_id'] ?? null,'stage'=>$stage];
         }
     }
+    private static function remapChunks(array $chunks,array $from,array $to): array
+    {
+        foreach($chunks as &$chunk) {
+            $m=$chunk['meta']??[];$text=$chunk['content']??'';
+            if(!is_string($text) || (int)($m['files3_id']??0)!==$from['file_id'] || ($m['source_etag']??'')!==$from['etag']
+                || !hash_equals(hash('sha256',$text),(string)($chunk['sha256']??''))) throw new RuntimeException('El índice auxiliar no pertenece a esta revisión');
+            $chunk['meta']['files3_id']=$to['file_id'];$chunk['meta']['source_etag']=$to['etag'];$chunk['meta']['filename']=$to['filename'];
+        }
+        unset($chunk);return $chunks;
+    }
+
     private function chunks(int $session,array $source): array
     {
         $s=$this->db->prepare("SELECT content_preview,source_ids FROM SessionContextBlocks WHERE session_id_=? AND s3_path=? AND block_type='file_chunk' ORDER BY id_ ASC");
@@ -174,17 +196,23 @@ final class DriveAnalysisService
         $errors=[];
         foreach ($ids as $id=>$sourceEtag) {
             try {
-                $this->locked($user,$id,function() use($user,$session,$id,$question,$answer,$messages,$sourceEtag) {
-                    $file=$this->access->requireFile($user,$session,$id);$state=$this->store->read($file);
-                    if ($state['source']['etag']!==$sourceEtag) throw new RuntimeException('La revisión usada para responder ya cambió; no se mezclaron análisis');
+                $authorized=$this->access->requireFile($user,$session,$id);$lockFile=$this->access->original($authorized);
+                $this->locked($user,(int)($lockFile['id_']??$id),function() use($user,$session,$id,$question,$answer,$messages,$sourceEtag) {
+                    $file=$this->access->requireFile($user,$session,$id);$origin=$this->access->original($file);
+                    $workingSource=$this->store->identity($file);
+                    if($workingSource['etag']!==$sourceEtag) throw new RuntimeException('La copia usada para responder cambió');
+                    $cacheFile=$origin?:$file;$state=$this->store->read($cacheFile);
+                    $expected=$origin?((json_decode((string)$file['Metadatos'],true)?:[])['drive_source']['etag']??''):$sourceEtag;
+                    if ($state['source']['etag']!==$expected) throw new RuntimeException('La revisión usada para responder ya cambió; no se mezclaron análisis');
                     if (!is_array($state['analysis'])) return; // no implicit analysis/LLM during a turn
                     $analysis=$state['analysis'];$event=$session.':'.$question.':'.$answer;
                     if (isset($analysis['interactions'][$event])) return;
                     $analysis['interactions'][$event]=['session_id'=>$session,'question_id'=>$question,'answer_id'=>$answer,
                         'question'=>$messages[$question]['content'],'answer'=>$messages[$answer]['content'],'model'=>$messages[$answer]['model_id'],
+                        'working_file_id'=>$id,'working_key'=>idx_build_s3_key($file),
                         'created_at'=>gmdate('c'),'note'=>'Respuesta generada con contexto de este archivo; puede incluir otras fuentes. No es texto literal del original.'];
                     $this->access->requireFile($user,$session,$id);
-                    $this->store->write($file,$state,$analysis);
+                    $this->store->write($cacheFile,$state,$analysis);
                 });
             } catch (Throwable $e) { error_log('analysis sidecar '.$id.': '.$e->getMessage()); $errors[]='No se pudo actualizar el JSON del archivo #'.$id.'. La interacción permanece en el chat.'; }
         }

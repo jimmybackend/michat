@@ -18,7 +18,7 @@ final class FileDeliveryService
         // Compare the complete canonical key, including its directory. A basename
         // alone must never grant access to a different object with the same name.
         $base = basename($key);
-        $stmt = $this->db->prepare('SELECT id_,user_id_,Nombre,Ruta,Encriptado,Found,AccessType,PasswordHash FROM FileS3 WHERE Encriptado=? OR Encriptado=? OR CONCAT(TRIM(TRAILING "/" FROM Ruta),"/",Encriptado)=?');
+        $stmt = $this->db->prepare('SELECT id_,user_id_,Nombre,Ruta,Encriptado,Found,AccessType,PasswordHash,Metadatos FROM FileS3 WHERE Encriptado=? OR Encriptado=? OR CONCAT(TRIM(TRAILING "/" FROM Ruta),"/",Encriptado)=?');
         $stmt->bind_param('sss', $key, $base, $key);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -30,6 +30,10 @@ final class FileDeliveryService
         }
         $stmt->close();
         if ($own !== null) {
+            if(!empty((json_decode((string)($own['Metadatos']??''),true)?:[])['drive_source'])) {
+                require_once dirname(__DIR__).'/Memory/DocumentAccessRepository.php';
+                if(!(new DocumentAccessRepository($this->db))->file($userId,(int)$own['id_'])) throw new FileDeliveryException('Archivo no encontrado o sin acceso.',404);
+            }
             if (strtolower((string)$own['AccessType']) === 'secure' || trim((string)$own['PasswordHash']) !== '') {
                 if (!self::unlocked($session, [$key, (string)$own['Encriptado'], (string)$own['id_']])) {
                     throw new FileDeliveryException('Archivo protegido. Desbloquéalo primero en ArcadeCloud.', 423);

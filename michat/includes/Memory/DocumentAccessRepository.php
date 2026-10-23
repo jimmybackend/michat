@@ -25,7 +25,23 @@ final class DocumentAccessRepository
         $s->bind_param('ii', $fileId, $userId);
         $s->execute(); $row = $s->get_result()->fetch_assoc(); $s->close();
         // Secure files require Drive's unlock flow; never bypass it with an index.
-        return $row && ($row['AccessType'] ?? '') !== 'secure' ? $row : null;
+        if(!$row || ($row['AccessType'] ?? '')==='secure') return null;
+        $meta=json_decode((string)$row['Metadatos'],true)?:[];
+        if(isset($meta['drive_source']) && !$this->original($row)) return null;
+        return $row;
+    }
+
+    /** A working copy never bypasses live access to its original. */
+    public function original(array $file): ?array
+    {
+        $meta=json_decode((string)($file['Metadatos']??''),true)?:[];$ref=$meta['drive_source']??null;
+        if(!is_array($ref) || ($ref['format']??'')!=='michat.drive-working-copy' || ($ref['version']??0)!==1
+            || (int)($ref['owner_id']??0)!==(int)$file['user_id_'] || (int)($ref['file_id']??0)===(int)$file['id_']) return null;
+        $id=(int)($ref['file_id']??0);$owner=(int)$file['user_id_'];
+        $s=$this->db->prepare("SELECT id_,user_id_,Nombre,Ruta,Encriptado,Found,AccessType,Metadatos FROM FileS3 WHERE id_=? AND user_id_=? AND Found=1 AND AccessType<>'secure' LIMIT 1");
+        $s->bind_param('ii',$id,$owner);$s->execute();$row=$s->get_result()->fetch_assoc();$s->close();
+        if(!$row || idx_build_s3_key($row)!==($ref['key']??'') || !empty((json_decode((string)$row['Metadatos'],true)?:[])['drive_source'])) return null;
+        return $row;
     }
 
     public static function linked(array $session, int $fileId): bool
