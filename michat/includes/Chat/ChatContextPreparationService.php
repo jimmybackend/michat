@@ -38,7 +38,8 @@ final class ChatContextPreparationService
             'question_memory_block','project_memory_block','project_rag_context_block'];
         $blocks=[];
         foreach($keys as$key){$block=trim($bundle->block($key));if($block!=='')$blocks[]=$block;}
-        return ['route'=>$route,'bundle'=>$bundle,'system_context'=>implode("\n\n",$blocks),'project_id'=>$projectId];
+        require_once dirname(__DIR__).'/Memory/AttachmentPromptGrounding.php';
+        return ['route'=>$route,'bundle'=>$bundle,'system_context'=>AttachmentPromptGrounding::append(implode("\n\n",$blocks),$bundle),'project_id'=>$projectId];
     }
     private function attachmentMode(int $userId, int $sessionId): string
     {

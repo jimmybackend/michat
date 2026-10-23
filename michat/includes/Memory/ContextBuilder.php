@@ -56,6 +56,15 @@ final class ContextBuilder
             '/(?:archiv\\w*|aechiv\\w*|adjunt\\w*|document\\w*|pdf|ficher\\w*|c[oó]digo|fragment\\w*|indexa\\w*|versi[oó]n|compar\\w*|qu[eé] dice|p[aá]gina|diapositiv\\w*|celda\\w*|f[oó]rmula\\w*|hoja\\w*|presentaci\\w*|excel|referenci\\w*|funci[oó]n|contradi\\w*|\.php\\b|\.js\\b|\.sql\\b|\.json\\b)/iu',
             $queryText
         );
+        $activeAttachmentFocus=0;
+        if($stage==='respond' && !$explicitFileQuestion && preg_match('/error|mejor|corr[ií]g|refactor|optimiz|exp[líi]ca|res[uú]m|modific|segur|vulnerab|qu[eé] hace|anal[ií]za/iu',$queryText)) {
+            $access=new DocumentAccessRepository($this->db);$sessionRow=$access->session($userId,$sessionId);
+            $meta=json_decode((string)($sessionRow['meta']??''),true)?:[];$activeId=(int)($meta['active_attachment_id']??0);
+            $active=$activeId>0?$access->file($userId,$activeId):null;
+            if($active && (DocumentAccessRepository::linked($sessionRow,$activeId)||idx_file_belongs_to_chat_session($active,$userId,$sessionId))) {
+                $queryText.=' Archivo '.json_encode($active['Nombre'],JSON_UNESCAPED_UNICODE);$explicitFileQuestion=true;$activeAttachmentFocus=$activeId;
+            }
+        }
         if ($stage === 'respond' && $explicitFileQuestion && !$memoryRoute->uses('use_attachment_context')) {
             $routeData = $memoryRoute->toArray();
             $routeData['use_attachment_context'] = true;
@@ -91,6 +100,7 @@ final class ContextBuilder
         }
 
         $bundle = new ContextBundle();
+        $bundle->setTelemetry('active_attachment_focus',$activeAttachmentFocus);
         $bundle->setRequests($memoryRoute->contextRequests($stage));
         require_once dirname(__DIR__).'/Drive/FileKnowledgeState.php';
         $availability=$stage==='respond' && $explicitFileQuestion ? (new FileKnowledgeState($this->db))->availability($userId,$sessionId,$queryText) : [];
@@ -258,7 +268,7 @@ final class ContextBuilder
         // embeddings falló o todavía está pendiente, recuperar de forma
         // determinista los fragmentos YA extraídos. No inventar contenido.
         $compareRequest = $explicitFileQuestion && (bool)preg_match('/compar\\w*|diferenci\\w*|entre (?:dos|ambos)/iu', $queryText);
-        $effectiveAttachmentMode = $compareRequest ? 'always' : $attachmentMode;
+        $effectiveAttachmentMode = $explicitFileQuestion ? 'always' : $attachmentMode;
         if ($hasAttachments) {
             $attachmentResult = $this->attachmentRepo->retrieve(
                 $userId,

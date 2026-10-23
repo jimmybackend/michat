@@ -4847,7 +4847,7 @@ function scheduleDocumentKnowledgeRefresh(files, sid) {
   },5000);
 }
 
-// Drive links reuse the existing S3 object. Searching never reads its contents.
+// Drive links reuse the existing S3 object. Explicit attachment creates a private chat working copy. Searching never reads its contents.
 let driveKnowledgeCsrf = '';
 let driveSearchSerial = 0;
 let driveSearchPlan = '';
@@ -4900,10 +4900,12 @@ async function searchDriveMetadata(more) {
       const row=document.createElement('div');row.className='border rounded p-2 mt-2';
       const label=document.createElement('div');
       label.textContent=file.Nombre+' · '+file.Ruta+' · '+Number(file.Tamano || 0).toLocaleString()+' bytes · '+(file.Fecha || '');
+      const details=document.createElement('details'),info=document.createElement('summary'),metadata=document.createElement('pre');
+      info.textContent='Clave y metadatos';metadata.textContent=JSON.stringify({id:file.id_,clave:file.Encriptado,ruta:file.Ruta,metadatos:file.Metadatos},null,2);details.append(info);details.append(metadata);
       row.append(label);
       const button=document.createElement('button');button.type='button';button.className='btn btn-sm btn-outline-primary mt-1';
       button.textContent='Seleccionar y analizar';
-      button.addEventListener('click',()=>selectDriveAnalysis(file,button,sid));row.append(button);target.append(row);
+      button.addEventListener('click',()=>selectDriveAnalysis(file,button,sid));row.append(button);row.append(details);target.append(row);
     }
     if (!(data.files || []).length && !more) target.textContent='No hay coincidencias entre tus archivos accesibles.';
     if (next) next.hidden=!data.has_more;
@@ -4920,9 +4922,9 @@ async function selectDriveAnalysis(file,button,searchSession) {
       await loadSessions();await selectSession(created.id);driveAutoCreatedSessionId=Number(created.id);
     }
     const sid=currentSessionId;
-    await changeDriveKnowledge(file.id_,'link',sid);
-    if(output) output.textContent='Comprobando análisis guardado de '+file.Nombre+'…';
-    const body=new URLSearchParams({session_id:sid,file_id:file.id_,csrf:driveKnowledgeCsrf});
+    if (!driveKnowledgeCsrf) await changeDriveKnowledge(null,'token',sid);
+    if(output) output.textContent='Adjuntando copia de trabajo de '+file.Nombre+'…';
+    const body=new URLSearchParams({action:'attach',session_id:sid,file_id:file.id_,csrf:driveKnowledgeCsrf});
     const response=await fetch('drive_file_analysis.php',{method:'POST',credentials:'same-origin',body});
     const data=await response.json();
     if (data.pending) {
@@ -4932,14 +4934,17 @@ async function selectDriveAnalysis(file,button,searchSession) {
     }
     if(!response.ok || !data.ok) throw new Error(data.error || 'No se pudo analizar');
     if(sid!==currentSessionId) return;
-    if(output) {
-      output.textContent=(data.message || (data.reused?'Análisis reutilizado.':'Contenido preparado.'))
-        +'\nArchivo: '+data.filename+'\nFragmentos disponibles: '+Number(data.chunks || 0)+'\nCobertura: '+data.coverage
-        +'\nJSON: '+(data.sidecar_saved?'guardado':'no guardado')+'\n'+(data.warnings || []).join('\n')+'\n\n'+(data.summary || 'Sin resumen semántico. Puedes preguntar sobre los fragmentos extraídos.')+'\n';
-      const download=document.createElement('a');download.className='btn btn-sm btn-outline-secondary';
-      download.textContent='Descargar JSON guardado';download.href='drive_file_analysis.php?'+new URLSearchParams({session_id:sid,file_id:file.id_,action:'download'});
-      if (data.sidecar_saved) output.append(download);
-    }
+    await loadSessionAttachments(sid);
+    if(sid!==currentSessionId) return;
+    if(output) output.textContent='Archivo adjunto a la conversación. Puedes trabajar con él en el chat.';
+    if(window.jQuery) window.jQuery('#driveKnowledgeModal').modal('hide');
+    closeChatFilesDrawer();
+    const filename=data.attachment?.filename || data.filename || file.Nombre;
+    const question='Analiza el archivo '+JSON.stringify(filename)+'. Explica su contenido usando los fragmentos adjuntos y cita sus líneas o ubicaciones reales.';
+    // Preserve a draft the user already wrote; otherwise start the requested
+    // analysis in the actual conversation, through the normal send pipeline.
+    if(el.input && !el.input.value.trim() && !isSending) {el.input.value=question;await sendMessage();}
+    else if(el.input) {el.input.focus();showToast('Archivo adjunto',esc(filename+' ya está disponible para tu siguiente mensaje.'),'success');}
     button.textContent=data.chunks?'Texto disponible para consultar':'Descripción disponible';
   } catch(error) {if(output) output.textContent=error.message;}
   finally {button.disabled=false;if(currentSessionId) await loadSessionAttachments(currentSessionId);}

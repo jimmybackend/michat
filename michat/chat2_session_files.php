@@ -2,6 +2,7 @@
 header('Content-Type: application/json; charset=utf-8');
 if(session_status()===PHP_SESSION_NONE)session_start();
 require_once __DIR__.'/app_bootstrap.php';
+require_once __DIR__.'/includes/Memory/DocumentAccessRepository.php';
 $aiHelper=__DIR__.'/includes/ai_agent_runtime.php';
 if(is_file($aiHelper)) require_once $aiHelper;
 function jexit($a,$c=200):void{http_response_code($c);echo json_encode($a,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);exit;}
@@ -22,7 +23,7 @@ $linkedIds=array_slice(array_values(array_filter(array_map('intval',(array)($lin
 $linkedSql=$linkedIds?' OR id_ IN ('.implode(',',$linkedIds).')':'';
 $s=$db_connection->prepare("SELECT id_,Nombre,Encriptado,Tamano,Metadatos,Ruta,Found,AccessType,Fecha,user_id_ FROM FileS3 WHERE user_id_=? AND (Ruta LIKE ?{$linkedSql}) AND Found=1 AND AccessType<>'secure' ORDER BY Fecha DESC,id_ DESC");
 $s->bind_param('is',$owner,$pattern);$s->execute();$r=$s->get_result();$files=[];$byId=[];$byKey=[];
-while($f=$r->fetch_assoc()){$key=key_list($f);$id=(int)$f['id_'];$item=['id'=>$id,'files3_id'=>$id,'drive_linked'=>in_array($id,$linkedIds,true),'filename'=>(string)$f['Nombre'],'s3_key'=>$key,'size_bytes'=>(int)$f['Tamano'],'metadata'=>json_decode((string)$f['Metadatos'],true)?:$f['Metadatos'],'ruta'=>(string)$f['Ruta'],'found'=>(int)$f['Found'],'access_type'=>(string)$f['AccessType'],'created_at'=>(string)$f['Fecha'],'user_id'=>(int)$f['user_id_'],'chunks_total'=>0,'chunks_with_embedding'=>0,'chunks_pending'=>0,'semantic_type'=>null,'semantic_exists'=>false,'semantic_embedding_ready'=>false,'semantic_model'=>null,'embedding_models'=>[],'extraction_partial'=>false,'index_status'=>'uploaded'];$files[$id]=$item;$byId[$id]=$id;if($key!=='')$byKey[$key]=$id;}$s->close();
+while($f=$r->fetch_assoc()){if(!(new DocumentAccessRepository($db_connection))->file($userId,(int)$f['id_']))continue;$key=key_list($f);$id=(int)$f['id_'];$item=['id'=>$id,'files3_id'=>$id,'drive_linked'=>in_array($id,$linkedIds,true)&&!idx_file_belongs_to_chat_session($f,$userId,$sessionId),'filename'=>(string)$f['Nombre'],'s3_key'=>$key,'size_bytes'=>(int)$f['Tamano'],'metadata'=>json_decode((string)$f['Metadatos'],true)?:$f['Metadatos'],'ruta'=>(string)$f['Ruta'],'found'=>(int)$f['Found'],'access_type'=>(string)$f['AccessType'],'created_at'=>(string)$f['Fecha'],'user_id'=>(int)$f['user_id_'],'chunks_total'=>0,'chunks_with_embedding'=>0,'chunks_pending'=>0,'semantic_type'=>null,'semantic_exists'=>false,'semantic_embedding_ready'=>false,'semantic_model'=>null,'embedding_models'=>[],'extraction_partial'=>false,'index_status'=>'uploaded'];$files[$id]=$item;$byId[$id]=$id;if($key!=='')$byKey[$key]=$id;}$s->close();
 
 if($files){
  $q=$db_connection->prepare("SELECT id_,block_type,s3_path,source_ids,embedding_json,embedding_model FROM SessionContextBlocks WHERE session_id_=? AND block_type IN ('file','file_chunk') ORDER BY id_ ASC");$q->bind_param('i',$sessionId);$q->execute();$rr=$q->get_result();

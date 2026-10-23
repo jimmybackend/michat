@@ -52,7 +52,7 @@ final class FileKnowledgeState
         $state=self::failure($error,$stage);$state['stage']=$stage;
         if ($state['status']==='ocr_pending') return $state;
         $id='AK-'.bin2hex(random_bytes(6));$state['error_id']=$id;
-        $labels=['source_download'=>'descarga del original','format_detection'=>'detección del formato real','xlsx_reader'=>'lectura de hojas y celdas','chunk_storage'=>'guardado de fragmentos','access_recheck'=>'verificación de acceso','summary_persistence'=>'guardado del resumen','lock'=>'coordinación del trabajo','source_verification'=>'lectura del original en S3',
+        $labels=['working_copy'=>'copia de trabajo para el chat','request_validation'=>'validación de acceso','source_download'=>'descarga del original','format_detection'=>'detección del formato real','xlsx_reader'=>'lectura de hojas y celdas','chunk_storage'=>'guardado de fragmentos','access_recheck'=>'verificación de acceso','summary_persistence'=>'guardado del resumen','lock'=>'coordinación del trabajo','source_verification'=>'lectura del original en S3',
             'index_lookup'=>'consulta del índice','extraction_index'=>'extracción e indexación',
             'summary'=>'resumen semántico','source_recheck'=>'verificación de la revisión','state_persistence'=>'guardado del estado'];
         $state['message'].=' Etapa: '.($labels[$stage] ?? 'procesamiento').'. Referencia: '.$id.'.';

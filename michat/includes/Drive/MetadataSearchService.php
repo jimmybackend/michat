@@ -37,20 +37,21 @@ final class MetadataSearchService
         // Explicit controls win over the model. Empty controls keep inferred filters.
         foreach (['extensions','date_from','date_to'] as $key) if (!empty($explicit[$key])) $filters[$key] = $explicit[$key];
         $filters = self::filters($filters);
-        $where = ["user_id_=?","Found=1","AccessType<>'secure'","id_>?"];
+        $where = ["user_id_=?","Found=1","AccessType<>'secure'","id_>?","COALESCE(CASE WHEN JSON_VALID(Metadatos) THEN JSON_UNQUOTE(JSON_EXTRACT(Metadatos,'$.drive_source.format')) ELSE NULL END,'')<>'michat.drive-working-copy'"];
         $types = 'ii'; $params = [$user,max(0,$cursor)];
         foreach ($filters['terms'] as $term) {
             $like = '%'.str_replace(['!','%','_'],['!!','!%','!_'],$term).'%';
-            $where[] = "(Nombre LIKE ? ESCAPE '!' OR Ruta LIKE ? ESCAPE '!' OR Metadatos LIKE ? ESCAPE '!')";
-            $types .= 'sss'; array_push($params,$like,$like,$like);
+            $where[] = "(Nombre LIKE ? ESCAPE '!' OR Encriptado LIKE ? ESCAPE '!' OR Ruta LIKE ? ESCAPE '!' OR Metadatos LIKE ? ESCAPE '!')";
+            $types .= 'ssss'; array_push($params,$like,$like,$like,$like);
         }
         if ($filters['extensions']) {
-            $where[] = "LOWER(SUBSTRING_INDEX(Nombre,'.',-1)) IN (".implode(',',array_fill(0,count($filters['extensions']),'?')).')';
-            $types .= str_repeat('s',count($filters['extensions'])); array_push($params,...$filters['extensions']);
+            $marks=implode(',',array_fill(0,count($filters['extensions']),'?'));
+            $where[] = "(LOWER(SUBSTRING_INDEX(Nombre,'.',-1)) IN ($marks) OR LOWER(SUBSTRING_INDEX(Encriptado,'.',-1)) IN ($marks))";
+            $types .= str_repeat('s',2*count($filters['extensions'])); array_push($params,...$filters['extensions'],...$filters['extensions']);
         }
         if ($filters['date_from']) { $where[] = 'Fecha>=?'; $types.='s'; $params[]=$filters['date_from'].' 00:00:00'; }
         if ($filters['date_to']) { $where[] = 'Fecha<?'; $types.='s'; $params[]=(new DateTimeImmutable($filters['date_to']))->modify('+1 day')->format('Y-m-d').' 00:00:00'; }
-        $s = $this->db->prepare('SELECT id_,Nombre,Ruta,Tamano,Fecha FROM FileS3 WHERE '.implode(' AND ',$where).' ORDER BY id_ ASC LIMIT 41');
+        $s = $this->db->prepare('SELECT id_,Nombre,Encriptado,Ruta,Tamano,Fecha,Metadatos,AccessType,Found FROM FileS3 WHERE '.implode(' AND ',$where).' ORDER BY id_ ASC LIMIT 41');
         if (!$s) throw new RuntimeException('No se pudo consultar FileS3');
         try { $s->bind_param($types,...$params); if (!$s->execute()) throw new RuntimeException('No se pudo buscar'); $rows=$s->get_result()->fetch_all(MYSQLI_ASSOC); }
         finally { $s->close(); }

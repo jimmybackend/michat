@@ -24,7 +24,7 @@ $plans=0;
 $search=new MetadataSearchService($db,function($query) use(&$plans) {$plans++;checkDrive($query==='contratos PDF de septiembre','Planner receives only the search request');return ['terms'=>['contrato'],'extensions'=>['pdf'],'date_from'=>'2026-09-01','date_to'=>'2026-09-30','sql'=>'DROP TABLE FileS3','user_id'=>2];});
 $found=$search->search(1,'contratos PDF de septiembre',true);
 checkDrive(count($found['files'])===1 && (int)$found['files'][0]['id_']===1,'AI filters use real metadata, inclusive end date, live owner/lock/deletion checks');
-checkDrive(!isset($found['files'][0]['Encriptado'],$found['files'][0]['Metadatos']),'Search returns display metadata, not storage keys or raw private metadata');
+checkDrive($found['files'][0]['Encriptado']==='Data/a.pdf'&&isset($found['files'][0]['Metadatos']),'Authorized catalog exposes real storage key and metadata to its owner');
 checkDrive($plans===1,'One planner invocation per search');
 checkDrive(!isset($found['filters']['sql'],$found['filters']['user_id']),'AI cannot supply SQL or ownership filters');
 checkDrive(count($search->search(1,'impuestos',false)['files'])===1,'Metadata field is searchable without analyzing content');
