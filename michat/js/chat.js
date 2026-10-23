@@ -77,7 +77,7 @@
       usage: $('#chat2Usage'),
       input: $('#chat2Input'),
       file: $('#chat2File'),
-      attach: $('#chat2Attach'),
+      attach: null, // Único clip visible: #chatFilesOpen en la cabecera.
       btnGenImg: $('#chat2BtnGenImg'),
       btnGenVid: $('#chat2BtnGenVid'),
       btnSonic: $('#chat2BtnSonic'),
@@ -127,10 +127,27 @@
     });
 
     let fileDrawerPreviousFocus = null;
+    let fileDrawerActiveSessionId = null;
     function updateChatFilesDrawerContext() {
       const session = sessions.find(x => Number(x.id ?? x.id_) === Number(currentSessionId));
       const title = session?.title || (currentSessionId ? `Conversación #${currentSessionId}` : 'Selecciona una conversación');
       if (el.fileDrawerSessionLabel) el.fileDrawerSessionLabel.textContent = title;
+      // No conservar la selección de archivos al pasar a otra conversación.
+      if (fileDrawerActiveSessionId !== currentSessionId) {
+        fileDrawerActiveSessionId = currentSessionId;
+        const upload = document.getElementById('chatFilesUpload');
+        if (upload) upload.hidden = true;
+        el.fileDrawerManage?.setAttribute('aria-expanded', 'false');
+        const input = document.getElementById('sessionFilesInput');
+        if (input) input.value = '';
+        document.getElementById('sessionUploadProgress')?.classList.add('d-none');
+        document.getElementById('sessionUploadResult')?.classList.add('d-none');
+      }
+      const canEditFiles = !!currentSessionId && currentSessionStatus === 'open';
+      for (const id of ['sessionFilesInput', 'btnUploadSessionFiles', 'btnIndexSessionAttachments']) {
+        const control = document.getElementById(id);
+        if (control) control.disabled = !canEditFiles;
+      }
       if (el.fileDrawerManage) {
         el.fileDrawerManage.disabled = !currentSessionId || currentSessionStatus !== 'open';
         el.fileDrawerManage.title = currentSessionStatus !== 'open'
@@ -173,9 +190,7 @@
     el.fileDrawerClose?.addEventListener('click', () => closeChatFilesDrawer());
     el.fileBackdrop?.addEventListener('click', () => closeChatFilesDrawer());
     el.fileDrawerManage?.addEventListener('click', () => {
-      if (!currentSessionId || currentSessionStatus !== 'open') return;
-      closeChatFilesDrawer(false);
-      openSessionAttachmentsModal();
+      openSessionAttachmentsManager();
     });
     el.fileDrawer?.addEventListener('keydown', event => {
       if (event.key === 'Escape') {
@@ -3459,12 +3474,6 @@ const btnIndexPending = document.getElementById('btnIndexPending');
 if (btnIndexPending) {
   btnIndexPending.addEventListener('click', indexPendingSources);
 }
-    if (el.attach) {
-      el.attach.addEventListener('click', (e) => {
-        e.preventDefault();
-        openSessionAttachmentsModal();
-      });
-    }
     if (el.file) el.file.addEventListener('change', (ev) => addFilesFromInput(el.file.files));
     if (el.send) el.send.addEventListener('click', sendMessage);
     if (el.input) {
@@ -4059,6 +4068,10 @@ async function uploadSessionFiles() {
     alert('⚠️ No hay sesión seleccionada');
     return;
   }
+  if (currentSessionStatus !== 'open') {
+    alert('Restaura la conversación antes de adjuntar archivos.');
+    return;
+  }
   const fileInput = document.getElementById('sessionFilesInput');
   if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
     alert('⚠️ Selecciona al menos un archivo');
@@ -4103,10 +4116,9 @@ async function uploadSessionFiles() {
       successMsg.innerHTML = msg;
     }
     if (result) result.classList.remove('d-none');
+    // Mantener el mismo panel abierto; archivos y estado RAG se refrescan por AJAX.
+    fileInput.value = '';
     await loadSessionAttachments(currentSessionId);
-    setTimeout(() => {
-      jQuery('#modalSessionAttachments').modal('hide');
-    }, 2000);
   } catch (e) {
     console.error('Error subiendo archivos:', e);
     if (statusEl) statusEl.textContent = 'Error: ' + e.message;
@@ -4117,63 +4129,39 @@ async function uploadSessionFiles() {
     alert('Error subiendo archivos: ' + e.message);
   }
 }
-function openSessionAttachmentsModal() {
-  if (!currentSessionId) { 
-    alert('⚠️ Selecciona o crea una sesión primero.'); 
-    return; 
+// El gestor de archivos vive dentro del panel de Archivos y RAG.
+function openSessionAttachmentsManager(forceOpen = false) {
+  if (!currentSessionId) {
+    window.alert('Selecciona o crea una conversación antes de adjuntar archivos.');
+    return;
   }
-  const modal = document.getElementById('modalSessionAttachments');
-  if (!modal) return;
-  // La ruta ahora incluye día y session_id
-  const userId = document.getElementById('chatUserId') ? document.getElementById('chatUserId').value : 1;
+  if (currentSessionStatus !== 'open') {
+    window.alert('Restaura esta conversación a Activas para adjuntar archivos.');
+    return;
+  }
+  if (el.fileDrawer?.hidden) openChatFilesDrawer();
+  const upload = document.getElementById('chatFilesUpload');
+  if (!upload) return;
+  upload.hidden = !forceOpen && !upload.hidden;
+  if (forceOpen) upload.hidden = false;
+  el.fileDrawerManage?.setAttribute('aria-expanded', upload.hidden ? 'false' : 'true');
+  if (upload.hidden) {
+    el.fileDrawerManage?.focus();
+    return;
+  }
+  const userId = document.getElementById('chatUserId')?.value || getUserId() || '';
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const path = `Data/Chat/Uploads/${userId}/${year}/${month}/${day}/${currentSessionId}/`;
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  const path = `Data/Chat/Uploads/${userId}/${y}/${m}/${d}/${currentSessionId}/`;
   const pathEl = document.getElementById('sessionUploadPath');
   if (pathEl) pathEl.textContent = path;
-  const modalList = document.getElementById('modalSessionAttachmentsList');
-  if (modalList) {
-    if (sessionAttachments.length === 0) {
-      modalList.innerHTML = '<div class="list-group-item text-muted small">No hay adjuntos aún.</div>';
-    } else {
-      modalList.innerHTML = sessionAttachments.map(a => {
-        const ready = a.index_status === 'indexed';
-        const processing = a.index_status === 'processing';
-        const statusText = ready ? 'RAG listo' : (a.index_status === 'embedding_disabled' ? 'Embedding off' : (processing ? 'Procesando' : (a.index_status === 'stale_embedding' ? 'Reindexar' : (a.chunks_total > 0 ? 'Sin embedding' : 'Sin indexar'))));
-        const badgeClass = ready ? 'success' : (processing ? 'warning' : 'secondary');
-        return `<div class="list-group-item d-flex justify-content-between align-items-center py-2" data-id="${a.files3_id}">
-          <div class="text-truncate" style="max-width: 70%;" title="${esc(a.filename)}">
-            <i class="fas fa-file mr-1 text-muted"></i> ${esc(a.filename)}
-          </div>
-          <div class="d-flex align-items-center" style="gap: 8px;">
-            <span class="badge badge-${badgeClass}" style="font-size: 0.7rem;">${statusText}</span>
-            <button class="btn btn-sm btn-outline-danger btn-delete-modal-attachment" data-id="${a.files3_id}" title="Eliminar adjunto" style="padding: 0 .4rem;">
-              <i class="fas fa-trash"></i>
-            </button>
-          </div>
-        </div>`;
-      }).join('');
-      modalList.querySelectorAll('.btn-delete-modal-attachment').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const id = parseInt(btn.getAttribute('data-id'), 10);
-          deleteSessionAttachment(id);
-        });
-      });
-    }
-  }
-  const progress = document.getElementById('sessionUploadProgress');
-  const result = document.getElementById('sessionUploadResult');
-  if (progress) progress.classList.add('d-none');
-  if (result) result.classList.add('d-none');
-  const fileInput = document.getElementById('sessionFilesInput');
-  if (fileInput) fileInput.value = '';
-  jQuery(modal).modal('show');
+  upload.scrollIntoView({block:'nearest',behavior:'smooth'});
+  document.getElementById('sessionFilesInput')?.focus();
 }
   if (el.attachmentsAdd) {
-    el.attachmentsAdd.addEventListener('click', openSessionAttachmentsModal);
+    el.attachmentsAdd.addEventListener('click', () => openSessionAttachmentsManager(true));
   }
   if (el.attachmentsRefresh) {
     el.attachmentsRefresh.addEventListener('click', () => {
@@ -4193,6 +4181,7 @@ function openSessionAttachmentsModal() {
   if (btnIndexSessionAttachments) {
     btnIndexSessionAttachments.addEventListener('click', async () => {
       if (!currentSessionId) return alert('Selecciona una sesión primero.');
+      if (currentSessionStatus !== 'open') return alert('Restaura la conversación para indexar archivos.');
       if (!sessionAttachments.length) return alert('No hay adjuntos para indexar.');
       const original = btnIndexSessionAttachments.innerHTML;
       btnIndexSessionAttachments.disabled = true;
