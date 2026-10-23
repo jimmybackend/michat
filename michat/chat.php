@@ -324,6 +324,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <meta name="csrf-token" content="<?php echo htmlspecialchars($_SESSION['csrf_token'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
 <link rel="stylesheet" href="css/chat2.css" />
 <link rel="stylesheet" href="css/design-system.css?v=20261022-conversation-layout" />
+<link rel="stylesheet" href="css/chat-files-drawer.css?v=20261023-1" />
 <link rel="stylesheet" href="css/michat-about.css?v=20261021-2" />
 </head>
 <body class="ui-theme theme-neon-green theme-light vision-normal ascii-on">
@@ -334,7 +335,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 <aside id="chat-sidebar" class="sidebar-panel">
 
 <div class="sidebar-brand">
-    <a href="s3.php">
+    <a href="#" id="chatBrandHome" aria-label="Chat+S3, inicio sin navegación">
         <img src="asistente-de-inteligencia-artificial.gif" alt="IA" style="height: 2.2em; vertical-align: middle; display: inline-block;"> Chat+S3
     </a>
 </div>
@@ -381,37 +382,6 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 </div>
 
-<div class="sidebar-section adjuntos-section">
-
-  <div class="section-label-row">
-    <div class="section-label">
-      <i class="fas fa-paperclip"></i>
-      ARCHIVOS
-    </div>
-    <span class="chat-files-count" id="chatFilesCount">0</span>
-  </div>
-
-
-
-    <button id="btnAttachmentInspector" class="btn btn-sm btn-outline-info w-100 mt-2" style="font-size:0.75rem;" title="Ver qué información tiene la IA de los archivos adjuntos">
-        <i class="fas fa-microscope"></i> Inspector de Adjuntos
-    </button>
-  <div id="chatSessionFilesList" class="chat-session-files-list">
-    <!-- Los archivos se cargan dinámicamente desde chat.js -->
-    <div class="empty-state-sidebar chat-files-empty">
-      <!--<i class="fas fa-file"></i>
-      <span class="text-muted" style="font-size:0.65rem;">Selecciona una conversación</span>-->
-    </div>
-  </div>
-  <div class="chat-attachment-mode mb-2" style="font-size:0.75rem;">
-    <label class="m-0 d-flex align-items-center" style="gap:6px; cursor:pointer;">
-        <input type="checkbox" id="chatAttachmentsRagMode"  title="Si está activo, solo se inyectan archivos relacionados con la pregunta." checked>
-        <small class="text-muted" style="font-size:0.65rem;">Usar adjuntos solo si son relevantes (RAG)</small>
-    </label>
-</div>
-
-</div>
-
 <div class="sidebar-footer">
 <div class="user-profile">
 <div class="user-avatar"><?= htmlspecialchars(mb_strtoupper(mb_substr($_SESSION['usuario'], 0, 1))) ?></div>
@@ -442,6 +412,9 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
       <i class="fas fa-bars"></i>
     </button>
     <h1 class="chat-title" id="chat2Title">Nueva conversación</h1>
+    <button id="chatFilesOpen" class="btn-icon-sm chat-files-trigger" type="button" aria-label="Ver archivos y RAG de la conversación" title="Archivos y RAG" aria-haspopup="dialog" aria-controls="chatFilesDrawer" aria-expanded="false">
+      <i class="fas fa-paperclip" aria-hidden="true"></i>
+    </button>
     <small class="text-muted ml-2 d-none" id="chat2SessionBadge"></small>
         <button id="chat2Rename" class="btn-icon-sm" title="Renombrar chat" type="button">
       <i class="fas fa-pen"></i>
@@ -510,12 +483,54 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 
   </div>
 </header>
-<!-- panel -->
-<div id="pane-Chat2" class="tab-pane show active">   
-<div class="card h-100 d-flex flex-column shadow-sm">
-<div class="card-header">
+<!-- Archivos fuera del sidebar: visibles únicamente al pulsar el clip de la conversación. -->
+<div id="chatFilesBackdrop" class="chat-files-backdrop" hidden></div>
+<aside id="chatFilesDrawer" class="chat-files-drawer" role="dialog" aria-modal="true" aria-labelledby="chatFilesTitle" aria-hidden="true" tabindex="-1" hidden>
+  <div class="chat-files-drawer-header">
+    <div>
+      <h2 id="chatFilesTitle"><i class="fas fa-paperclip" aria-hidden="true"></i> Archivos y RAG</h2>
+      <small id="chatFilesSessionLabel" class="text-muted">Selecciona una conversación</small>
+    </div>
+    <button id="chatFilesClose" class="btn-icon-sm" type="button" title="Cerrar archivos" aria-label="Cerrar panel de archivos">
+      <i class="fas fa-times" aria-hidden="true"></i>
+    </button>
+  </div>
+  <div class="chat-files-drawer-body">
+    <p class="chat-files-help">Consulta los adjuntos de esta conversación, su indexación y el modo de recuperación RAG.</p>
+    <button id="chatFilesManage" class="btn btn-sm btn-outline-primary w-100 mb-2" type="button">
+      <i class="fas fa-cloud-upload-alt mr-1" aria-hidden="true"></i> Agregar o indexar adjuntos
+    </button>
+    <div class="sidebar-section adjuntos-section">
 
-<div id="chat2SourcesPanel" class="px-3 py-2 d-none" style="border-bottom: 1px solid var(--border, #333); background: rgba(255,255,255,0.02);">
+  <div class="section-label-row">
+    <div class="section-label">
+      <i class="fas fa-paperclip"></i>
+      ARCHIVOS
+    </div>
+    <span class="chat-files-count" id="chatFilesCount">0</span>
+  </div>
+
+
+
+    <button id="btnAttachmentInspector" class="btn btn-sm btn-outline-info w-100 mt-2" style="font-size:0.75rem;" title="Ver qué información tiene la IA de los archivos adjuntos">
+        <i class="fas fa-microscope"></i> Inspector de Adjuntos
+    </button>
+  <div id="chatSessionFilesList" class="chat-session-files-list">
+    <!-- Los archivos se cargan dinámicamente desde chat.js -->
+    <div class="empty-state-sidebar chat-files-empty">
+      <!--<i class="fas fa-file"></i>
+      <span class="text-muted" style="font-size:0.65rem;">Selecciona una conversación</span>-->
+    </div>
+  </div>
+  <div class="chat-attachment-mode mb-2" style="font-size:0.75rem;">
+    <label class="m-0 d-flex align-items-center" style="gap:6px; cursor:pointer;">
+        <input type="checkbox" id="chatAttachmentsRagMode"  title="Si está activo, solo se inyectan archivos relacionados con la pregunta." checked>
+        <small class="text-muted" style="font-size:0.65rem;">Usar adjuntos solo si son relevantes (RAG)</small>
+    </label>
+</div>
+
+</div>
+    <div id="chat2SourcesPanel" class="px-3 py-2 d-none" style="border-bottom: 1px solid var(--border, #333); background: rgba(255,255,255,0.02);">
 <div class="d-flex align-items-center">
 <h6 class="mb-0 small"><i class="fas fa-folder-open"></i> Fuentes del Proyecto (<span id="chat2SourcesCount">0</span>)</h6>
 <button id="chat2IndexPending" class="btn btn-sm btn-outline-success ml-2" title="Indexar archivos pendientes/desactualizados">
@@ -541,8 +556,12 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
 </div>
 <div id="chat2AttachmentsList" class="d-flex flex-wrap mt-1" style="max-height: 60px; overflow-y: auto; font-size:0.7rem; gap: 4px;"></div>
 </div>
+  </div>
+</aside>
 
-</div>
+<!-- panel -->
+<div id="pane-Chat2" class="tab-pane show active">   
+<div class="card h-100 d-flex flex-column shadow-sm">
 <!-- Contenido de Chat -->
 <div id="chat2Messages" class="card-body flex-grow-1 overflow-auto" style="padding: 1rem 1.5rem;"></div>
 </div>
@@ -872,7 +891,7 @@ role="progressbar" style="width: 0%">0%</div>
 <!-- Preferencias primero: expone chatPreferencesReady/modelo antes de crear sesiones. -->
 <script src="js/user_preferences.js"></script>
 <!-- chat.js administra sesiones/proyectos y exporta window.chatUtils. -->
-<script src="js/chat.js?v=20261022-conversation-layout"></script>
+<script src="js/chat.js?v=20261023-file-drawer"></script>
 <script src="js/context-viewer.js"></script> 
 <script src="js/ai-data-control.js"></script>
 <!-- Módulos que dependen de chat.js -->

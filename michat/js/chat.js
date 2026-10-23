@@ -98,7 +98,13 @@
       attachmentsAdd: $('#chat2AttachmentsAdd'),
       attachmentsRefresh: $('#chat2AttachmentsRefresh'),
       sbSessionFiles: $('#chatSessionFilesList'),
-      chatFilesCount: $('#chatFilesCount'),   
+      chatFilesCount: $('#chatFilesCount'),
+      fileDrawer: $('#chatFilesDrawer'),
+      fileBackdrop: $('#chatFilesBackdrop'),
+      fileDrawerOpen: $('#chatFilesOpen'),
+      fileDrawerClose: $('#chatFilesClose'),
+      fileDrawerManage: $('#chatFilesManage'),
+      fileDrawerSessionLabel: $('#chatFilesSessionLabel')
     };
     let currentSessionId = null;
     let currentSessionStatus = 'open';
@@ -114,6 +120,81 @@
     let sessionAttachments = [];
     let currentMemoryScope = null;
     let fileIdSeq = 1;
+
+    // El enlace de marca ya no navega a Cloud Drive; es sólo identidad visual.
+    document.getElementById('chatBrandHome')?.addEventListener('click', event => {
+      event.preventDefault();
+    });
+
+    let fileDrawerPreviousFocus = null;
+    function updateChatFilesDrawerContext() {
+      const session = sessions.find(x => Number(x.id ?? x.id_) === Number(currentSessionId));
+      const title = session?.title || (currentSessionId ? `Conversación #${currentSessionId}` : 'Selecciona una conversación');
+      if (el.fileDrawerSessionLabel) el.fileDrawerSessionLabel.textContent = title;
+      if (el.fileDrawerManage) {
+        el.fileDrawerManage.disabled = !currentSessionId || currentSessionStatus !== 'open';
+        el.fileDrawerManage.title = currentSessionStatus !== 'open'
+          ? 'Restaura esta conversación para agregar o indexar archivos'
+          : !currentSessionId ? 'Selecciona una conversación primero' : 'Agregar o indexar adjuntos';
+      }
+    }
+    function closeChatFilesDrawer(restoreFocus = true) {
+      if (!el.fileDrawer || el.fileDrawer.hidden) return;
+      el.fileDrawer.hidden = true;
+      el.fileDrawer.setAttribute('aria-hidden', 'true');
+      if (el.fileBackdrop) el.fileBackdrop.hidden = true;
+      if (el.fileDrawerOpen) el.fileDrawerOpen.setAttribute('aria-expanded', 'false');
+      if (restoreFocus && fileDrawerPreviousFocus?.focus) fileDrawerPreviousFocus.focus();
+    }
+    function openChatFilesDrawer() {
+      if (!el.fileDrawer) return;
+      fileDrawerPreviousFocus = document.activeElement;
+      updateChatFilesDrawerContext();
+      el.fileDrawer.hidden = false;
+      el.fileDrawer.setAttribute('aria-hidden', 'false');
+      if (el.fileBackdrop) el.fileBackdrop.hidden = false;
+      if (el.fileDrawerOpen) el.fileDrawerOpen.setAttribute('aria-expanded', 'true');
+      el.fileDrawerClose?.focus();
+      if (currentSessionId) {
+        // Los datos se mantienen con AJAX; no recargar chat ni cambiar conversación.
+        Promise.allSettled([
+          loadSessionAttachments(currentSessionId),
+          loadAttachmentRagMode(currentSessionId)
+        ]);
+      } else {
+        loadSessionAttachments(null);
+        loadAttachmentRagMode(null);
+      }
+    }
+    el.fileDrawerOpen?.addEventListener('click', () => {
+      if (el.fileDrawer?.hidden) openChatFilesDrawer();
+      else closeChatFilesDrawer();
+    });
+    el.fileDrawerClose?.addEventListener('click', () => closeChatFilesDrawer());
+    el.fileBackdrop?.addEventListener('click', () => closeChatFilesDrawer());
+    el.fileDrawerManage?.addEventListener('click', () => {
+      if (!currentSessionId || currentSessionStatus !== 'open') return;
+      closeChatFilesDrawer(false);
+      openSessionAttachmentsModal();
+    });
+    el.fileDrawer?.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeChatFilesDrawer();
+      } else if (event.key === 'Tab') {
+        const controls = Array.from(el.fileDrawer.querySelectorAll(
+          'button:not(:disabled):not([hidden]), input:not(:disabled), a[href], select:not(:disabled)'
+        )).filter(node => node.getClientRects().length > 0);
+        if (!controls.length) { event.preventDefault(); return; }
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault(); last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); first.focus();
+        }
+      }
+    });
 
     if (el.activityEnabled) {
       const storedActivity = localStorage.getItem('chat_activity_enabled');
@@ -1438,7 +1519,10 @@ function renderSessionsList() {
         const j = toJSONorThrow(await r.text(), r.status, label);
         if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
         const wasSelected = Number(currentSessionId) === Number(id);
-        if (wasSelected) updateCurrentSessionState(j.status);
+        if (wasSelected) {
+          updateCurrentSessionState(j.status);
+          updateChatFilesDrawerContext();
+        }
         await loadSessions();
         // Si la conversación salió de la vista seleccionada, limpiar también
         // su visor. Los mensajes siguen intactos y disponibles en su carpeta.
@@ -1450,6 +1534,7 @@ function renderSessionsList() {
           if (el.sbCurrentSession) el.sbCurrentSession.textContent = 'Ninguna';
           if (el.messages) el.messages.textContent = '';
           updateCurrentSessionState('open');
+          updateChatFilesDrawerContext();
           syncTraceExplorerButton();
           renderSessionsList();
         }
@@ -1497,6 +1582,7 @@ function renderSessionsList() {
         await selectProject(null);
       }
       updateCurrentSessionState(s ? s.status : currentSessionStatus);
+      updateChatFilesDrawerContext();
       setStatus('Cargando mensajes…');
       try {
         const qs = new URLSearchParams({ session_id: String(id) });
