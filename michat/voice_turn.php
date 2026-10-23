@@ -33,13 +33,14 @@ if ($csrf === '' || empty($_SESSION['csrf_token']) || !hash_equals((string)$_SES
 $sessionId = (int)($_POST['session_id'] ?? 0);
 if ($sessionId <= 0) voiceTurnExit(['ok' => false, 'error' => 'Selecciona una conversación antes de usar voz.'], 400);
 
-$stmt = $db_connection->prepare('SELECT id_, project_id_ FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1');
+$stmt = $db_connection->prepare('SELECT id_, project_id_, status FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1');
 if (!$stmt) voiceTurnExit(['ok' => false, 'error' => 'No se pudo validar la conversación.'], 500);
 $stmt->bind_param('ii', $sessionId, $userId);
 $stmt->execute();
 $session = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 if (!$session) voiceTurnExit(['ok' => false, 'error' => 'La conversación no existe o no es tuya.'], 404);
+if (($session['status'] ?? '') !== 'open') voiceTurnExit(['ok' => false, 'error' => 'Restaura esta conversación a Activas antes de usar voz.'], 409);
 
 if (!isset($_FILES['audio']) || !is_array($_FILES['audio'])) {
     voiceTurnExit(['ok' => false, 'error' => 'No se recibió audio.'], 400);
