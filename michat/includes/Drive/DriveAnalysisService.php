@@ -97,6 +97,7 @@ final class DriveAnalysisService
                     'sidecar_name'=>basename(AnalysisSidecarStore::key($file)),'sidecar_saved'=>$saved];
             });
         } catch(Throwable $e) {
+            if ($e instanceof DocumentProcessingException) $stage=$e->stage;
             $state=FileKnowledgeState::reportFailure($e,$stage,['user_id'=>$user,'session_id'=>$session,'file_id'=>$fileId]);
             try { $states->save($user,$session,$fileId,$state); }
             catch(Throwable $saveError) { error_log('FILE_ANALYSIS_STATE '.($state['error_id'] ?? 'ocr_pending').' '.get_class($saveError).' code='.$saveError->getCode()); }

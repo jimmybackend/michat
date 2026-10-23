@@ -19,6 +19,7 @@ final class FileKnowledgeState
     }
     public static function failure(Throwable $error, string $stage = 'processing'): array
     {
+        if ($error instanceof DocumentProcessingException) return ['status'=>'failed','error_code'=>$error->reason,'message'=>$error->getMessage(),'retryable'=>!in_array($error->reason,['empty_spreadsheet','unsupported_format','encrypted_office','invalid_xml','invalid_shared_string'],true)];
         $code=method_exists($error,'getAwsErrorCode')?(string)$error->getAwsErrorCode():'';
         $raw=$error->getMessage();
         if (in_array($code,['NoSuchKey','NotFound','404'],true)) return ['status'=>'failed','error_code'=>'source_missing','message'=>'El archivo figura en la base de datos, pero no se pudo localizar el objeto original en S3. Comprueba su clave real y el bucket configurado.','retryable'=>true];
@@ -51,13 +52,14 @@ final class FileKnowledgeState
         $state=self::failure($error,$stage);$state['stage']=$stage;
         if ($state['status']==='ocr_pending') return $state;
         $id='AK-'.bin2hex(random_bytes(6));$state['error_id']=$id;
-        $labels=['access_recheck'=>'verificación de acceso','summary_persistence'=>'guardado del resumen','lock'=>'coordinación del trabajo','source_verification'=>'lectura del original en S3',
+        $labels=['source_download'=>'descarga del original','format_detection'=>'detección del formato real','xlsx_reader'=>'lectura de hojas y celdas','chunk_storage'=>'guardado de fragmentos','access_recheck'=>'verificación de acceso','summary_persistence'=>'guardado del resumen','lock'=>'coordinación del trabajo','source_verification'=>'lectura del original en S3',
             'index_lookup'=>'consulta del índice','extraction_index'=>'extracción e indexación',
             'summary'=>'resumen semántico','source_recheck'=>'verificación de la revisión','state_persistence'=>'guardado del estado'];
         $state['message'].=' Etapa: '.($labels[$stage] ?? 'procesamiento').'. Referencia: '.$id.'.';
-        $raw=preg_replace('~https?://[^\s"<>]+~i','[URL omitida]',$error->getMessage()) ?? '';
+        $cause=$error->getPrevious() ?? $error;
+        $raw=preg_replace('~https?://[^\s"<>]+~i','[URL omitida]',$cause->getMessage()) ?? '';
         $raw=preg_replace('/(SecretAccessKey|AccessKeyId|session_token|password|Authorization)([\s:=]+)[^\s,;]+/i','$1$2[omitido]',$raw) ?? '';
-        $record=['error_id'=>$id,'stage'=>$stage,'exception'=>get_class($error),'exception_code'=>$error->getCode(),
+        $record=['error_id'=>$id,'stage'=>$stage,'exception'=>get_class($error),'exception_code'=>$cause->getCode(),'cause_exception'=>get_class($cause),
             'aws_code'=>method_exists($error,'getAwsErrorCode')?$error->getAwsErrorCode():null,
             'cause'=>mb_substr($raw,0,2000),'source'=>basename($error->getFile()).':'.$error->getLine()];
         foreach(['user_id','session_id','file_id'] as $key) if(isset($context[$key])) $record[$key]=(int)$context[$key];
