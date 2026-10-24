@@ -50,7 +50,13 @@ final class DocumentAccessRepository
     public static function linked(array $session, int $fileId): bool
     {
         $meta = json_decode((string)($session['meta'] ?? ''), true) ?: [];
-        return in_array($fileId, array_map('intval', (array)($meta['knowledge_file_ids'] ?? [])), true);
+        return !self::detached($session,$fileId) && in_array($fileId, array_map('intval', (array)($meta['knowledge_file_ids'] ?? [])), true);
+    }
+
+    public static function detached(array $session,int $fileId): bool
+    {
+        $meta=json_decode((string)($session['meta']??''),true)?:[];
+        return in_array($fileId,array_map('intval',(array)($meta['detached_file_ids']??[])),true);
     }
 
     /** Published sources only; project ownership is checked independently of the session FK. */
@@ -67,6 +73,7 @@ final class DocumentAccessRepository
         $s->execute(); $rows=$s->get_result()->fetch_all(MYSQLI_ASSOC); $s->close();
         $out=[];
         foreach ($rows as $row) {
+            if (self::detached($session,(int)$row['id_'])) continue;
             if (idx_build_s3_key($row)!==$row['published_key'] || !$this->file($userId,(int)$row['id_'])) continue;
             $row['knowledge_origin']='project'; $row['knowledge_project_id']=$project;
             $out[(int)$row['id_']]=$row;
@@ -88,6 +95,7 @@ final class DocumentAccessRepository
         $out=$this->projectFiles($userId,$session);
         foreach($rows as $row) {
             $id=(int)$row['id_'];
+            if (self::detached($session,$id)) continue;
             if ((!idx_file_belongs_to_chat_session($row,$userId,$sessionId)&&!self::linked($session,$id)) || !$this->file($userId,$id)) continue;
             if (!isset($out[$id])) { $row['knowledge_origin']='session'; $out[$id]=$row; }
         }
@@ -122,7 +130,7 @@ final class DocumentAccessRepository
     {
         $session = $this->session($userId, $sessionId);
         $file = $session ? $this->file($userId, $fileId) : null;
-        if (!$file || (!idx_file_belongs_to_chat_session($file, $userId, $sessionId) && !self::linked($session, $fileId)
+        if (!$file || self::detached($session,$fileId) || (!idx_file_belongs_to_chat_session($file, $userId, $sessionId) && !self::linked($session, $fileId)
             && !isset($this->projectFiles($userId,$session)[$fileId]))) {
             throw new RuntimeException('El archivo no pertenece a esta sesión o su acceso fue revocado');
         }
