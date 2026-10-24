@@ -43,7 +43,7 @@ final class ProjectRagRepository
         $sql = "SELECT sc.id_, sc.content, sc.name, sc.chunk_type, sc.start_line, sc.end_line,
                        ps.filename, ce.embedding_json, ce.model_id
                 FROM SourceChunks sc
-                INNER JOIN ProjectSources ps ON ps.id_ = sc.source_id_
+                INNER JOIN ProjectSources ps ON ps.id_ = sc.source_id_ AND ps.project_id_ = sc.project_id_
                 INNER JOIN Projects p ON p.id_ = sc.project_id_
                 INNER JOIN ChunkEmbeddings ce ON ce.chunk_id_ = sc.id_
                 WHERE sc.project_id_ = ?

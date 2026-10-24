@@ -30,7 +30,10 @@ final class CentralDocumentIndex
                 try { $head=Config::getS3()->headObject(['Bucket'=>Config::getBucket(),'Key'=>$key]);$heads[$key]=(string)($head['ETag']??''); }
                 catch (Throwable $e) { $heads[$key]=''; }
             }
-            if (!hash_equals($source['source_etag'],$heads[$key])) continue;
+            if ($source['source_etag']==='' || !hash_equals($source['source_etag'],$heads[$key])) continue;
+            if (!(new DocumentAccessRepository($this->db))->currentFileObject(
+                $source, ['source_etag'=>$source['source_etag']], $key
+            )) continue;
             $sources[$fileId]=$source;
         }
         return $sources;

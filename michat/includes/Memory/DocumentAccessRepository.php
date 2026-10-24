@@ -14,7 +14,7 @@ final class DocumentAccessRepository
         if (!$s) return null;
         $s->bind_param('ii', $sessionId, $userId);
         $s->execute(); $row = $s->get_result()->fetch_assoc(); $s->close();
-        return $row ?: null;
+        return $row && $row['status'] !== 'closed' ? $row : null;
     }
 
     public function file(int $userId, int $fileId): ?array
@@ -54,11 +54,24 @@ final class DocumentAccessRepository
     public static function currentObject(array $meta, string $key): bool
     {
         $etag = (string)($meta['source_etag'] ?? '');
-        if ($etag === '') return true; // legacy index: exact source revision is unknown
+        if ($etag === '') return false; // Legacy evidence must be re-extracted against a verified revision.
         try {
             $head = Config::getS3()->headObject(['Bucket'=>Config::getBucket(),'Key'=>$key]);
             return hash_equals($etag,(string)($head['ETag'] ?? ''));
         } catch (Throwable $e) { return false; }
+    }
+
+    /** Verify both objects: unchanged copy bytes do not certify the current original. */
+    public function currentFileObject(array $file, array $meta, string $key): bool
+    {
+        if (idx_build_s3_key($file) !== $key || !self::currentObject($meta, $key)) return false;
+        $data = json_decode((string)($file['Metadatos'] ?? ''), true) ?: [];
+        if (!isset($data['drive_source'])) return true;
+        $original = $this->original($file);
+        $ref = $data['drive_source'];
+        return $original !== null
+            && hash_equals((string)($ref['copy_etag'] ?? ''), (string)($meta['source_etag'] ?? ''))
+            && self::currentObject(['source_etag' => (string)($ref['etag'] ?? '')], idx_build_s3_key($original));
     }
 
     public function requireFile(int $userId, int $sessionId, int $fileId): array

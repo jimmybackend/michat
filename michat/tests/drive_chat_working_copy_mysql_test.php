@@ -61,6 +61,9 @@ workCheck(json_decode($db->query('SELECT Metadatos FROM FileS3 WHERE id_=3823')-
 $other=$attach->attach(1,2,3823);workCheck((int)$other['id_']!==$id&&idx_file_belongs_to_chat_session($other,1,2),'Another conversation gets its own isolated working copy');
 $denied=false;try{(new DocumentAccessRepository($db))->requireFile(1,1,(int)$other['id_']);}catch(Throwable){$denied=true;}workCheck($denied,'Copy from another conversation cannot be read as an attachment here');
 $denied=false;try{$attach->attach(2,3,3823);}catch(Throwable){$denied=true;}workCheck($denied,'Other users cannot copy the private original');
+Config::$s3->objects[$key]['etag']='"original-v2"';
+workCheck(!(new AttachmentContextRepository($db,null))->retrieve(1,1,'41837','always',null,null)['items'],'Changed original invalidates cached evidence even when working copy is unchanged');
+Config::$s3->objects[$key]['etag']='"original-v1"';
 $db->query("UPDATE FileS3 SET AccessType='secure' WHERE id_=3823");
 workCheck((new DocumentAccessRepository($db))->file(1,$id)===null,'Revoking original access invalidates working-copy access');
 $evidence=(new AttachmentContextRepository($db,null))->retrieve(1,1,'41837','always',null,null);workCheck($evidence['context']==='','Cached working-copy chunks do not bypass revoked access');
