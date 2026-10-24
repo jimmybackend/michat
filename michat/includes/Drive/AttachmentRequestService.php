@@ -106,7 +106,7 @@ final class AttachmentRequestService
                 if($chars+mb_strlen($content)+mb_strlen($citation)>$budget||$fileChars+mb_strlen($content)+mb_strlen($citation)>$fileBudget) break;
                 $chars+=mb_strlen($content)+mb_strlen($citation);$fileChars+=mb_strlen($content)+mb_strlen($citation);$sent++;
                 $result['items'][]=new ContextItem('SessionContextBlocks',(int)$row['id_'],'file_chunk','session_attachment',$content,1.0,null,
-                    ['mode'=>'always','files3_id'=>$id,'source_etag'=>$source['etag'],'filename'=>$file['Nombre'],'citation'=>$citation,'locator'=>$meta['locator']??[],'evidence_kind'=>$meta['evidence_kind']??'document_text','strategy'=>$plan['strategy'],'literal_no_match'=>$plan['strategy']==='literal'&&$selection['matches']===0,'truncated'=>$partial]);
+                    ['mode'=>'always','files3_id'=>$id,'source_etag'=>$source['etag'],'filename'=>$file['Nombre'],'citation'=>$citation,'locator'=>$meta['locator']??[],'evidence_kind'=>$meta['evidence_kind']??'document_text','chunk_ordinal'=>(int)($meta['chunk']??0),'chunk_total'=>(int)($meta['total']??0),'content_partial'=>in_array($plan['strategy'],['literal','structure'],true),'strategy'=>$plan['strategy'],'literal_no_match'=>$plan['strategy']==='literal'&&$selection['matches']===0,'truncated'=>$partial]);
             }
             // Vision is only invoked after an explicit request. Its existing
             // description is evidence of a generated interpretation, not raw OCR.
