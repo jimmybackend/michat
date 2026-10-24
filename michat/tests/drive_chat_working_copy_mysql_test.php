@@ -3,6 +3,7 @@ declare(strict_types=1);
 $host=getenv('DOCUMENT_TEST_DB_HOST');if(!$host){echo "SKIP Drive chat working copy: isolated DB missing\n";exit;}
 if(!in_array($host,['127.0.0.1','localhost','::1'],true))throw new RuntimeException('Loopback test DB only');
 define('APP_BOOTSTRAP_LOADED',true);
+require_once __DIR__.'/fixtures/aws_result.php';
 require_once dirname(__DIR__).'/includes/Drive/DriveChatAttachmentService.php';
 require_once dirname(__DIR__).'/includes/Drive/DriveAnalysisService.php';
 require_once dirname(__DIR__).'/includes/Memory/bootstrap.php';
@@ -19,7 +20,7 @@ $key='Data/Jas/Amazon Linux/thankyou-old.php';
 Config::$s3=new class($key,$code){
     public array $objects=[],$copies=[],$gets=[],$puts=[];public bool $denyCopy=false;
     public function __construct(string $key,string $body){$this->objects[$key]=['bytes'=>$body,'etag'=>'"original-v1"'];}
-    public function headObject(array $p):array{$o=$this->objects[$p['Key']]??throw new WorkMissing();return ['ETag'=>$o['etag'],'ContentLength'=>strlen($o['bytes'])];}
+    public function headObject(array $p):ArrayAccess{$o=$this->objects[$p['Key']]??throw new WorkMissing();return documentSdkResult(['ETag'=>$o['etag'],'ContentLength'=>strlen($o['bytes'])]);}
     public function getObject(array $p):array{$o=$this->objects[$p['Key']]??throw new WorkMissing();$this->gets[]=$p['Key'];if(isset($p['IfMatch'])&&$p['IfMatch']!==$o['etag'])throw new RuntimeException('Revision changed');if(isset($p['SaveAs']))file_put_contents($p['SaveAs'],$o['bytes']);return ['Body'=>$o['bytes']];}
     public function putObject(array $p):array{$old=$this->objects[$p['Key']]??null;if(isset($p['IfMatch'])&&($old['etag']??null)!==$p['IfMatch'])throw new RuntimeException('Write conflict');if(($p['IfNoneMatch']??'')==='*'&&$old)throw new RuntimeException('Already exists');$this->puts[]=$p['Key'];$this->objects[$p['Key']]=['bytes'=>$p['Body'],'etag'=>'"'.hash('sha256',$p['Body']).'"'];return [];}
     public function copyObject(array $p):array{if($this->denyCopy)throw new RuntimeException('Copy denied');$source=rawurldecode(substr($p['CopySource'],strlen('private-bucket/')));$o=$this->objects[$source]??throw new WorkMissing();if($p['CopySourceIfMatch']!==$o['etag'])throw new RuntimeException('Copy revision changed');$this->copies[]=$p;$this->objects[$p['Key']]=['bytes'=>$o['bytes'],'etag'=>'"copy-'.hash('sha256',$p['Key']).'"'];return [];}

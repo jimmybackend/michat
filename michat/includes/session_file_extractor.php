@@ -128,7 +128,7 @@ function idx_pdf_page_labels(string $text): string {
 
 require_once __DIR__.'/Documents/PdfTextractReader.php';
 
-function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$extractor, string &$error, array $sourceHead=[]): string {
+function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$extractor, string &$error, array|ArrayAccess $sourceHead=[]): string {
     // 1) Parser PHP opcional: composer require smalot/pdfparser
     if (class_exists('Smalot\PdfParser\Parser')) {
         try {
@@ -777,7 +777,7 @@ function idx_extract_file(
     string $s3Key,
     string &$extractor,
     string &$error,
-    array $sourceHead=[]
+    array|ArrayAccess $sourceHead=[]
 ): string {
     $extractor = '';
     $error = '';
