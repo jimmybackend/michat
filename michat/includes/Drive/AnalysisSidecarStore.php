@@ -1,12 +1,13 @@
 <?php
 declare(strict_types=1);
 require_once dirname(__DIR__).'/session_file_extractor.php';
+require_once dirname(__DIR__).'/Files/GeneratedFileCatalog.php';
 
 /** Private sibling JSON. No bucket listing, public ACL, source overwrite or DB bypass. */
 final class AnalysisSidecarStore
 {
     public const MAX_BYTES = 2097152;
-    public function __construct(private object $s3,private string $bucket) {}
+    public function __construct(private object $s3,private string $bucket,private ?mysqli $db=null) {}
     public static function key(array $file): string
     {
         return idx_build_s3_key($file).'.michat-u'.(int)$file['user_id_'].'.analysis.v1.json';
@@ -45,11 +46,13 @@ final class AnalysisSidecarStore
             $doc=['format'=>'michat.file-analysis','version'=>1,'owner_id'=>$source['owner_id'],'file_id'=>$source['file_id'],
                 'source_key'=>$source['key'],'revisions'=>[]];
         }
+        if($etag!==null&&$this->db)(new GeneratedFileCatalog($this->db))->derived($source,$key,strlen($body),'analysis');
         $revision=self::revisionKey($source);
         return ['document'=>$doc,'etag'=>$etag,'source'=>$source,'revision_key'=>$revision,'analysis'=>$doc['revisions'][$revision] ?? null];
     }
     public function write(array $file,array $state,array $analysis): void
     {
+        if(!$this->db)throw new RuntimeException('Falta la conexión de BD para registrar el JSON de análisis');
         $current=$this->identity($file);
         if (self::revisionKey($current)!==$state['revision_key']) throw new RuntimeException('El original cambió durante el análisis; reintenta');
         $doc=$state['document'];$doc['revisions'][$state['revision_key']]=$analysis;$doc['updated_at']=gmdate('c');
@@ -59,5 +62,6 @@ final class AnalysisSidecarStore
         // Atomic conditional write also rejects concurrent writers outside this application.
         if ($state['etag']!==null) $args['IfMatch']=$state['etag']; else $args['IfNoneMatch']='*';
         $this->s3->putObject($args);
+        (new GeneratedFileCatalog($this->db))->derived($state['source'],self::key($file),strlen($body),'analysis');
     }
 }

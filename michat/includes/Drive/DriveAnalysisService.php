@@ -12,7 +12,7 @@ final class DriveAnalysisService
     { $this->access=new DocumentAccessRepository($db); }
     public static function production(mysqli $db): self
     {
-        return new self($db,new AnalysisSidecarStore(Config::getS3(),Config::getBucket()));
+        return new self($db,new AnalysisSidecarStore(Config::getS3(),Config::getBucket(),$db));
     }
     public function analyze(int $user,int $session,int $fileId,bool $summarize=true,bool $withEmbeddings=true,?callable $progress=null): array
     {

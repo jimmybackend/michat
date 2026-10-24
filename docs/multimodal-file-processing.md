@@ -10,6 +10,12 @@ Las fuentes publicadas del proyecto con `files3_id_` y clave verificables aparec
 
 El manifiesto original es `<clave-original>.michat-u<propietario>.content.v1.json`; se comprueban identidad y revisión antes de reutilizarlo. Se guarda también junto a la copia del chat. Las interacciones siguen en el JSON de análisis existente. No se sobrescriben los bytes originales. El panel permite descargar el JSON derivado con autorización vigente.
 
+Los JSON de análisis, contenido, resultado Transcribe y copia de transcripción se registran ahora en `FileS3` al confirmar su escritura/resultado, con el propietario real, clave, carpeta, tamaño en bytes y procedencia. No requieren sincronización de carpeta. Se reutiliza el registro existente, incluso si lo creó previamente una sincronización, conservando nombre visible, protección y metadatos personalizados. Una lectura verificada o la reutilización de un trabajo listo repara sus registros conocidos sin volver a transcribir ni generar embeddings; no se hace un barrido del bucket.
+
+Estos JSON aparecen en el catálogo de su propietario, pero no se convierten automáticamente en nuevos adjuntos de la conversación. MiChat verifica el acceso vigente al origen para buscar/descargar sus derivados, incluidas copias de esos JSON. Imágenes y vídeos generados, y las rutas directas de subida del chat, también registran sus archivos y jerarquía `S3Folders`; el vídeo asíncrono se registra al confirmar su salida en el polling, no antes de existir. Una caída entre S3 y MySQL no es una transacción distribuida: la operación informa fallo/advertencia y el siguiente reintento o lectura verificada permite completar el catálogo.
+
+La búsqueda muestra nombres en negritas y tamaños legibles con base 1024 (B, KB, MB, GB, TB, PB y EB); los bytes exactos siguen guardados en la BD. Pruebas: `generated_file_catalog_mysql_test.php` y `drive_knowledge_ui_test.js`, con MariaDB aislada y proveedores controlados. No añade tablas ni modifica originales. Si una clave no cabe en el esquema actual, se rechaza con diagnóstico en lugar de truncarla.
+
 Para audio/video se reutiliza primero una transcripción canónica de ArcadeCloud: propietario, `origen_encriptado`, trabajo Transcribe, URI y fecha deben corresponder al original. En caso contrario se crea un trabajo determinista y se consulta hasta terminar. Se copia el resultado JSON al chat. Las citas usan tiempos cuando AWS los aporta; el prompt explica que la evidencia es una transcripción, sin afirmar escucha directa ni análisis de fotogramas.
 
 ## Compatibilidad y límites

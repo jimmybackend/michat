@@ -20,32 +20,41 @@ final class DocumentAccessRepository
         return $row && $row['status'] !== 'closed' ? $row : null;
     }
 
-    public function file(int $userId, int $fileId): ?array
+    public function file(int $userId, int $fileId, array $visited=[]): ?array
     {
-        if ($userId <= 0 || $fileId <= 0) return null;
-        $s = $this->db->prepare('SELECT id_,user_id_,Nombre,Ruta,Encriptado,Found,AccessType,Metadatos FROM FileS3 WHERE id_=? AND user_id_=? AND Found=1 LIMIT 1');
+        if ($userId <= 0 || $fileId <= 0 || isset($visited[$fileId]) || count($visited)>=8) return null;
+        $visited[$fileId]=true;
+        $s = $this->db->prepare('SELECT id_,user_id_,Nombre,Ruta,Encriptado,Found,AccessType,PasswordHash,Metadatos FROM FileS3 WHERE id_=? AND user_id_=? AND Found=1 LIMIT 1');
         if (!$s) return null;
         $s->bind_param('ii', $fileId, $userId);
         $s->execute(); $row = $s->get_result()->fetch_assoc(); $s->close();
         // Secure files require Drive's unlock flow; never bypass it with an index.
-        if(!$row || ($row['AccessType'] ?? '')==='secure') return null;
+        if(!$row || ($row['AccessType'] ?? '')==='secure' || trim((string)($row['PasswordHash']??''))!=='') return null;
         $meta=json_decode((string)$row['Metadatos'],true)?:[];
         if (!(new FederationImportedAccess($this->db))->allows($row)) return null;
-        if(isset($meta['drive_source']) && !$this->original($row)) return null;
+        if(isset($meta['drive_source']) && !$this->original($row,$visited)) return null;
+        if(($meta['michat_generated']['role']??'')==='derivative') {
+            $ref=$meta['michat_generated'];
+            if(($ref['format']??'')!=='michat.generated-file'||($ref['version']??0)!==1||(int)($ref['owner_id']??0)!==$userId)return null;
+            $source=$this->file($userId,(int)($ref['source_file_id']??0),$visited);
+            if(!$source||idx_build_s3_key($source)!==($ref['source_key']??''))return null;
+        }
         return $row;
     }
 
     /** A working copy never bypasses live access to its original. */
-    public function original(array $file): ?array
+    public function original(array $file,array $visited=[]): ?array
     {
+        $visited[(int)($file['id_']??0)]=true;
         $meta=json_decode((string)($file['Metadatos']??''),true)?:[];$ref=$meta['drive_source']??null;
         if(!is_array($ref) || ($ref['format']??'')!=='michat.drive-working-copy' || ($ref['version']??0)!==1
             || (int)($ref['owner_id']??0)!==(int)$file['user_id_'] || (int)($ref['file_id']??0)===(int)$file['id_']) return null;
         $id=(int)($ref['file_id']??0);$owner=(int)$file['user_id_'];
-        $s=$this->db->prepare("SELECT id_,user_id_,Nombre,Ruta,Encriptado,Found,AccessType,Metadatos FROM FileS3 WHERE id_=? AND user_id_=? AND Found=1 AND AccessType<>'secure' LIMIT 1");
+        $s=$this->db->prepare("SELECT id_,user_id_,Nombre,Ruta,Encriptado,Found,AccessType,PasswordHash,Metadatos FROM FileS3 WHERE id_=? AND user_id_=? AND Found=1 AND AccessType<>'secure' LIMIT 1");
         $s->bind_param('ii',$id,$owner);$s->execute();$row=$s->get_result()->fetch_assoc();$s->close();
-        if(!$row || idx_build_s3_key($row)!==($ref['key']??'') || !empty((json_decode((string)$row['Metadatos'],true)?:[])['drive_source'])
+        if(!$row || trim((string)($row['PasswordHash']??''))!=='' || idx_build_s3_key($row)!==($ref['key']??'') || !empty((json_decode((string)$row['Metadatos'],true)?:[])['drive_source'])
             || !(new FederationImportedAccess($this->db))->allows($row)) return null;
+        if((json_decode((string)$row['Metadatos'],true)['michat_generated']['role']??'')==='derivative')return $this->file($owner,(int)$row['id_'],$visited);
         return $row;
     }
 
@@ -97,6 +106,7 @@ final class DocumentAccessRepository
         $out=$this->projectFiles($userId,$session);
         foreach($rows as $row) {
             $id=(int)$row['id_'];
+            if((json_decode((string)$row['Metadatos'],true)['michat_generated']['role']??'')==='derivative')continue;
             if (self::detached($session,$id)) continue;
             if ((!idx_file_belongs_to_chat_session($row,$userId,$sessionId)&&!self::linked($session,$id)) || !$this->file($userId,$id)) continue;
             if (!isset($out[$id])) { $row['knowledge_origin']='session'; $out[$id]=$row; }

@@ -5,6 +5,7 @@ header('Content-Type: application/json; charset=utf-8');
 if (session_status() === PHP_SESSION_NONE) session_start();
 
 require_once __DIR__ . '/app_bootstrap.php';
+require_once __DIR__.'/includes/Files/GeneratedFileCatalog.php';
 require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
 require_once __DIR__ . '/includes/Chat/AuthenticatedMediaScope.php';
 require_once __DIR__ . '/includes/ai_agent_runtime.php';
@@ -146,6 +147,8 @@ try {
         'ContentType' => $mimeType,
         'ACL' => 'private',
     ]);
+
+    (new GeneratedFileCatalog($db_connection))->created($userId,$s3Key,$sizeBytes,$mimeType,basename($s3Key),'generated_image',$sessionId);
 
     $latencyMs = max(0, (int)round((hrtime(true) - $started) / 1_000_000));
     $content = 'Imagen generada: ' . $prompt;

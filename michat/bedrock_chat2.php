@@ -1849,6 +1849,8 @@ if (!empty($_FILES['files']) && is_array($_FILES['files']['name'])) {
           'ContentType' => ($mime ?: 'application/octet-stream'),
           'ACL'         => 'private'
         ]);
+        require_once __DIR__.'/includes/Files/GeneratedFileCatalog.php';
+        (new GeneratedFileCatalog($db_connection))->created($user_id,$key,(int)filesize($tmp),($mime ?: 'application/octet-stream'),$name,'chat_upload',$session_id);
         $s3_key = $key;
       } catch (Throwable $e) {
         $errors[] = 'S3 putObject: '.$e->getMessage();

@@ -4839,6 +4839,21 @@ driveNode('driveKnowledgeSearch')?.addEventListener('submit', event => {
   event.preventDefault(); searchDriveMetadata(false);
 });
 driveNode('driveKnowledgeMore')?.addEventListener('click', () => searchDriveMetadata(true));
+function formatDriveFileSize(value) {
+  const bytes=Number(value);
+  if(!Number.isFinite(bytes)||bytes<=0)return '0 B';
+  const units=['B','KB','MB','GB','TB','PB','EB'];
+  const unit=Math.min(units.length-1,Math.max(0,Math.floor(Math.log(bytes)/Math.log(1024))));
+  return (bytes/Math.pow(1024,unit)).toLocaleString('es-MX',{maximumFractionDigits:unit===0?0:2})+' '+units[unit];
+}
+function renderDriveFileLabel(file) {
+  const label=document.createElement('div');
+  const name=document.createElement('strong');name.textContent=String(file.Nombre || 'Archivo');
+  const details=document.createElement('div');details.className='small text-muted';
+  details.textContent=String(file.Ruta || '')+' · '+formatDriveFileSize(file.Tamano)+' · '+String(file.Fecha || '');
+  details.style.overflowWrap='anywhere';
+  label.append(name);label.append(details);return label;
+}
 async function searchDriveMetadata(more) {
   const target=driveNode('driveKnowledgeResults');
   if (!target || driveSearchBusy) return;
@@ -4873,8 +4888,7 @@ async function searchDriveMetadata(more) {
     if (filters) filters.textContent='Filtros aplicados: '+JSON.stringify(data.filters || {})+(data.ai_used?' · interpretados con IA':'');
     for (const file of data.files || []) {
       const row=document.createElement('div');row.className='border rounded p-2 mt-2';
-      const label=document.createElement('div');
-      label.textContent=file.Nombre+' · '+file.Ruta+' · '+Number(file.Tamano || 0).toLocaleString()+' bytes · '+(file.Fecha || '');
+      const label=renderDriveFileLabel(file);
       const details=document.createElement('details'),info=document.createElement('summary'),metadata=document.createElement('pre');
       info.textContent='Clave y metadatos';metadata.textContent=JSON.stringify({id:file.id_,clave:file.Encriptado,ruta:file.Ruta,metadatos:file.Metadatos},null,2);details.append(info);details.append(metadata);
       row.append(label);

@@ -56,7 +56,7 @@ $s3=new class {
     public function getObject(array $r):array { $o=$this->objects[$r['Key']]??throw new SidecarMissing();if(isset($r['IfMatch'])&&$r['IfMatch']!==$o['etag'])throw new RuntimeException('PreconditionFailed');return ['Body'=>$o['body']]; }
     public function putObject(array $r):array { if($this->failWrites)throw new RuntimeException('Sidecar writes denied');$old=$this->objects[$r['Key']]??null;if(($r['IfNoneMatch']??'')==='*'&&$old)throw new RuntimeException('PreconditionFailed');if(isset($r['IfMatch'])&&($old['etag']??null)!==$r['IfMatch'])throw new RuntimeException('PreconditionFailed');$this->objects[$r['Key']]=['body'=>$r['Body'],'etag'=>'"'.hash('sha256',$r['Body']).'"'];$this->writes[]=$r;return []; }
 };
-$store=new AnalysisSidecarStore($s3,'test-bucket');$analyzeCalls=0;
+$store=new AnalysisSidecarStore($s3,'test-bucket',$db);$analyzeCalls=0;
 $analyzer=function(int $user,int $session,int $file) use($db,$s3,&$analyzeCalls) {
     $analyzeCalls++;$text='Resumen comprobado de impuestos';$key='Data/a.pdf';
     $meta=json_encode(['files3_id'=>1,'source_etag'=>$s3->objects[$key]['etag'],'semantic_model'=>'fixture-model','extractor'=>'fixture-pdf','truncated'=>true]);

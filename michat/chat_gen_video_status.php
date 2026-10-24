@@ -5,6 +5,7 @@ header('Content-Type: application/json; charset=utf-8');
 if (session_status() === PHP_SESSION_NONE) session_start();
 
 require_once __DIR__ . '/app_bootstrap.php';
+require_once __DIR__.'/includes/Files/GeneratedFileCatalog.php';
 require_once __DIR__ . '/includes/Chat/ChatIdentity.php';
 require_once __DIR__ . '/includes/Chat/AuthenticatedMediaScope.php';
 require_once __DIR__ . '/includes/Videos/VideoGenerationPolicy.php';
@@ -140,6 +141,7 @@ if ($s3Key !== '') {
         $head = $s3->headObject(['Bucket' => $bucket, 'Key' => $s3Key]);
         $size = (int)($head['ContentLength'] ?? 0);
         $mime = (string)($head['ContentType'] ?? 'video/mp4');
+        (new GeneratedFileCatalog($db_connection))->created($userId,$s3Key,$size,$mime,basename($s3Key),'generated_video',$sessionId);
         $meta['status'] = 'completed';
         $meta['completed_at'] = $meta['completed_at'] ?? date('c');
         videoStatusUpdateMeta($db_connection, $messageId, $meta);
@@ -191,6 +193,7 @@ do {
             $finalKey = (string)$output['key'];
             $mime = (string)($head['ContentType'] ?? 'video/mp4');
             $size = (int)($head['ContentLength'] ?? $output['size']);
+            (new GeneratedFileCatalog($db_connection))->created($userId,$finalKey,$size,$mime,basename($finalKey),'generated_video',$sessionId);
             $meta['status'] = 'completed';
             $meta['completed_at'] = date('c');
             $meta['source_key'] = $finalKey;

@@ -3,7 +3,7 @@ const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const src=fs.readFileSync(__dirname+'/../js/chat.js','utf8');
 const start=src.indexOf('// Drive links reuse the existing S3 object.'),end=src.indexOf('// === FIN DEL ARCHIVO',start);
 assert(start>0&&end>start);
-function node(){return {value:'',checked:false,children:[],textContent:'',handlers:{},addEventListener(e,f){this.handlers[e]=f;},append(x){this.children.push(x);},replaceChildren(){this.children=[];}};}
+function node(tag){return {tagName:tag,style:{},value:'',checked:false,children:[],textContent:'',handlers:{},addEventListener(e,f){this.handlers[e]=f;},append(x){this.children.push(x);},replaceChildren(){this.children=[];}};}
 const nodes={};for(const name of ['Open','Search','More','Submit','Query','Extensions','From','To','Ai','Results','Filters','Analysis'])nodes['driveKnowledge'+name]=node();
 nodes.driveKnowledgeQuery.value='contratos PDF';
 const calls=[],toasts=[];let refreshes=0,sends=0,modalHidden=0,analysisFailure=false;
@@ -21,7 +21,16 @@ vm.createContext(c);vm.runInContext(src.slice(start,end),c);
   await c.searchDriveMetadata(false);
   assert.equal(calls.length,1);assert(calls[0].url.includes('drive_knowledge.php?'));
   const row=nodes.driveKnowledgeResults.children[0],button=row.children[1];
-  assert(row.children[0].textContent.includes('contrato.pdf'));
+  assert.equal(row.children[0].children[0].textContent,'contrato.pdf');assert.equal(row.children[0].children[0].tagName,'strong');
+  assert(row.children[0].children[1].textContent.includes('123 B'));
+  assert.equal(c.formatDriveFileSize(1024),'1 KB');assert.equal(c.formatDriveFileSize(1048576),'1 MB');
+  assert.equal(c.formatDriveFileSize(1073741824),'1 GB');assert.equal(c.formatDriveFileSize(1099511627776),'1 TB');
+  assert.equal(c.formatDriveFileSize(0),'0 B');assert.equal(c.formatDriveFileSize(-1),'0 B');
+  assert.equal(c.formatDriveFileSize('bad'),'0 B');
+  assert.equal(c.formatDriveFileSize(1633573),'1.56 MB');
+  const hostile=c.renderDriveFileLabel({Nombre:'<img src=x onerror=alert(1)>',Ruta:'Data/',Tamano:1024});
+  assert.equal(hostile.children[0].textContent,'<img src=x onerror=alert(1)>');
+  assert(!hostile.children[0].innerHTML,'Filenames remain text, never executable HTML');
   assert(!calls.some(x=>x.url==='drive_file_analysis.php'),'Browsing must not analyze/index');
   await button.handlers.click();
   assert.equal(calls[1].url,'drive_file_analysis.php');assert.equal(calls[1].options.body.get('action'),'attach');assert.equal(calls[1].options.body.get('file_id'),'31');assert.equal(calls[1].options.body.get('csrf'),'csrf');
