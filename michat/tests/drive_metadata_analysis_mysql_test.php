@@ -146,6 +146,6 @@ checkDrive(str_contains($bundle->block('attachment_context_block'),'41837')&&str
 checkDrive(FileKnowledgeState::unavailableReply($bundle)===null,'Valid recovered content is never replaced by a missing-file diagnostic');
 $empty=$builder->build(new MemoryRoute(['intent'=>'code_project']),['stage'=>'respond','user_id'=>1,'session_id'=>2,'query_text'=>'Analiza el archivo "contrato.xlsx"','pipeline_features'=>$features]);
 $diagnostic=FileKnowledgeState::unavailableReply($empty);
-checkDrive($diagnostic!==null&&str_contains($diagnostic,'está vinculado')&&str_contains($diagnostic,'OCR')&&!str_contains($diagnostic,'no tengo acceso'),'Missing content produces the actual persisted processing state, not a false access denial');
+checkDrive($diagnostic!==null&&str_contains($diagnostic,'contrato.xlsx')&&str_contains($diagnostic,'no se pudo localizar')&&!str_contains($diagnostic,'no tengo acceso'),'Missing evidence is rechecked automatically and reports the actual missing S3 object rather than an old pending state');
 checkDrive(!str_contains($diagnostic,'contrato.pdf'),'A named file diagnostic does not confuse it with another linked file');
 echo "Drive metadata, dashboard and analysis real MariaDB: $checks checks passed\n";

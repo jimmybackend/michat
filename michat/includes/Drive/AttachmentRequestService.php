@@ -25,7 +25,16 @@ final class AttachmentRequestService
         if(!$targets) return ['requested'=>(bool)($reference&&$files),'files'=>[],'strategy'=>'clarify',
             'message'=>'Indica el nombre del archivo que quieres consultar. Hay varios adjuntos o la referencia no identifica uno; no se procesó contenido.'];
         if(count($targets)>8) return ['requested'=>true,'files'=>[],'strategy'=>'clarify','message'=>'Selecciona hasta ocho archivos por petición; no se procesó contenido.'];
-        $strategy=$metadata?'metadata':(preg_match('/grep|busca|encuentra|localiz/iu',$query)?'literal':(preg_match('/lista|clases|m[eé]todos|funciones/iu',$query)?'structure':(preg_match('/completo|todo el|exhaustiv|cada (?:l[ií]nea|p[aá]gina)|compar|revisa|errores|refactor/iu',$query)?'review':'overview')));
+        // Choose from request verbs, not words inside quoted filenames/terms.
+        // “dónde se encuentra cada dato” is a location clause in an explanation,
+        // not the imperative “encuentra TEXT”. Never grep the prompt itself.
+        $intent=$query;
+        foreach($files as $file) $intent=str_ireplace((string)$file['Nombre'],'',$intent);
+        $intent=(string)preg_replace('/["“][^"”]*["”]|\x27[^\x27]*\x27/u','',$intent);
+        $intent=(string)preg_replace('/\bse\s+encuentra\b/iu','se ubica',$intent);
+        $reviewIntent=(bool)preg_match('/\bbusca(?:r)?\s+(?:errores|fallos|problemas|vulnerabilidades|contradicciones)\b/iu',$intent);
+        $literal=!$reviewIntent&&(bool)preg_match('/\b(?:grep|busca(?:r)?|localiza(?:r)?)\b|(?<!se )\bencuentra\b|b[uú]squeda literal/iu',$intent);
+        $strategy=$metadata?'metadata':($literal?'literal':(preg_match('/\blista\b|\bclases\b|m[eé]todos|\bfunciones\b/iu',$intent)?'structure':($reviewIntent||preg_match('/completo|todo el|exhaustiv|cada (?:l[ií]nea|p[aá]gina)|compar|revisa|errores|refactor/iu',$intent)?'review':'overview')));
         $term='';
         if($strategy==='literal') {
             preg_match_all('/["“]([^"”]+)["”]|\x27([^\x27]+)\x27/u',$query,$quotes,PREG_SET_ORDER);
@@ -37,7 +46,7 @@ final class AttachmentRequestService
         return ['requested'=>true,'files'=>$targets,'strategy'=>$strategy,'term'=>$term];
     }
 
-    public function prepare(int $user,int $session,string $query,array $sessionMeta): array
+    public function prepare(int $user,int $session,string $query,array $sessionMeta,?callable $progress=null): array
     {
         $ids=array_slice(array_map('intval',(array)($sessionMeta['knowledge_file_ids']??[])),0,100);
         $extra=$ids?' OR id_ IN ('.implode(',',$ids).')':'';$pattern='Data/Chat/Uploads/'.$user.'/%/'.$session.'/';
@@ -47,20 +56,25 @@ final class AttachmentRequestService
         $files=array_values(array_filter($files,static function($f)use($access,$user,$session){try{$access->requireFile($user,$session,(int)$f['id_']);return true;}catch(Throwable){return false;}}));
         $plan=self::plan($query,$files,(int)($sessionMeta['last_requested_attachment_id']??0));
         $result=['items'=>[],'telemetry'=>['requested'=>$plan['requested'],'strategy'=>$plan['strategy'],'files'=>[],'message'=>$plan['message']??'']];
-        if(!$plan['requested']||!$plan['files']) return $result;
+        if(!$plan['requested']) return $result;
+        self::notify($progress,'plan','completed','Acción elegida: '.(['literal'=>'búsqueda literal','structure'=>'estructura del código','overview'=>'explicación general','review'=>'revisión del contenido','metadata'=>'consulta de metadatos','clarify'=>'identificar el archivo'][$plan['strategy']]??$plan['strategy']),['strategy'=>$plan['strategy'],'files'=>array_column($plan['files'],'Nombre')]);
+        if(!$plan['files']) {self::notify($progress,'clarification','waiting','La petición necesita identificar el archivo',['message'=>$plan['message']??'']);return $result;}
         $budget=48000;$chars=0;$fileBudget=intdiv($budget,max(1,count($plan['files'])));
         foreach($plan['files'] as $target) {
             $id=(int)$target['id_'];
             if($plan['strategy']==='metadata') {
+                self::notify($progress,'file_'.$id.'_metadata','completed','Metadatos del archivo disponibles',['filename'=>$target['Nombre']]);
                 $result['telemetry']['message'].="\n".json_encode($target,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE);
                 continue;
             }
-            $prepared=DriveAnalysisService::production($this->db)->analyze($user,$session,$id,false,false);
+            $fileProgress=static function(string $key,string $status,string $title,array $details=[])use($progress,$id,$target){self::notify($progress,'file_'.$id.'_'.$key,$status,$title,['file_id'=>$id,'filename'=>$target['Nombre']]+$details);};
+            $prepared=DriveAnalysisService::production($this->db)->analyze($user,$session,$id,false,false,$fileProgress);
             if(empty($prepared['ok'])) {$result['telemetry']['message'].="\n".$target['Nombre'].': '.$prepared['error'];continue;}
             $file=$access->requireFile($user,$session,$id);$source=(new AnalysisSidecarStore(Config::getS3(),Config::getBucket()))->identity($file);
             $q=$this->db->prepare("SELECT id_,content_preview,source_ids FROM SessionContextBlocks WHERE session_id_=? AND s3_path=? AND block_type='file_chunk' ORDER BY id_");
             $q->bind_param('is',$session,$source['key']);$q->execute();$rows=$q->get_result()->fetch_all(MYSQLI_ASSOC);$q->close();
             $rows=array_values(array_filter($rows,static function($r)use($id,$source){$m=json_decode($r['source_ids'],true)?:[];return (int)($m['files3_id']??0)===$id&&($m['source_etag']??'')===$source['etag'];}));
+            $fileProgress('selecting','started','Ejecutando la acción sobre el contenido',['strategy'=>$plan['strategy'],'extracted_chunks'=>count($rows)]);
             $selection=self::select($rows,$plan['strategy'],$plan['term']??'',strtolower(pathinfo($file['Nombre'],PATHINFO_EXTENSION)));
             $partial=($prepared['coverage']??'')==='partial';$sent=0;$fileChars=0;
             foreach($selection['rows'] as $row) {
@@ -69,7 +83,7 @@ final class AttachmentRequestService
                 if($chars+mb_strlen($content)+mb_strlen($citation)>$budget||$fileChars+mb_strlen($content)+mb_strlen($citation)>$fileBudget) break;
                 $chars+=mb_strlen($content)+mb_strlen($citation);$fileChars+=mb_strlen($content)+mb_strlen($citation);$sent++;
                 $result['items'][]=new ContextItem('SessionContextBlocks',(int)$row['id_'],'file_chunk','session_attachment',$content,1.0,null,
-                    ['mode'=>'always','files3_id'=>$id,'source_etag'=>$source['etag'],'filename'=>$file['Nombre'],'citation'=>$citation,'locator'=>$meta['locator']??[],'strategy'=>$plan['strategy'],'truncated'=>$partial]);
+                    ['mode'=>'always','files3_id'=>$id,'source_etag'=>$source['etag'],'filename'=>$file['Nombre'],'citation'=>$citation,'locator'=>$meta['locator']??[],'strategy'=>$plan['strategy'],'literal_no_match'=>$plan['strategy']==='literal'&&$selection['matches']===0,'truncated'=>$partial]);
             }
             // Vision is only invoked after an explicit request. Its existing
             // description is evidence of a generated interpretation, not raw OCR.
@@ -79,10 +93,17 @@ final class AttachmentRequestService
             }
             $result['telemetry']['files'][]=['filename'=>$file['Nombre'],'strategy'=>$plan['strategy'],'extracted_chunks'=>count($rows),'sent_items'=>$sent,'extraction_partial'=>$partial,'selection_partial'=>$selection['partial']||$sent<count($selection['rows']),'matches'=>$selection['matches']];
             $result['telemetry']['message'].="\n".$file['Nombre'].': '.$selection['message'].($partial?' La extracción es parcial.':'').($sent<count($selection['rows'])?' El presupuesto de contexto omitió resultados; no es una revisión completa.':'');
+            $fileProgress('context_ready','completed','Contenido preparado para responder',['strategy'=>$plan['strategy'],'extracted_chunks'=>count($rows),'sent_items'=>$sent,'matches'=>$selection['matches'],'partial'=>$partial||$selection['partial']||$sent<count($selection['rows'])]);
             $q=$this->db->prepare("UPDATE ChatSessions SET meta=JSON_SET(CASE WHEN JSON_VALID(meta) THEN meta ELSE '{}' END,'$.last_requested_attachment_id',?) WHERE id_=? AND user_id_=? AND status='open'");
             $q->bind_param('iii',$id,$session,$user);$q->execute();$q->close();
         }
         return $result;
+    }
+
+    private static function notify(?callable $progress,string $key,string $status,string $title,array $details=[]): void
+    {
+        if(!$progress)return;
+        try{$progress($key,$status,$title,$details);}catch(Throwable $e){error_log('ATTACHMENT_PROGRESS '.get_class($e));}
     }
 
     public static function select(array $rows,string $strategy,string $term,string $ext): array
@@ -95,7 +116,7 @@ final class AttachmentRequestService
                 if($hits) {ksort($hits);$meta=json_decode($row['source_ids'],true)?:[];$base=(int)($meta['locator']['line_start']??1);$parts=[];foreach($hits as $i=>$line)$parts[]=(isset($meta['locator']['line_start'])?'L'.($base+$i).': ':'').$line;$row['content_preview']=implode("\n",$parts);$out[]=$row;}
             }
             if(!$out&&$rows){$row=$rows[0];$row['content_preview']='Búsqueda literal '.json_encode($term,JSON_UNESCAPED_UNICODE).': cero coincidencias en los fragmentos extraídos. No implica ausencia en contenido no extraído ni en texto partido entre fragmentos.';$out[]=$row;}
-            $message='Búsqueda literal sobre '.count($rows).' fragmentos extraídos: '.$matches.' líneas coincidentes. No se ejecutó código ni una expresión del usuario.';
+            $message='Contenido extraído e índice disponible. Búsqueda literal sobre '.count($rows).' fragmentos extraídos: '.$matches.' líneas coincidentes. No se ejecutó código ni una expresión del usuario.';
         } elseif($strategy==='structure'&&$ext==='php'&&$rows) {
             // Reconstruct original line positions, including lines split across chunks.
             $lines=[];foreach($rows as $row){$meta=json_decode($row['source_ids'],true)?:[];$base=(int)($meta['locator']['line_start']??1);$parts=explode("\n",$row['content_preview']);if($base<1||$base+count($parts)>200002)throw new DocumentProcessingException('structure','invalid_locator','Los localizadores del código exceden el presupuesto seguro; reintenta la extracción.');foreach($parts as $i=>$line){$n=$base+$i;$lines[$n]=($lines[$n]??'').$line;}}

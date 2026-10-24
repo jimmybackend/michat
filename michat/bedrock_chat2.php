@@ -2694,6 +2694,7 @@ if ($compilation_id > 0 && isset($_POST['compiled_prompt']) && trim($_POST['comp
         'project_id' => $projectId,
         'memory_scope' => $memoryScope,
         'original_query_text' => $text,
+        'trace_id' => $activityTraceId,
         'query_text' => $memoryRouteText !== '' ? $memoryRouteText : $text,
         'attachment_mode' => $attachmentMode,
         'question_memory_enabled' => $use_question_memory,

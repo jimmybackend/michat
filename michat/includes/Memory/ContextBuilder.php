@@ -103,12 +103,16 @@ final class ContextBuilder
         }
 
         $onDemandResult=null;
-        if($onDemand && $stage==='respond' && $features['attachment_rag']) {
+        if($stage==='respond' && $features['attachment_rag'] && ($onDemand||($explicitFileQuestion&&!$this->attachmentRepo->hasContext($userId,$sessionId)))) {
             require_once dirname(__DIR__).'/Drive/AttachmentRequestService.php';
             require_once dirname(__DIR__).'/Drive/FileKnowledgeState.php';
-            try { $onDemandResult=(new AttachmentRequestService($this->db))->prepare($userId,$sessionId,$queryText,$policyMeta); }
+            $onDemand=true; // Also prepare missing evidence in pre-policy conversations.
+            require_once dirname(__DIR__).'/Drive/AttachmentProgressReporter.php';
+            $attachmentProgress=new AttachmentProgressReporter($this->db,(string)($request['trace_id']??''),$userId,$sessionId);
+            try { $onDemandResult=(new AttachmentRequestService($this->db))->prepare($userId,$sessionId,$queryText,$policyMeta,$attachmentProgress); }
             catch(Throwable $e) {
                 $failure=FileKnowledgeState::reportFailure($e,'request_processing',['user_id'=>$userId,'session_id'=>$sessionId]);
+                $attachmentProgress('failed','error','No se pudo preparar el archivo',['message'=>$failure['message']]);
                 $onDemandResult=['items'=>[],'telemetry'=>['requested'=>true,'strategy'=>'failed','message'=>$failure['message']]];
             }
             $explicitFileQuestion=!empty($onDemandResult['telemetry']['requested']);
@@ -240,7 +244,7 @@ final class ContextBuilder
 
         $needsVector = (
             ($features['project_rag'] && $projectId > 0 && $memoryRoute->uses('use_project_rag'))
-            || ($hasAttachments && $attachmentMode === 'rag')
+            || ($hasAttachments && $attachmentMode === 'rag' && !$explicitFileQuestion)
             || $effectiveQuestionMemory
         );
 
@@ -250,7 +254,7 @@ final class ContextBuilder
             'needed' => $needsVector,
             'shared_by_sources' => [
                 'project_rag' => $features['project_rag'] && $projectId > 0 && $memoryRoute->uses('use_project_rag'),
-                'attachments' => $hasAttachments && $attachmentMode === 'rag',
+                'attachments' => $hasAttachments && $attachmentMode === 'rag' && !$explicitFileQuestion,
                 'question_memory' => $effectiveQuestionMemory,
             ],
         ]);
@@ -308,9 +312,24 @@ final class ContextBuilder
                     $attachmentResult['telemetry']['fallback_reason'] = 'explicit_file_question_no_semantic_match';
                 }
             }
+            if($explicitFileQuestion && empty($attachmentResult['items'])) {
+                require_once dirname(__DIR__).'/Drive/AttachmentRequestService.php';
+                require_once dirname(__DIR__).'/Drive/AttachmentProgressReporter.php';
+                $progress=new AttachmentProgressReporter($this->db,(string)($request['trace_id']??''),$userId,$sessionId);
+                try {
+                    $prepared=(new AttachmentRequestService($this->db))->prepare($userId,$sessionId,$queryText,$policyMeta,$progress);
+                    $attachmentResult['items']=$prepared['items'];
+                    $bundle->setTelemetry('attachment_request',$prepared['telemetry']);
+                    $bundle->setBlock('attachment_request_block',"[ESTADO Y COBERTURA DE LA PREPARACIÓN DEL ARCHIVO]\n".($prepared['telemetry']['message']??''));
+                } catch(Throwable $e) {
+                    $failure=FileKnowledgeState::reportFailure($e,'request_processing',['user_id'=>$userId,'session_id'=>$sessionId]);
+                    $progress('failed','error','No se pudo preparar el archivo',['message'=>$failure['message']]);
+                    $bundle->setTelemetry('attachment_request',['requested'=>true,'message'=>$failure['message']]);
+                }
+            }
             $attachmentResult['telemetry']['has_attachment_memory'] = true;
             $bundle->addItems('attachments', $attachmentResult['items']);
-        } elseif ($hasAttachments && $attachmentMode === 'rag') {
+        } elseif ($hasAttachments && $attachmentMode === 'rag' && !$explicitFileQuestion) {
             $attachmentResult['telemetry']['skip_reason'] = 'query_embedding_unavailable';
         }
         if($onDemandResult!==null) $attachmentResult['telemetry']=['mode'=>'on_request','candidates'=>count($onDemandResult['items']),'selected'=>array_map(static fn($item)=>['filename'=>$item->metadata['filename'],'content'=>$item->content,'citation'=>$item->metadata['citation']],$onDemandResult['items']),'requested'=>$explicitFileQuestion];

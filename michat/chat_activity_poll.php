@@ -12,9 +12,10 @@ function activityPollExit(array $payload, int $code = 200): void {
     exit;
 }
 
-$userId = isset($_SESSION['user_id']) && is_numeric($_SESSION['user_id'])
-    ? (int)$_SESSION['user_id']
-    : 0;
+$userId=0;
+foreach(['user_id_','user_id','id_usuario','id_user'] as $identityKey) {
+    if(isset($_SESSION[$identityKey])&&is_numeric($_SESSION[$identityKey])&&(int)$_SESSION[$identityKey]>0){$userId=(int)$_SESSION[$identityKey];break;}
+}
 if ($userId <= 0) activityPollExit(['ok'=>false,'error'=>'Sesión inválida'], 401);
 
 // Liberar el lock de PHP cuanto antes: este endpoint se consulta mientras
