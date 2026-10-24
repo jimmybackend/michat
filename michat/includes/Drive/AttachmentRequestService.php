@@ -13,7 +13,7 @@ final class AttachmentRequestService
         $named=array_values(array_filter($files,static fn($f)=>mb_stripos($query,(string)$f['Nombre'])!==false));
         $question=(bool)preg_match('/[¿?]|\b(?:cu[aá]l|cu[aá]nt[oa]s?|qui[eé]n|d[oó]nde|c[oó]mo|qu[eé])\b/iu',$query);
         $action=(bool)preg_match('/transcri|describe|anal[ií]z|exp[líi]c|res[uú]m|qu[eé] (?:dice|hace|contiene)|de qu[eé] trata|busc|grep|encuentra|localiz|lista|clases|m[eé]todos|funciones|compar|diferenci|revisa|corrig|errores|mejoras|refactor/iu',$query);
-        $metadata=(bool)preg_match('/(?:cu[aá]l|qu[eé]|d[oó]nde|dime|muestra).*(?:nombre|tama[ñn]o|ruta|fecha|tipo|ubicaci[oó]n)/iu',$query)&&!$action;
+        $metadata=(bool)preg_match('/\bsu (?:nombre|tama[ñn]o|ruta|fecha|tipo|ubicaci[oó]n)\b|(?:nombre|tama[ñn]o|ruta|fecha|tipo|ubicaci[oó]n)\s+(?:(?:del|de este|de ese)\s+(?:archivo|adjunto|documento)|de\s*["“])|fecha (?:de )?(?:subida|carga|modificaci[oó]n|creaci[oó]n)|cu[aá]nto pesa|c[oó]mo se llama.*(?:archivo|adjunto)/iu',$query)&&!$action;
         $reference=(bool)preg_match('/audio|video|imagen|archivo|documento|adjunto|c[oó]digo|pdf|excel|presentaci|este|ese|sus? |tiene|hace|[aá]l?o\b/iu',$query);
         if(!$action&&!$metadata&&!($question&&($named||count($files)===1))) return ['requested'=>false,'files'=>[],'strategy'=>'none'];
         if(!$named&&preg_match('/[^\s"“”]+\.[a-z][a-z0-9]{0,7}\b/iu',$query)) return ['requested'=>true,'files'=>[],'strategy'=>'clarify','message'=>'El archivo solicitado no está entre los adjuntos accesibles de esta conversación. Comprueba su nombre y permisos; no se procesó otro archivo.'];
@@ -36,6 +36,7 @@ final class AttachmentRequestService
         $reviewIntent=(bool)preg_match('/\bbusca(?:r)?\s+(?:errores|fallos|problemas|vulnerabilidades|contradicciones)\b/iu',$intent);
         $literal=!$reviewIntent&&(bool)preg_match('/\b(?:grep|busca(?:r)?|localiza(?:r)?)\b|(?<!se )\bencuentra\b|b[uú]squeda literal/iu',$intent);
         $strategy=$metadata?'metadata':($literal?'literal':(preg_match('/\blista\b|\bclases\b|m[eé]todos|\bfunciones\b/iu',$intent)?'structure':($reviewIntent||preg_match('/completo|todo el|exhaustiv|cada (?:l[ií]nea|p[aá]gina)|compar|revisa|errores|refactor/iu',$intent)?'review':'overview')));
+        if($strategy==='overview'&&preg_match('/cu[aá]l|cu[aá]nt|qui[eé]n|cu[aá]ndo|\bimporte\b|\bcelda\b|f[oó]rmula/iu',$intent))$strategy='evidence';
         $term='';
         if($strategy==='literal') {
             preg_match_all('/["“]([^"”]+)["”]|\x27([^\x27]+)\x27/u',$query,$quotes,PREG_SET_ORDER);
@@ -54,7 +55,7 @@ final class AttachmentRequestService
         $plan=self::plan($query,$files,(int)($sessionMeta['last_requested_attachment_id']??0));
         $result=['items'=>[],'telemetry'=>['requested'=>$plan['requested'],'strategy'=>$plan['strategy'],'files'=>[],'message'=>$plan['message']??'']];
         if(!$plan['requested']) return $result;
-        self::notify($progress,'plan','completed','Acción elegida: '.(['literal'=>'búsqueda literal','structure'=>'estructura del código','overview'=>'explicación general','review'=>'revisión del contenido','metadata'=>'consulta de metadatos','clarify'=>'identificar el archivo'][$plan['strategy']]??$plan['strategy']),['strategy'=>$plan['strategy'],'files'=>array_column($plan['files'],'Nombre')]);
+        self::notify($progress,'plan','completed','Acción elegida: '.(['literal'=>'búsqueda literal','structure'=>'estructura del código','evidence'=>'recuperación de evidencia pertinente','overview'=>'explicación general','review'=>'revisión del contenido','metadata'=>'consulta de metadatos','clarify'=>'identificar el archivo'][$plan['strategy']]??$plan['strategy']),['strategy'=>$plan['strategy'],'files'=>array_column($plan['files'],'Nombre')]);
         if(!$plan['files']) {self::notify($progress,'clarification','waiting','La petición necesita identificar el archivo',['message'=>$plan['message']??'']);return $result;}
         $queryVector=null;
         $budget=48000;$chars=0;$fileBudget=intdiv($budget,max(1,count($plan['files'])));
@@ -71,7 +72,7 @@ final class AttachmentRequestService
                 $processing=new AttachmentProcessingService($this->db);
                 if(!$processing->available()&&AttachmentProcessingService::media($target['Nombre']))throw new RuntimeException('La transcripción requiere aplicar fase14_attachment_processing; no se intentó leer el audio como texto.');
                 if($processing->available()){
-                    try{$job=$processing->enqueue($user,$session,$id,'',in_array($plan['strategy'],['literal','structure'],true)?'text':'full');}
+                    try{$job=$processing->enqueue($user,$session,$id,'',in_array($plan['strategy'],['literal','structure','evidence'],true)?'text':'full');}
                     catch(Throwable $e){$failure=FileKnowledgeState::reportFailure($e,'source_verification',['user_id'=>$user,'session_id'=>$session,'file_id'=>$id]);$result['telemetry']['message'].="\n".$target['Nombre'].': '.$failure['message'];continue;}
                     if(!in_array($job['status'],['ready','partial'],true)){
                         $result['telemetry']['message'].="\n".$target['Nombre'].': tarea #'.$job['id_'].' — '.AttachmentProcessingService::label($job['phase']).'. La respuesta espera el resultado; no hay que reenviar el archivo.';
@@ -89,11 +90,12 @@ final class AttachmentRequestService
             $rows=array_values(array_filter($rows,static function($r)use($id,$source){$m=json_decode($r['source_ids'],true)?:[];return (int)($m['files3_id']??0)===$id&&($m['source_etag']??'')===$source['etag'];}));
             $fileProgress('selecting','started','Ejecutando la acción sobre el contenido',['strategy'=>$plan['strategy'],'extracted_chunks'=>count($rows)]);
             $selection=self::select($rows,$plan['strategy'],$plan['term']??'',strtolower(pathinfo($file['Nombre'],PATHINFO_EXTENSION)));
-            if($complexReady&&$plan['strategy']==='overview'&&preg_match('/sobre|acerca|importe|cu[aá]nt|celda|f[oó]rmula|referencia/iu',$query)){
-                if($queryVector===null){$queryVector=[];if(function_exists('generateTitanEmbedding')&&class_exists('QueryEmbeddingProvider'))$queryVector=(new QueryEmbeddingProvider($this->db,Config::getBedrockRuntime(),$session,null))->get($query);}
-                $found=(new AttachmentContextRepository($this->db,null))->retrieve($user,$session,$query,'rag',$queryVector?:null,null);
-                $byId=array_column($rows,null,'id_');$relevant=[];
-                foreach($found['items'] as $item)if(($item->metadata['files3_id']??0)===$id&&isset($byId[$item->sourceId]))$relevant[]=$byId[$item->sourceId];
+            if($plan['strategy']==='evidence'||($complexReady&&$plan['strategy']==='overview'&&preg_match('/sobre|acerca|importe|cu[aá]nt|celda|f[oó]rmula|referencia/iu',$query))){
+                if($queryVector===null){$queryVector=[];if(function_exists('generateTitanEmbedding')&&class_exists('QueryEmbeddingProvider')&&aiAgentActive('embedding_main',false))$queryVector=(new QueryEmbeddingProvider($this->db,Config::getBedrockRuntime(),$session,null))->get($query);}
+                $retrievalQuery=$query;foreach($files as $candidate)$retrievalQuery=str_ireplace((string)$candidate['Nombre'],'',$retrievalQuery);
+                $found=(new AttachmentContextRepository($this->db,null))->retrieve($user,$session,$retrievalQuery,'rag',$queryVector?:null,null,[$id]);
+                $relevant=self::matchEvidence($rows,$found['items'],$id,$source['etag']);
+                if(!$relevant&&$plan['strategy']==='evidence')$selection=['rows'=>[],'matches'=>0,'partial'=>true,'message'=>'No se recuperaron fragmentos pertinentes para esta pregunta en el texto extraído. No equivale a ausencia del dato en el archivo original.'];
                 if($relevant)$selection=['rows'=>$relevant,'matches'=>0,'partial'=>count($relevant)<count($rows),'message'=>'RAG híbrido: '.count($relevant).' fragmentos relevantes de '.count($rows).' extraídos; la respuesta usa esa selección.'];
             }
             $partial=($prepared['coverage']??'')==='partial';$sent=0;$fileChars=0;
@@ -124,6 +126,22 @@ final class AttachmentRequestService
     {
         if(!$progress)return;
         try{$progress($key,$status,$title,$details);}catch(Throwable $e){error_log('ATTACHMENT_PROGRESS '.get_class($e));}
+    }
+
+    /** Central and session chunks have independent IDs. Match verified text and ordinal, never ID alone. */
+    public static function matchEvidence(array $rows,array $items,int $fileId,string $etag):array
+    {
+        $byOrdinal=[];
+        foreach($rows as $row){$m=json_decode($row['source_ids'],true)?:[];if((int)($m['files3_id']??0)===$fileId&&($m['source_etag']??'')===$etag)$byOrdinal[(int)($m['chunk']??0)]=$row;}
+        $out=[];
+        foreach($items as $item){
+            $m=$item->metadata;$n=(int)($m['chunk_ordinal']??0);
+            if($item->type!=='file_chunk'||(int)($m['files3_id']??0)!==$fileId||($m['source_etag']??'')!==$etag||!isset($byOrdinal[$n]))continue;
+            $row=$byOrdinal[$n];
+            if(trim($row['content_preview'])!==trim($item->content))continue;
+            $out[$row['id_']]=$row;
+        }
+        return array_values($out);
     }
 
     public static function select(array $rows,string $strategy,string $term,string $ext): array

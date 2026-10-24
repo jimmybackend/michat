@@ -57,6 +57,7 @@ final class ContextBuilder
             $queryText
         );
         $policySession=(new DocumentAccessRepository($this->db))->session($userId,$sessionId);
+        if(!$explicitFileQuestion&&$policySession){foreach((new DocumentAccessRepository($this->db))->conversationFiles($userId,$sessionId) as $candidate){if(mb_stripos($queryText,(string)$candidate['Nombre'])!==false){$explicitFileQuestion=true;break;}}}
         $policyMeta=json_decode((string)($policySession['meta']??''),true)?:[];
         $onDemand=($policyMeta['attachment_processing_policy']??'')==='on_request'
             || ($policySession && (int)($policySession['project_id_']??0)>0 && (bool)(new DocumentAccessRepository($this->db))->projectFiles($userId,$policySession));
@@ -104,7 +105,7 @@ final class ContextBuilder
         }
 
         $onDemandResult=null;
-        if($stage==='respond' && $features['attachment_rag'] && ($onDemand||($explicitFileQuestion&&!$this->attachmentRepo->hasContext($userId,$sessionId)))) {
+        if($stage==='respond' && $features['attachment_rag'] && ($onDemand||($explicitFileQuestion&&!$this->attachmentRepo->hasContext($userId,$sessionId,$queryText)))) {
             require_once dirname(__DIR__).'/Drive/AttachmentRequestService.php';
             require_once dirname(__DIR__).'/Drive/FileKnowledgeState.php';
             $onDemand=true; // Also prepare missing evidence in pre-policy conversations.

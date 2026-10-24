@@ -25,6 +25,8 @@ Pruebas de comportamiento: `document_evidence_mysql_test.php`, `drive_chat_worki
 
 El workflow `arcadecloud-ec2-status-bridge.yml` asume OIDC y ejecuta `status.py`: consulta estado EC2 y registro SSM; no ejecuta procesamiento dentro del servidor. MiChat también tiene un workflow de estado EC2 de solo lectura. El permiso IAM del rol no amplía las operaciones implementadas por esos workflows. No se modificó infraestructura ni se instaló un worker.
 
+La revisión ampliada encontró además `arcadecloud-aws-auto.yml`/`operator.py`, con diagnósticos SSM y acciones predefinidas, y el código de un puente MCP con shell bajo sus propios controles. El operador de Actions no admite comandos libres: su lista incluye diagnósticos del host/Drive, acciones de servicio, encendido de FastDrive y sincronización del helper de Drive. No incluye una prueba de ingesta ni despliegue de MiChat. La capacidad técnica de esos operadores no autoriza aquí sus acciones sobre infraestructura; no se ejecutaron.
+
 Persisten los límites y dependencias descritos en `multimodal-file-processing.md`. Especialmente: revisión exhaustiva por lotes, respuesta final persistente, integración completa de proyectos y compartidos remotos, fotogramas, cachés históricos arbitrarios, versiones entre orígenes y conciliación AWS siguen pendientes hasta su implementación y pruebas específicas.
 
 ## Conjunto 2: fuentes publicadas del proyecto en el motor común
@@ -64,3 +66,35 @@ La acción de quitar adjuntos de la interfaz ahora desvincula la conversación, 
 Distinción de operaciones: **desvincular** afecta al contexto de una conversación; **retirar fuente** afecta a la publicación del proyecto y su índice; **eliminar copia física** y **borrar original** no son efectos de esos botones. No se añadieron limpiezas destructivas. La recuperación universal de versiones y las herramientas históricas de edición/borrado siguen requiriendo una auditoría independiente.
 
 Pruebas: `conversation_detach_mysql_test.php`, `project_source_withdrawal_mysql_test.php` y `safe_file_removal_ui_test.js`: aislamiento, revocación, reanexado sin duplicar, preservación de todos los bytes y filas FileS3, versiones, datos ajenos e índices sin FKs de cascada. Sin DDL adicional.
+
+## Conjunto 6: preguntas específicas y recuperación
+
+Las preguntas pertinentes comprueban la validez de la preparación aunque existan bloques históricos: tener un registro no certifica su revisión. Los índices centrales actuales se reutilizan; no se descargan otra vez para satisfacer esa comprobación. Una conversación anterior a la política nueva puede regenerar o importar evidencia verificable sin volver a adjuntar. Las preguntas específicas utilizan recuperación por archivo; los nombres sirven para escoger el archivo, no para elevar artificialmente todos sus chunks en el ranking. Las fechas del contenido no se confunden con la fecha de subida.
+
+El índice central y el índice de sesión tienen IDs independientes: la correspondencia de evidencia exige archivo, revisión, ordinal y texto coincidentes. Un ID coincidente entre tablas no basta para escoger un fragmento. Las consultas no relacionadas siguen sin leer adjuntos. El worker persiste los trabajos revocados/desvinculados como bloqueados y atiende los siguientes; una petición explícita con permisos restablecidos reanuda el mismo trabajo.
+
+Pruebas: `evidence_request_recovery_mysql_test.php` (dato final, citas, metadatos, pregunta ajena e índice antiguo), `attachment_request_planner_test.php` (colisión de IDs entre índices) y `processing_worker_revocation_mysql_test.php` (revocación sin lectura, no inanición y recuperación).
+
+## Comprobación en producción pendiente
+
+No se certificaron ni modificaron `/var/www/michat`, sus credenciales, configuración privada, cuotas AWS, workers instalados ni esquema desplegado. Fusionar no demuestra despliegue. Comprobar el commit efectivo del actualizador y seguir las instrucciones de actualización de `multimodal-file-processing.md`; estos conjuntos no añaden tablas. La creación automática fase14 existente sigue vigente y no debe reemplazarse por reproducción de migraciones históricas.
+
+1. En una conversación libre, adjuntar un TXT con un dato único al final; comprobar que adjuntar no crea contenido. Preguntar por el dato y contrastar sus líneas con el original.
+2. Publicar un documento como fuente del proyecto; preguntar desde dos conversaciones del mismo proyecto y comprobar reutilización. Intentar desde un chat libre y otro usuario: sin evidencia del proyecto.
+3. Importar un Share de prueba mediante ArcadeCloud; seleccionarlo en MiChat, preguntar y verificar copia/cita. Revocar o expirar el Share y sincronizar FederationCloud: búsqueda, copia, JSON y recuperación deben denegarse en MiChat.
+4. Con un XLSX de prueba y embeddings desactivados, buscar un valor literal. Debe devolver celda/hoja, sin etapas ni costos de embeddings/semántica. Después solicitar preparación completa con el modelo activo.
+5. Quitar el adjunto: debe desaparecer del contexto y conservar los objetos. Seleccionarlo otra vez: reutilizar la copia. Retirar una fuente: conservar original y versiones; bloquear conocimiento derivado de esa publicación.
+6. Preparar un archivo escaneado y uno de audio de prueba con los servicios reales. Contrastar páginas, palabras reconocidas y tiempos. Verificar fallos IAM/cuotas, ledger y tarifas ausentes; nunca interpretar CI como una llamada real de AWS.
+7. Ejecutar el worker autorizado por el administrador con un trabajo revocado y otro válido: el primero queda bloqueado y el segundo avanza. Cerrar navegador solo certifica continuidad de **preparación**; la generación final desatendida sigue pendiente.
+
+## Alcance todavía no completado
+
+- Respuesta final persistente después de cerrar navegador, con recuperación ante resultado externo desconocido y sin duplicar mensajes/cobros.
+- Compartidos remotos sin importación, membresías reales de proyecto y comprobación remota de revocación.
+- Unificación de las herramientas históricas de proyecto y sus revisiones; reconciliación de fuentes sin `files3_id_`.
+- Revisión exhaustiva por lotes y procesamiento incremental más allá de 8 MiB de extracción/16 MiB de manifiesto. El muestreo declarado no sustituye ese trabajo.
+- Fotogramas de vídeo, análisis multimedia visual e importación general de resultados históricos Rekognition/Textract.
+- Versionado/edición/recuperación universal para los tres orígenes, comparación exhaustiva de archivos grandes, invalidación por todos los parámetros de adaptadores/modelos (incluidos cambios de dimensiones con el mismo model ID).
+- Disponibilidad real en producción de lectores antiguos, todos los formatos de imagen y contenedores multimedia; conciliación de costos con factura AWS.
+
+Lectores existentes: PDF digital (`pdftotext`) y escaneado (Textract), DOCX/ODT/RTF/TXT/Markdown/EPUB, PPTX/PPSX/ODP, XLSX/XLSM/CSV/TSV/ODS, código y volcados SQL como texto seguro. SQLite sigue siendo muestra parcial de solo lectura. DOC/XLS/PPT/PPS dependen de herramientas específicas (`antiword`, `catdoc`, `xls2csv`, `catppt`); faltantes producen diagnóstico. Audio/vídeo dependen de Transcribe y formato real admitido; MOV/AVI/MKV necesitan conversión externa. El entorno local de esta auditoría dispone de `pdftotext`; no dispone de esos lectores antiguos ni LibreOffice. No se usaron conversiones genéricas sin aislamiento.

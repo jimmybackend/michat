@@ -12,20 +12,26 @@ final class AttachmentContextRepository
         $this->access = new DocumentAccessRepository($db);
     }
 
-    public function hasContext(int $userId, int $sessionId): bool
+    public function hasContext(int $userId, int $sessionId, string $query=''): bool
     {
         $session=$this->access->session($userId,$sessionId);
-        if (!$session) return false;
-        if ((new CentralDocumentIndex($this->db))->sources($userId,$sessionId,$session)) return true;
-        $s = $this->db->prepare("SELECT id_ FROM SessionContextBlocks WHERE session_id_=? AND block_type IN ('file','file_chunk') LIMIT 1");
-        if (!$s) return false;
-        $s->bind_param('i', $sessionId); $s->execute();
-        $found = $s->get_result()->num_rows > 0; $s->close();
-        return $found;
+        if(!$session)return false;
+        $named=[];
+        if($query!=='')foreach($this->access->conversationFiles($userId,$sessionId) as $file){
+            if(mb_stripos($query,(string)$file['Nombre'])!==false)$named[]=(int)$file['id_'];
+        }
+        foreach((new CentralDocumentIndex($this->db))->sources($userId,$sessionId,$session) as $id=>$source){
+            if(!$named||in_array((int)$id,$named,true))return true;
+        }
+        // Presence alone is insufficient: permission and current revision checks
+        // are exactly the same as in retrieval. No model call is needed.
+        $found=$this->retrieve($userId,$sessionId,$query,'always',null,null,$named?:null);
+        foreach($found['items'] as $item)if($item->type==='file_chunk')return true;
+        return false;
     }
 
     /** Keyset scan: bounded memory, includes lexical-only chunks after failed embeddings. */
-    public function retrieve(int $userId, int $sessionId, string $queryText, string $mode, ?array $queryVector, ?int $logMsgId): array
+    public function retrieve(int $userId, int $sessionId, string $queryText, string $mode, ?array $queryVector, ?int $logMsgId, ?array $fileIds=null): array
     {
         $t = ['mode'=>$mode, 'candidates'=>0, 'selected'=>[], 'owner_verified'=>false, 'scan_complete'=>false];
         $session = $this->access->session($userId, $sessionId);
@@ -64,6 +70,7 @@ final class AttachmentContextRepository
                 $last = (int)$row['id_'];
                 $meta = json_decode((string)$row['source_ids'], true) ?: [];
                 $fileId = (int)($meta['files3_id'] ?? 0);
+                if($fileIds!==null&&!in_array($fileId,$fileIds,true))continue;
                 if ($centralSource===null && $row['block_type']==='file_chunk' && isset($centralSources[$fileId])) continue;
                 if (!array_key_exists($fileId, $files)) $files[$fileId] = $this->access->file($userId, $fileId);
                 $file = $files[$fileId];
