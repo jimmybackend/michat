@@ -59,6 +59,9 @@ workCheck($access->file(1,(int)$registered['id_'])===null&&$access->file(1,(int)
 $denied=false;try{(new FileDeliveryService($db,Config::$s3,Config::getBucket()))->resolve(1,$sidecar,[]);}catch(FileDeliveryException){$denied=true;}
 workCheck($denied,'Direct JSON download cannot bypass source revocation');
 $db->query("UPDATE FileS3 SET AccessType='normal' WHERE id_=9990");
+$db->query("UPDATE FileS3 SET PasswordHash='protected-fixture-hash' WHERE id_=9990");
+workCheck($access->file(1,(int)$registered['id_'])===null&&$access->file(1,(int)$jsonCopy['id_'])===null,'Password-protected source denies JSON and copies even when an old AccessType flag says normal');
+$db->query("UPDATE FileS3 SET PasswordHash=NULL WHERE id_=9990");
 
 $mediaKey='Data/Chat/GenerationsImages/1/1/catalog-fixture.png';Config::$s3->objects[$mediaKey]=['bytes'=>'PNG fixture','etag'=>'"media-v1"'];
 $imageId=$catalog->created(1,$mediaKey,11,'image/png','Imagen generada.png','generated_image',1);

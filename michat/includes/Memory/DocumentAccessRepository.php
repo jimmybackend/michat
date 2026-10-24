@@ -24,12 +24,12 @@ final class DocumentAccessRepository
     {
         if ($userId <= 0 || $fileId <= 0 || isset($visited[$fileId]) || count($visited)>=8) return null;
         $visited[$fileId]=true;
-        $s = $this->db->prepare('SELECT id_,user_id_,Nombre,Ruta,Encriptado,Found,AccessType,Metadatos FROM FileS3 WHERE id_=? AND user_id_=? AND Found=1 LIMIT 1');
+        $s = $this->db->prepare('SELECT id_,user_id_,Nombre,Ruta,Encriptado,Found,AccessType,PasswordHash,Metadatos FROM FileS3 WHERE id_=? AND user_id_=? AND Found=1 LIMIT 1');
         if (!$s) return null;
         $s->bind_param('ii', $fileId, $userId);
         $s->execute(); $row = $s->get_result()->fetch_assoc(); $s->close();
         // Secure files require Drive's unlock flow; never bypass it with an index.
-        if(!$row || ($row['AccessType'] ?? '')==='secure') return null;
+        if(!$row || ($row['AccessType'] ?? '')==='secure' || trim((string)($row['PasswordHash']??''))!=='') return null;
         $meta=json_decode((string)$row['Metadatos'],true)?:[];
         if (!(new FederationImportedAccess($this->db))->allows($row)) return null;
         if(isset($meta['drive_source']) && !$this->original($row,$visited)) return null;
@@ -50,9 +50,9 @@ final class DocumentAccessRepository
         if(!is_array($ref) || ($ref['format']??'')!=='michat.drive-working-copy' || ($ref['version']??0)!==1
             || (int)($ref['owner_id']??0)!==(int)$file['user_id_'] || (int)($ref['file_id']??0)===(int)$file['id_']) return null;
         $id=(int)($ref['file_id']??0);$owner=(int)$file['user_id_'];
-        $s=$this->db->prepare("SELECT id_,user_id_,Nombre,Ruta,Encriptado,Found,AccessType,Metadatos FROM FileS3 WHERE id_=? AND user_id_=? AND Found=1 AND AccessType<>'secure' LIMIT 1");
+        $s=$this->db->prepare("SELECT id_,user_id_,Nombre,Ruta,Encriptado,Found,AccessType,PasswordHash,Metadatos FROM FileS3 WHERE id_=? AND user_id_=? AND Found=1 AND AccessType<>'secure' LIMIT 1");
         $s->bind_param('ii',$id,$owner);$s->execute();$row=$s->get_result()->fetch_assoc();$s->close();
-        if(!$row || idx_build_s3_key($row)!==($ref['key']??'') || !empty((json_decode((string)$row['Metadatos'],true)?:[])['drive_source'])
+        if(!$row || trim((string)($row['PasswordHash']??''))!=='' || idx_build_s3_key($row)!==($ref['key']??'') || !empty((json_decode((string)$row['Metadatos'],true)?:[])['drive_source'])
             || !(new FederationImportedAccess($this->db))->allows($row)) return null;
         if((json_decode((string)$row['Metadatos'],true)['michat_generated']['role']??'')==='derivative')return $this->file($owner,(int)$row['id_'],$visited);
         return $row;
