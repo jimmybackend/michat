@@ -71,7 +71,7 @@ final class AttachmentRequestService
                 $processing=new AttachmentProcessingService($this->db);
                 if(!$processing->available()&&AttachmentProcessingService::media($target['Nombre']))throw new RuntimeException('La transcripción requiere aplicar fase14_attachment_processing; no se intentó leer el audio como texto.');
                 if($processing->available()){
-                    try{$job=$processing->enqueue($user,$session,$id);}
+                    try{$job=$processing->enqueue($user,$session,$id,'',in_array($plan['strategy'],['literal','structure'],true)?'text':'full');}
                     catch(Throwable $e){$failure=FileKnowledgeState::reportFailure($e,'source_verification',['user_id'=>$user,'session_id'=>$session,'file_id'=>$id]);$result['telemetry']['message'].="\n".$target['Nombre'].': '.$failure['message'];continue;}
                     if(!in_array($job['status'],['ready','partial'],true)){
                         $result['telemetry']['message'].="\n".$target['Nombre'].': tarea #'.$job['id_'].' — '.AttachmentProcessingService::label($job['phase']).'. La respuesta espera el resultado; no hay que reenviar el archivo.';

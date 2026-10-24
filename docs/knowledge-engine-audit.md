@@ -46,3 +46,11 @@ La versión se verifica mediante `ContentId`/`ImportedContentId`; si no existe C
 Esto integra **importaciones locales verificables**, no archivos compartidos remotos sin importar, enlaces públicos o membresías genéricas entre propietarios. No hay ampliación de la consulta de propietario. El manifiesto y las interacciones siguen siendo privados del usuario de la copia importada; no se escriben en el origen remoto. La revocación depende del estado local sincronizado por FederationCloud, no de una comprobación en vivo contra el nodo remoto.
 
 `federation_import_access_mysql_test.php` verifica el flujo selección→copia→extracción→cita y deniega revocación, expiración, cambio de destinatario, clave, nodo, versión, tombstone y esquema ausente. No borra originales ni realiza llamadas reales a AWS.
+
+## Conjunto 4: preparación según la operación
+
+Búsqueda literal y estructura piden ahora trabajos de **texto**: extracción necesaria, JSON verificado y chunks con localizadores. No ejecutan embeddings ni semántica. Sus claves de idempotencia son distintas de las de preparación completa, que conserva compatibilidad histórica. La salida pública declara `preparation_goal`, `text_ready` y `embeddings_completed` por separado. Una operación textual puede terminar aunque el modelo de embeddings esté desactivado; eso no declara el RAG completo.
+
+Una petición completa posterior reutiliza el JSON extraído y completa las etapas solicitadas. Una operación textual sobre un índice completo conserva sus chunks y vectores verificados. Transcripción/OCR siguen siendo necesarios cuando el dato literal depende de ellos; su trabajo y costo no se omiten. Metadatos no inicia esos trabajos. No se añade DDL.
+
+`operation_preparation_mysql_test.php` comprueba XLSX con embeddings desactivados, evidencia real `G7`, ausencia de llamadas a embeddings/semántica, preparación completa posterior y conservación de vectores. Proveedores controlados y MariaDB aislada.

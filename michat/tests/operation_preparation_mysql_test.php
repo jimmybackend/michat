@@ -1,0 +1,32 @@
+<?php
+declare(strict_types=1);
+if(!getenv('DOCUMENT_TEST_DB_HOST')){echo "SKIP operation preparation: isolated DB missing\n";exit;}
+require __DIR__.'/multimodal_processing_mysql_test.php';
+$db->query("UPDATE UserAIAgentConfigs SET is_active=0 WHERE agent_key='embedding_main'");
+$add(9900,'Literal.xlsx','Data/operations/literal.xlsx',arcadecloudXlsxFixture());
+$working=$attach->attach(1,1,9900);$workingId=(int)$working['id_'];
+$embeds=$modelClient->embeds;$summaries=$modelClient->summaries;
+$jobs=$service->plan(1,1,'Busca "88317" en "Literal.xlsx"','literal-preparation-fixture');
+workCheck(count($jobs)===1,'Literal request creates a durable content-only operation');
+$job=$finish((int)$jobs[0]['id_']);$public=AttachmentProcessingService::publicJob($job);
+workCheck($job['status']==='ready'&&$public['preparation_goal']==='text'&&$public['text_ready']&&!$public['embeddings_completed'],'Text readiness remains distinct from completed embeddings');
+workCheck($modelClient->embeds===$embeds&&$modelClient->summaries===$summaries,'Spreadsheet literal search needs no embedding or semantic model calls');
+$request=(new AttachmentRequestService($db))->prepare(1,1,'Busca "88317" en "Literal.xlsx"',json_decode($db->query('SELECT meta FROM ChatSessions WHERE id_=1')->fetch_assoc()['meta'],true));
+workCheck(count($request['items'])>=1&&str_contains($request['items'][0]->content,'G7: 88317'),'Final request retrieves actual cell evidence despite disabled embeddings');
+$full=$service->enqueue(1,1,$workingId);
+workCheck($full['id_']!==$job['id_']&&$full['status']==='pending','Full preparation cannot mistake text-only completion for full readiness');
+$db->query("UPDATE UserAIAgentConfigs SET is_active=1 WHERE agent_key='embedding_main'");
+$full=$finish((int)$full['id_']);
+workCheck($full['status']==='ready'&&$modelClient->embeds>$embeds,'Later full request reuses extraction and completes actual embeddings');
+$key=$db->real_escape_string(idx_build_s3_key($working));
+$vectors=$db->query("SELECT id_,embedding_json FROM SessionContextBlocks WHERE session_id_=1 AND s3_path='$key' AND block_type='file_chunk' ORDER BY id_")->fetch_all(MYSQLI_ASSOC);
+$again=$service->plan(1,1,'Busca "88317" en "Literal.xlsx"','literal-preparation-fixture2');
+workCheck($again[0]['id_']===$job['id_']&&$again[0]['status']==='ready','Repeated literal request reuses the completed operation');
+$after=$db->query("SELECT id_,embedding_json FROM SessionContextBlocks WHERE session_id_=1 AND s3_path='$key' AND block_type='file_chunk' ORDER BY id_")->fetch_all(MYSQLI_ASSOC);
+workCheck($vectors===$after,'Literal reuse does not replace existing full-job vectors or chunks');
+$existing=$service->plan(1,1,'Busca "88317" en "Libro.xlsx"','literal-after-full-fixture');
+$existingId=(int)$existing[0]['files3_id'];
+$snapshot=static fn()=> $db->query("SELECT id_,embedding_json FROM SessionContextBlocks WHERE session_id_=1 AND block_type='file_chunk' AND CAST(JSON_UNQUOTE(JSON_EXTRACT(source_ids,'$.files3_id')) AS UNSIGNED)=$existingId ORDER BY id_")->fetch_all(MYSQLI_ASSOC);
+$beforeFull=$snapshot();$finish((int)$existing[0]['id_']);
+workCheck($beforeFull!==[]&&$beforeFull===$snapshot(),'New text-only job reuses an existing full index without erasing vectors');
+echo "OK operation-specific preparation\n";
