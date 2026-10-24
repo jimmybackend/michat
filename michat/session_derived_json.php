@@ -8,7 +8,7 @@ try{
     require_once __DIR__.'/includes/Memory/DocumentAccessRepository.php';
     $user=ChatIdentity::resolveUserId($db_connection);$session=(int)($_GET['session_id']??0);$id=(int)($_GET['file_id']??0);
     $access=new DocumentAccessRepository($db_connection);$file=$access->requireFile($user,$session,$id);$original=$access->original($file)?:$file;
-    $s3=Config::getS3();$store=new AnalysisSidecarStore($s3,Config::getBucket());$source=$store->identity($original);
+    $s3=Config::getS3();$store=new AnalysisSidecarStore($s3,Config::getBucket(),$db_connection);$source=$store->identity($original);
     $ref=(json_decode((string)$file['Metadatos'],true)?:[])['drive_source']??null;
     if($ref&&($source['etag']!==($ref['etag']??'')||$store->identity($file)['etag']!==($ref['copy_etag']??'')))throw new RuntimeException('Revisión modificada');
     $doc=(new DerivedFileContent($db_connection,$s3,Config::getBucket()))->read($original,$source);

@@ -69,7 +69,7 @@ workCheck((new DocumentAccessRepository($db))->file(1,$id)===null,'Revoking orig
 $evidence=(new AttachmentContextRepository($db,null))->retrieve(1,1,'41837','always',null,null);workCheck($evidence['context']==='','Cached working-copy chunks do not bypass revoked access');
 $db->query("UPDATE FileS3 SET AccessType='normal' WHERE id_=3823");require_once dirname(__DIR__).'/includes/Drive/MetadataSearchService.php';
 $catalog=(new MetadataSearchService($db))->search(1,'thankyou-old.php',false);
-workCheck(count($catalog['files'])===1&&(int)$catalog['files'][0]['id_']===3823,'Catalog lists original once and hides internal chat working copies');
+workCheck(count(array_filter($catalog['files'],static fn($f)=>(int)$f['id_']===3823))===1&&!array_filter($catalog['files'],static fn($f)=>(json_decode($f['Metadatos'],true)['drive_source']['format']??'')==='michat.drive-working-copy'),'Catalog lists original once and hides working copies while exposing registered derivative JSON');
 Config::$s3->denyCopy=true;
 $db->query("INSERT INTO ChatSessions(id_,user_id_,title,model_id,meta) VALUES(4,1,'Copy failure','fixture','{}')");$count=(int)$db->query('SELECT COUNT(*) n FROM FileS3')->fetch_assoc()['n'];$denied=false;try{$attach->attach(1,4,3823);}catch(Throwable){$denied=true;}
 workCheck($denied&&(int)$db->query('SELECT COUNT(*) n FROM FileS3')->fetch_assoc()['n']===$count,'Failed S3 copy cannot create a fake successful attachment row');

@@ -67,6 +67,7 @@ try {
     jerr('app_bootstrap.php no encontrado', 500);
   }
   require_once $bootstrap;
+  require_once __DIR__.'/includes/Files/GeneratedFileCatalog.php';
 } catch (Throwable $e) {
   jerr('bootstrap: '.$e->getMessage(), 500);
 }
@@ -107,6 +108,7 @@ try {
     'ACL'         => 'private',
     'ContentType' => $mime,
   ]);
+  (new GeneratedFileCatalog($db_connection))->created($user_id,$key,(int)filesize($tmp),$mime,$fn,'chat_upload');
 } catch (Throwable $e) {
   jerr('S3 error: '.$e->getMessage(), 500);
 }

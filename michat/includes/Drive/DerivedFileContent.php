@@ -8,6 +8,7 @@ final class AttachmentProviderPending extends RuntimeException {}
 final class DerivedFileContent
 {
     public const MAX_BYTES=16777216;
+    private array $jsonBytes=[];
     public function __construct(private mysqli $db,private object $s3,private string $bucket,private $clientFactory=null){}
     public static function key(array $file):string{return idx_build_s3_key($file).'.michat-u'.(int)$file['user_id_'].'.content.v1.json';}
     public function read(array $original,array $identity):?array
@@ -16,7 +17,27 @@ final class DerivedFileContent
         if(!$doc)return null;
         if(($doc['format']??'')!=='michat.derived-content'||($doc['source']??null)!==$identity)return null;
         if(!is_array($doc['extracted']??null)||!is_string($doc['extracted']['content']??null))throw new RuntimeException('JSON derivado inválido');
+        (new GeneratedFileCatalog($this->db))->derived($identity,self::key($original),$this->jsonBytes[self::key($original)],'content');
+        if(($doc['evidence_kind']??'')==='audio_transcript'&&!empty($doc['raw_json_key'])){
+            $name='michat-u'.$identity['owner_id'].'-f'.$identity['file_id'].'-'.substr(hash('sha256',$identity['etag']),0,32);
+            $allowed=[$identity['key'].'.michat-u'.$identity['owner_id'].'.'.$name.'.json',dirname($identity['key']).'/'.pathinfo($identity['key'],PATHINFO_FILENAME).'.json'];
+            if(!in_array($doc['raw_json_key'],$allowed,true))throw new RuntimeException('La clave de transcripción guardada no corresponde a la convención del origen');
+            $this->catalogExisting($identity,$doc['raw_json_key'],'transcription');
+        }
         return $doc;
+    }
+    /** Repair known result bindings on reuse, without bucket listing or a new provider job. */
+    public function catalogWorking(array $source,array $working):void
+    {
+        $this->catalogExisting($source,self::key($working),'content');
+        $this->catalogExisting($source,idx_build_s3_key($working).'.transcript.json','transcription_copy');
+    }
+    private function catalogExisting(array $source,string $key,string $kind):void
+    {
+        try{$head=$this->s3->headObject(['Bucket'=>$this->bucket,'Key'=>$key]);}
+        catch(Throwable $e){$code=method_exists($e,'getAwsErrorCode')?$e->getAwsErrorCode():'';if(in_array($code,['NoSuchKey','NotFound','404'],true))return;throw $e;}
+        if(!isset($head['ContentLength']))throw new RuntimeException('Falta tamaño S3 verificable para el catálogo');
+        (new GeneratedFileCatalog($this->db))->derived($source,$key,(int)$head['ContentLength'],$kind);
     }
     public function save(array $original,array $identity,array $doc,array $working):void
     {
@@ -25,8 +46,10 @@ final class DerivedFileContent
         $doc['format']='michat.derived-content';$doc['version']=1;$doc['source']=$identity;
         $body=json_encode($doc,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);
         if(strlen($body)>self::MAX_BYTES)throw new RuntimeException('JSON derivado excede 16 MiB; no se truncó');
-        foreach(array_unique([self::key($original),self::key($working)]) as $key)
+        foreach(array_unique([self::key($original),self::key($working)]) as $key){
             $this->s3->putObject(['Bucket'=>$this->bucket,'Key'=>$key,'Body'=>$body,'ContentType'=>'application/json','CacheControl'=>'private, no-store']);
+            (new GeneratedFileCatalog($this->db))->derived($identity,$key,strlen($body),'content');
+        }
     }
     public function extract(array $original,array $working,array $source):array
     {
@@ -37,7 +60,7 @@ final class DerivedFileContent
         }
         if(in_array($ext,['mov','avi','mkv'],true))throw new RuntimeException('Este contenedor necesita conversión multimedia en ArcadeCloud; no se interpretaron sus bytes como texto');
         // Reuse an existing MiChat analysis only when all chunks are verified and complete.
-        $analysis=(new AnalysisSidecarStore($this->s3,$this->bucket))->read($original,$source)['analysis'];
+        $analysis=(new AnalysisSidecarStore($this->s3,$this->bucket,$this->db))->read($original,$source)['analysis'];
         if(is_array($analysis)&&($analysis['coverage']??'')!=='partial'&&!empty($analysis['chunks'])){
             $chunks=$analysis['chunks'];usort($chunks,static fn($a,$b)=>($a['meta']['chunk']??0)<=>($b['meta']['chunk']??0));$texts=[];
             foreach($chunks as $chunk){$m=$chunk['meta']??[];$text=$chunk['content']??'';if(($m['source_etag']??'')!==$source['etag']||(int)($m['files3_id']??0)!==$source['file_id']||!hash_equals((string)($chunk['sha256']??''),hash('sha256',$text)))throw new RuntimeException('El JSON de análisis contiene evidencia de otra revisión');$texts[]=$text;}
@@ -92,6 +115,7 @@ final class DerivedFileContent
     }
     private function transcript(array $raw,string $rawKey,bool $reused,array $source,array $working):array
     {
+        (new GeneratedFileCatalog($this->db))->derived($source,$rawKey,$this->jsonBytes[$rawKey]??throw new RuntimeException('Falta el tamaño verificado del JSON de transcripción'),'transcription');
         $segments=[];$duration=0.0;
         foreach((array)($raw['results']['audio_segments']??[]) as $segment){
             $start=(float)($segment['start_time']??0);$end=(float)($segment['end_time']??$start);$text=trim((string)($segment['transcript']??''));
@@ -114,7 +138,9 @@ final class DerivedFileContent
         $content=implode("\n",array_map(static fn($s)=>$s['text'],$segments));
         if(strlen($content)>8388608)throw new RuntimeException('Transcripción excede 8 MiB; no se guardó un prefijo');
         // Keep the raw AWS result beside the chat media as well.
-        $this->s3->putObject(['Bucket'=>$this->bucket,'Key'=>idx_build_s3_key($working).'.transcript.json','Body'=>json_encode($raw,JSON_THROW_ON_ERROR),'ContentType'=>'application/json','CacheControl'=>'private, no-store']);
+        $transcriptKey=idx_build_s3_key($working).'.transcript.json';$transcriptBody=json_encode($raw,JSON_THROW_ON_ERROR);
+        $this->s3->putObject(['Bucket'=>$this->bucket,'Key'=>$transcriptKey,'Body'=>$transcriptBody,'ContentType'=>'application/json','CacheControl'=>'private, no-store']);
+        (new GeneratedFileCatalog($this->db))->derived($source,$transcriptKey,strlen($transcriptBody),'transcription_copy');
         return ['extracted'=>['content'=>$content,'ext'=>'txt','extractor'=>'amazon-transcribe-json','source_etag'=>$source['etag'],'source_sha256'=>null,'derived_sha256'=>hash('sha256',$content),'truncated'=>false,'s3_key'=>$source['key']],
             'segments'=>$segments,'duration_seconds'=>$duration,'raw_json_key'=>$rawKey,'evidence_kind'=>'audio_transcript','video_frames_analyzed'=>false,'provider_started_here'=>!$reused,'reused'=>$reused,'summary'=>'','vectors'=>[]];
     }
@@ -125,6 +151,7 @@ final class DerivedFileContent
         if((int)($head['ContentLength']??PHP_INT_MAX)>self::MAX_BYTES)throw new RuntimeException('JSON excede el límite seguro de lectura');
         $object=$this->s3->getObject(['Bucket'=>$this->bucket,'Key'=>$key,'IfMatch'=>$head['ETag']]);$body=(string)$object['Body'];
         if(strlen($body)>self::MAX_BYTES)throw new RuntimeException('JSON excede el límite seguro');
+        $this->jsonBytes[$key]=strlen($body);
         $json=json_decode($body,true,64,JSON_THROW_ON_ERROR);if(!is_array($json))throw new RuntimeException('JSON inválido');return $json;
     }
     public function client(string $service):object

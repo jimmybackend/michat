@@ -65,6 +65,17 @@ final class AttachmentProcessingService
                 $q=$this->db->prepare("UPDATE AttachmentProcessingJobs SET status='pending',phase='embeddings',error_message=NULL,available_at=UTC_TIMESTAMP() WHERE id_=?");$q->bind_param('i',$jobId);$q->execute();$q->close();$job=$this->job($user,$jobId);
             }
         }
+        if(in_array($job['status'],['ready','partial'],true)){
+            $access=new DocumentAccessRepository($this->db);$original=$access->original($file)?:$file;
+            $meter=new ProcessingUsageMeter($this->db,$job);$s3=$meter->wrap($this->client('S3'),'S3');
+            $originSource=(new AnalysisSidecarStore($s3,Config::getBucket(),$this->db))->identity($original);
+            if($original['id_']!==$file['id_']){
+                $ref=(json_decode((string)$file['Metadatos'],true)?:[])['drive_source'];
+                if(($ref['etag']??'')!==$originSource['etag'])throw new RuntimeException('La revisión del original cambió; selecciona su nueva revisión');
+            }
+            $derived=new DerivedFileContent($this->db,$s3,Config::getBucket());
+            if($derived->read($original,$originSource))$derived->catalogWorking($originSource,$file);
+        }
         (new ProcessingUsageMeter($this->db,$job))->record('S3','headObject',['s3.head_request'=>1],'completed',bin2hex(random_bytes(16)));
         return $job;
     }
@@ -115,7 +126,7 @@ final class AttachmentProcessingService
         try{
             $job=$this->job($user,$id);if(in_array($job['status'],['ready','partial','failed','blocked'],true))return $job;
             $this->update($id,$job['phase'],'running',json_decode((string)$job['checkpoint_json'],true)?:[]);
-            $meter=new ProcessingUsageMeter($this->db,$job);$s3=$meter->wrap($this->client('S3'),'S3');$store=new AnalysisSidecarStore($s3,Config::getBucket());
+            $meter=new ProcessingUsageMeter($this->db,$job);$s3=$meter->wrap($this->client('S3'),'S3');$store=new AnalysisSidecarStore($s3,Config::getBucket(),$this->db);
             require_once dirname(__DIR__).'/SessionAttachmentKnowledgeService.php';
             $workingSource=$store->identity($file);if(!hash_equals($job['source_etag'],$workingSource['etag']))throw new RuntimeException('La revisión de trabajo cambió');
             $source=$store->identity($original);
@@ -195,7 +206,7 @@ final class AttachmentProcessingService
                     $doc['vectors_cache_partial']=$bytes>4194304;$doc['embedding_model']=$checkpoint['embedding_model']??'';
                     $derived->save($original,$source,$doc,$file);
                     // Persist/import normal analysis and Q&A sibling using verified SQL chunks.
-                    $analysis=(new DriveAnalysisService($this->db,new AnalysisSidecarStore($s3,Config::getBucket())))->analyze($user,(int)$job['session_id_'],(int)$file['id_'],false,false);
+                    $analysis=(new DriveAnalysisService($this->db,new AnalysisSidecarStore($s3,Config::getBucket(),$this->db)))->analyze($user,(int)$job['session_id_'],(int)$file['id_'],false,false);
                     if(!$analysis['ok']||empty($analysis['sidecar_saved']))throw new RuntimeException($analysis['error']??'No se pudo guardar el JSON de análisis del origen');
                     (new FileKnowledgeState($this->db))->save($user,(int)$job['session_id_'],(int)$file['id_'],['status'=>!empty($checkpoint['partial'])?'partial':'ready','message'=>!empty($checkpoint['partial'])?'Extracción parcial: solo se puede responder sobre el contenido recuperado.':'Contenido derivado, chunks, embeddings y análisis disponibles.','source_etag'=>$workingSource['etag'],'evidence_kind'=>$doc['evidence_kind'],'job_id'=>$id]);
                     if(($doc['evidence_kind']??'')==='audio_transcript'&&!empty($doc['provider_started_here'])){

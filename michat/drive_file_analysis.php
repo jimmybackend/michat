@@ -14,7 +14,7 @@ try {
     if ($method==='GET' && ($input['action'] ?? '')==='download') {
         $ownedFile=(new DocumentAccessRepository($db_connection))->requireFile($user,$session,$file);
         $origin=(new DocumentAccessRepository($db_connection))->original($ownedFile);
-        $state=(new AnalysisSidecarStore(Config::getS3(),Config::getBucket()))->read($origin?:$ownedFile);
+        $state=(new AnalysisSidecarStore(Config::getS3(),Config::getBucket(),$db_connection))->read($origin?:$ownedFile);
         if (!$state['analysis']) throw new RuntimeException('Aún no hay un análisis de esta revisión');
         header("Content-Disposition: attachment; filename=\"michat-analysis-$file.json\"; filename*=UTF-8''".rawurlencode($ownedFile['Nombre'].'.michat-analysis.v1.json'));
         header('X-Content-Type-Options: nosniff');
