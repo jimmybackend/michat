@@ -38,22 +38,27 @@ final class AttachmentProcessingService
         $files=$access->conversationFiles($user,$session);
         $plan=AttachmentRequestService::plan($query,$files,(int)($meta['last_requested_attachment_id']??0));$jobs=[];
         if(!$plan['requested']||$plan['strategy']==='metadata')return [];
-        foreach($plan['files'] as $file)if(self::complex($file['Nombre']))$jobs[]=$dryRun?$file:$this->enqueue($user,$session,(int)$file['id_'],$trace);
+        $goal=in_array($plan['strategy'],['literal','structure'],true)?'text':'full';
+        foreach($plan['files'] as $file)if(self::complex($file['Nombre']))$jobs[]=$dryRun?$file:$this->enqueue($user,$session,(int)$file['id_'],$trace,$goal);
         return $jobs;
     }
-    public function enqueue(int $user,int $session,int $id,string $trace=''):array
+    public function enqueue(int $user,int $session,int $id,string $trace='',string $goal='full'):array
     {
+        if(!in_array($goal,['full','text'],true))throw new InvalidArgumentException('Objetivo de preparación inválido');
         if(!$this->available())throw new RuntimeException('Aplica fase14_attachment_processing para preparar archivos complejos');
         $file=(new DocumentAccessRepository($this->db))->requireFile($user,$session,$id);
         $source=(new AnalysisSidecarStore($this->client('S3'),Config::getBucket()))->identity($file);
         $revision=AnalysisSidecarStore::revisionKey($source);
-        $q=$this->db->prepare("INSERT INTO AttachmentProcessingJobs(user_id_,session_id_,files3_id,revision_hash,source_etag,trace_id) VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id_=LAST_INSERT_ID(id_),trace_id=IF(VALUES(trace_id)<>'',VALUES(trace_id),trace_id)");
-        $q->bind_param('iiisss',$user,$session,$id,$revision,$source['etag'],$trace);$q->execute();$jobId=(int)$q->insert_id;$q->close();
+        // Keep historical full-job keys. Text readiness never masquerades as a completed full job.
+        if($goal==='text')$revision=hash('sha256',$revision.':text-v1');
+        $initial=json_encode(['requested_goal'=>$goal],JSON_THROW_ON_ERROR);
+        $q=$this->db->prepare("INSERT INTO AttachmentProcessingJobs(user_id_,session_id_,files3_id,revision_hash,source_etag,trace_id,checkpoint_json) VALUES(?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE id_=LAST_INSERT_ID(id_),trace_id=IF(VALUES(trace_id)<>'',VALUES(trace_id),trace_id)");
+        $q->bind_param('iiissss',$user,$session,$id,$revision,$source['etag'],$trace,$initial);$q->execute();$jobId=(int)$q->insert_id;$q->close();
         $job=$this->job($user,$jobId);
         if(in_array($job['status'],['blocked','failed'],true)){
             $q=$this->db->prepare("UPDATE AttachmentProcessingJobs SET status='pending',attempts=0,error_message=NULL,available_at=UTC_TIMESTAMP() WHERE id_=?");$q->bind_param('i',$jobId);$q->execute();$q->close();$job=$this->job($user,$jobId);
         }
-        if(in_array($job['status'],['ready','partial'],true)){
+        if($goal==='full'&&in_array($job['status'],['ready','partial'],true)){
             try{aiRuntimeLoad($this->db,$user);$activeModel=aiAgentActive('embedding_main',false)?aiAgentModel('embedding_main',''):'';}catch(Throwable){$activeModel='';}
             $checkpoint=json_decode((string)$job['checkpoint_json'],true)?:[];
             if($activeModel!==''&&$activeModel!==($checkpoint['embedding_model']??'')){
@@ -74,7 +79,9 @@ final class AttachmentProcessingService
     {
         $state=json_decode((string)($job['checkpoint_json']??''),true)?:[];
         return ['id'=>(int)$job['id_'],'session_id'=>(int)$job['session_id_'],'file_id'=>(int)$job['files3_id'],'status'=>$job['status'],'phase'=>$job['phase'],'message'=>$job['error_message']??self::label($job['phase']),
-            'evidence_kind'=>$state['evidence_kind']??null,'reused'=>$state['reused']??false,'chunks'=>$state['chunks']??0];
+            'evidence_kind'=>$state['evidence_kind']??null,'reused'=>$state['reused']??false,'chunks'=>$state['chunks']??0,
+            'preparation_goal'=>$state['requested_goal']??'full','text_ready'=>!empty($state['chunks']),
+            'embeddings_completed'=>isset($state['embedding_model'])&&$job['phase']==='ready'];
     }
     public static function label(string $phase):string
     {
@@ -116,14 +123,31 @@ final class AttachmentProcessingService
                 }
                 $doc??=$derived->extract($original,$file,$source);
                 $derived->save($original,$source,$doc,$file);
-                $checkpoint=['evidence_kind'=>$doc['evidence_kind'],'reused'=>!empty($doc['reused']),'partial'=>!empty($doc['extracted']['truncated'])];
+                $checkpoint=['requested_goal'=>$checkpoint['requested_goal']??'full','evidence_kind'=>$doc['evidence_kind'],'reused'=>!empty($doc['reused']),'partial'=>!empty($doc['extracted']['truncated'])];
                 $this->update($id,'index','pending',$checkpoint);
             }else{
                 if(!$doc)throw new RuntimeException('Falta el checkpoint JSON verificado de extracción');
                 $data=$doc['extracted'];$data['source_etag']=$workingSource['etag'];$data['s3_key']=$workingSource['key'];$data['evidence_kind']=$doc['evidence_kind'];$data['segments']=$doc['segments']??[];
-                $runtime=$meter->wrap($this->client('BedrockRuntime'),'Bedrock');
+                $textOnly=($checkpoint['requested_goal']??'full')==='text';
+                $runtime=$textOnly?null:$meter->wrap($this->client('BedrockRuntime'),'Bedrock');
                 $knowledge=new SessionAttachmentKnowledgeService($this->db,true,$runtime,$s3);
                 if($phase==='index'){
+                    if($textOnly){
+                        $blocks=$this->blocks((int)$job['session_id_'],$workingSource);
+                        $valid=$blocks!==[];
+                        foreach($blocks as $block){$m=json_decode($block['source_ids'],true)?:[];if((int)($m['total']??0)!==count($blocks)||!hash_equals((string)($m['chunk_sha256']??''),hash('sha256',$block['content_preview'])))$valid=false;}
+                        if(!$valid)$blocks=[];
+                        $result=$blocks?['chunks'=>count($blocks)]:$knowledge->indexDerived($user,(int)$job['session_id_'],(int)$file['id_'],$data);
+                        $checkpoint['chunks']=$result['chunks'];
+                        $message='Texto y localizadores disponibles para la operación solicitada; embeddings y semántica no solicitados.';
+                        (new FileKnowledgeState($this->db))->save($user,(int)$job['session_id_'],(int)$file['id_'],['status'=>'text_ready','message'=>$message,'source_etag'=>$workingSource['etag'],'job_id'=>$id]);
+                        if(($doc['evidence_kind']??'')==='audio_transcript'&&!empty($doc['provider_started_here'])){
+                            $seconds=(float)($doc['duration_seconds']??0);
+                            $meter->record('Transcribe','transcription_result',$seconds>0?['transcribe.standard_batch_second'=>max(15,ceil($seconds))]:['transcribe.duration_unknown'=>1],'completed',(string)($doc['raw_json_key']??$source['key']));
+                        }
+                        $this->update($id,'ready',!empty($checkpoint['partial'])?'partial':'ready',$checkpoint,$message);
+                        return $this->job($user,$id);
+                    }
                     $result=$knowledge->indexDerived($user,(int)$job['session_id_'],(int)$file['id_'],$data);$checkpoint['chunks']=$result['chunks'];
                     aiRuntimeLoad($this->db,$user);$model=aiAgentModel('embedding_main','');
                     foreach($this->blocks((int)$job['session_id_'],$workingSource) as $block){
