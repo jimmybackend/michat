@@ -25,6 +25,8 @@ Pruebas de comportamiento: `document_evidence_mysql_test.php`, `drive_chat_worki
 
 El workflow `arcadecloud-ec2-status-bridge.yml` asume OIDC y ejecuta `status.py`: consulta estado EC2 y registro SSM; no ejecuta procesamiento dentro del servidor. MiChat también tiene un workflow de estado EC2 de solo lectura. El permiso IAM del rol no amplía las operaciones implementadas por esos workflows. No se modificó infraestructura ni se instaló un worker.
 
+La revisión ampliada encontró además `arcadecloud-aws-auto.yml`/`operator.py`, con diagnósticos SSM y acciones predefinidas, y el código de un puente MCP con shell bajo sus propios controles. El operador de Actions no admite comandos libres: su lista incluye diagnósticos del host/Drive, acciones de servicio, encendido de FastDrive y sincronización del helper de Drive. No incluye una prueba de ingesta ni despliegue de MiChat. La capacidad técnica de esos operadores no autoriza aquí sus acciones sobre infraestructura; no se ejecutaron.
+
 Persisten los límites y dependencias descritos en `multimodal-file-processing.md`. Especialmente: revisión exhaustiva por lotes, respuesta final persistente, integración completa de proyectos y compartidos remotos, fotogramas, cachés históricos arbitrarios, versiones entre orígenes y conciliación AWS siguen pendientes hasta su implementación y pruebas específicas.
 
 ## Conjunto 2: fuentes publicadas del proyecto en el motor común
