@@ -24,10 +24,15 @@ $insert=$db->prepare("INSERT INTO SessionContextBlocks(session_id_,block_type,co
 $path='Data/Chat/Uploads/1/2026/10/23/1/original';
 for ($i=1;$i<=240;$i++) {
     $text=$i===240?'Importe exacto 41837 función impuesto':'Relleno sin información buscada';
-    $meta=json_encode(['filename'=>'contrato.php','files3_id'=>1,'chunk'=>$i,'locator'=>['line_start'=>$i,'line_end'=>$i]]);
+    $meta=json_encode(['filename'=>'contrato.php','files3_id'=>1,'source_etag'=>'"revision-1"','chunk'=>$i,'locator'=>['line_start'=>$i,'line_end'=>$i]]);
     $vector=null;$model=null;$insert->bind_param('sssss',$text,$path,$meta,$vector,$model);$insert->execute();
 }
 $repo=new AttachmentContextRepository($db,null);
+docCheck(!DocumentAccessRepository::currentObject([], $path), 'Legacy evidence without a revision is excluded');
+$db->query("UPDATE SessionContextBlocks SET source_ids=JSON_REMOVE(source_ids,'$.source_etag') WHERE id_=240");
+docCheck(!$repo->retrieve(1,1,'41837','rag',null,null)['items'], 'Legacy last-chunk evidence cannot masquerade as current');
+$db->query("UPDATE SessionContextBlocks SET source_ids=JSON_SET(source_ids,'$.source_etag','\"revision-1\"') WHERE id_=240");
+
 $r=$repo->retrieve(1,1,'41837','rag',null,null);
 docCheck(count($r['items'])===1&&str_contains($r['context'],'41837'),'Finds exact evidence after block 200 without embeddings');
 docCheck(str_contains($r['context'],'líneas 240–240'),'Cites original source line 240');
@@ -42,7 +47,7 @@ $db->query("UPDATE FileS3 SET AccessType='normal' WHERE id_=1");
 $db->query("UPDATE FileS3 SET Found=0 WHERE id_=1");
 docCheck(!$repo->retrieve(1,1,'41837','rag',null,null)['items'],'Deleted source cannot be recovered from cached chunks');
 $db->query("UPDATE FileS3 SET Found=1 WHERE id_=1");
-$meta=json_encode(['filename'=>'drive.txt','files3_id'=>3,'chunk'=>1]);$text='Drive importe 99331';$path='Data/drive';
+$meta=json_encode(['filename'=>'drive.txt','files3_id'=>3,'source_etag'=>'"revision-1"','chunk'=>1]);$text='Drive importe 99331';$path='Data/drive';
 $insert->bind_param('sssss',$text,$path,$meta,$vector,$model);$insert->execute();
 docCheck(!$repo->retrieve(1,1,'99331','rag',null,null)['items'],'Unlinked owned Drive file excluded');
 $db->query("UPDATE ChatSessions SET meta='{\"knowledge_file_ids\":[3]}' WHERE id_=1");
@@ -71,7 +76,7 @@ $property->setValue($service,new class {
 });
 $method=new ReflectionMethod($service,'indexPrepared');
 $file=['Nombre'=>'contrato.php','Ruta'=>'Data/Chat/Uploads/1/2026/10/23/1/','Encriptado'=>'original'];
-$extracted=['content'=>"<?php\nfunction impuesto() { return 41837; }",'ext'=>'php','extractor'=>'raw_text','truncated'=>false,'source_sha256'=>hash('sha256','fixture')];
+$extracted=['content'=>"<?php\nfunction impuesto() { return 41837; }",'ext'=>'php','extractor'=>'raw_text','source_etag'=>'"revision-1"','truncated'=>false,'source_sha256'=>hash('sha256','fixture')];
 $result=$method->invoke($service,1,1,$file,$extracted);
 docCheck($result['embedding_ready']===true&&$result['embedding_ready_count']===1,'Actual index service persists successful embedding');
 docCheck((int)$db->query("SELECT COUNT(*) AS n FROM EmbeddingJobs WHERE status='completed'")->fetch_assoc()['n']===1,'Successful embedding job becomes completed');
@@ -87,7 +92,7 @@ class Config {
     public static string $etag='"revision-1"';
     public static function getBucket(): string { return 'isolated-fixtures'; }
     public static function getS3(): object { return new class {
-        public function headObject(array $request): array { return ['ContentLength'=>filesize(Config::$fixture),'ETag'=>Config::$etag]; }
+        public function headObject(array $request): array { return ['ContentLength'=>Config::$fixture!==''?filesize(Config::$fixture):0,'ETag'=>Config::$etag]; }
         public function getObject(array $request): array {
             if ($request['IfMatch']!==Config::$etag) throw new RuntimeException('Object revision changed');
             copy(Config::$fixture,$request['SaveAs']);return ['ETag'=>Config::$etag];

@@ -247,7 +247,7 @@ try {
         
         try {
             $currentFile = $documentAccess->requireFile($userId,$sessionId,(int)($sourceIds['files3_id'] ?? 0));
-            if (idx_build_s3_key($currentFile) !== (string)$row['s3_path'] || !DocumentAccessRepository::currentObject($sourceIds,(string)$row['s3_path'])) continue;
+            if (!$documentAccess->currentFileObject($currentFile,$sourceIds,(string)$row['s3_path'])) continue;
         } catch (Throwable $e) { continue; }
         $blocks[] = [
             'id' => (int)$row['id_'],
