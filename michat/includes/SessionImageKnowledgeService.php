@@ -24,9 +24,10 @@ final class SessionImageKnowledgeService
     private mysqli $db;
     private $bedrock = null;
 
-    public function __construct(mysqli $db)
+    public function __construct(mysqli $db, private bool $metered = false, ?object $runtime = null, private ?object $s3Override = null)
     {
         $this->db = $db;
+        $this->bedrock = $runtime;
     }
 
     public static function supportsFilename(string $filename): bool
@@ -99,6 +100,8 @@ final class SessionImageKnowledgeService
             (int)($usage['outputTokens'] ?? 0)
         );
 
+        $current=($this->s3Override??Config::getS3())->headObject(['Bucket'=>Config::getBucket(),'Key'=>$s3Key]);
+        if(!hash_equals((string)$image['etag'],(string)($current['ETag']??'')))throw new RuntimeException('La imagen cambió durante el análisis');
         $embedding = $withEmbeddings ? $this->embeddingState() : ['active'=>false,'model'=>null];
         $blockId = $this->persistVisualSummary(
             $sessionId,
@@ -140,7 +143,7 @@ final class SessionImageKnowledgeService
             'semantic' => [
                 'ok' => true,
                 'type' => 'visual_summary',
-            'source_etag' => $sourceEtag,
+            'source_etag' => (string)$image['etag'],
                 'model' => $vision['model_id'],
                 'embedding_ready' => $embeddingReady,
             ],
@@ -162,29 +165,12 @@ final class SessionImageKnowledgeService
     /** @return array{bytes:string,width:?int,height:?int} */
     private function loadImageBytes(string $s3Key): array
     {
-        $manager = new S3Manager();
-        $bucket = (string)$manager->getBucket();
-        if ($bucket === '') throw new RuntimeException('Bucket S3 no configurado');
-
-        $s3 = Config::getS3();
-        try {
-            $head = $s3->headObject(['Bucket' => $bucket, 'Key' => $s3Key]);
-            $contentLength = (int)($head['ContentLength'] ?? 0);
-            $configuredMax = (int)aiAgentExtra('attachment_vision', 'max_image_bytes', self::BEDROCK_MAX_IMAGE_BYTES);
-            $maxBytes = max(1, min(self::BEDROCK_MAX_IMAGE_BYTES, $configuredMax));
-            if ($contentLength > $maxBytes) {
-                throw new RuntimeException('La imagen supera el límite de 3.75 MB permitido para análisis visual en Bedrock.');
-            }
-        } catch (RuntimeException $e) {
-            throw $e;
-        } catch (Throwable $e) {
-            // Si HeadObject no está disponible, getObject seguirá validando el tamaño después.
-        }
-
-        $result = $s3->getObject([
-            'Bucket' => $bucket,
-            'Key' => $s3Key,
-        ]);
+        $bucket=Config::getBucket();$s3=$this->s3Override??Config::getS3();
+        $head=$s3->headObject(['Bucket'=>$bucket,'Key'=>$s3Key]);
+        $etag=(string)($head['ETag']??'');if($etag==='')throw new RuntimeException('No se pudo verificar la revisión de la imagen');
+        $configuredMax=(int)aiAgentExtra('attachment_vision','max_image_bytes',self::BEDROCK_MAX_IMAGE_BYTES);
+        if((int)($head['ContentLength']??PHP_INT_MAX)>max(1,min(self::BEDROCK_MAX_IMAGE_BYTES,$configuredMax)))throw new RuntimeException('La imagen supera el límite visual de 3.75 MB');
+        $result=$s3->getObject(['Bucket'=>$bucket,'Key'=>$s3Key,'IfMatch'=>$etag]);
         $bytes = (string)($result['Body'] ?? '');
         if ($bytes === '') throw new RuntimeException('La imagen está vacía o no pudo leerse desde S3.');
 
@@ -197,7 +183,7 @@ final class SessionImageKnowledgeService
                 $height = isset($size[1]) ? (int)$size[1] : null;
             }
         }
-        return ['bytes' => $bytes, 'width' => $width, 'height' => $height, 'etag'=>(string)($result['ETag'] ?? '')];
+        return ['bytes' => $bytes, 'width' => $width, 'height' => $height, 'etag'=>$etag];
     }
 
     private function assertBedrockImageLimits(string $bytes, ?int $width, ?int $height): void
@@ -558,9 +544,11 @@ final class SessionImageKnowledgeService
 
     private function logVisionUsage(int $sessionId, string $modelId, int $input, int $output): void
     {
+        if($this->metered)return;
         try {
             $phase = (string)aiAgentValue('attachment_vision', 'token_usage_phase', 'vision');
-            $cost = 0.0;
+            require_once __DIR__.'/Chat/ChatTokenUsageService.php';
+            $cost = ChatTokenUsageService::calculateCost($modelId,$input,$output);
             $duration = 0;
             $stmt = $this->db->prepare('INSERT INTO TokenUsage (session_id_,message_id_,phase,model_id,input_tokens,output_tokens,estimated_cost_usd,duration_ms) VALUES (?,NULL,?,?,?,?,?,?)');
             if ($stmt) {
@@ -575,7 +563,7 @@ final class SessionImageKnowledgeService
 
     private function logEmbeddingUsage(int $sessionId, string $modelId, int $inputTokens): void
     {
-        if ($inputTokens <= 0) return;
+        if ($this->metered || $inputTokens <= 0) return;
         try {
             $phase = (string)aiAgentValue('embedding_main', 'token_usage_phase', 'rag');
             $output = 0;

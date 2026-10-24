@@ -850,6 +850,7 @@ role="progressbar" style="width: 0%">0%</div>
 <!-- Preferencias primero: expone chatPreferencesReady/modelo antes de crear sesiones. -->
 <script src="js/user_preferences.js"></script>
 <!-- chat.js administra sesiones/proyectos y exporta window.chatUtils. -->
+<script src="js/attachment-preparation.js?v=<?= substr(hash_file('sha256', __DIR__ . '/js/attachment-preparation.js'), 0, 16) ?>"></script>
 <script src="js/chat.js?v=<?= substr(hash_file('sha256', __DIR__ . '/js/chat.js'), 0, 16) ?>"></script>
 <!-- El micrófono utiliza Nova 2 Sonic: cargar su controlador tras chat.js. -->
 <script src="js/chat-voice.js?v=20261023-sonic-diagnostics"></script>

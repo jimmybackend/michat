@@ -128,7 +128,7 @@ function idx_pdf_page_labels(string $text): string {
 
 require_once __DIR__.'/Documents/PdfTextractReader.php';
 
-function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$extractor, string &$error, array|ArrayAccess $sourceHead=[]): string {
+function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$extractor, string &$error, array|ArrayAccess $sourceHead=[], ?object $textractOverride=null): string {
     // 1) Parser PHP opcional: composer require smalot/pdfparser
     if (class_exists('Smalot\PdfParser\Parser')) {
         try {
@@ -171,10 +171,10 @@ function idx_extract_pdf(string $tmp, string $bucket, string $s3Key, string &$ex
     }
 
     // 3) AWS Textract
-    if (class_exists('Aws\Textract\TextractClient')) {
+    if ($textractOverride!==null || class_exists('Aws\Textract\TextractClient')) {
         try {
             $head=$sourceHead ?: Config::getS3()->headObject(['Bucket'=>$bucket,'Key'=>$s3Key]);
-            $text = (new PdfTextractReader(Config::getTextract(['http'=>['connect_timeout'=>15,'timeout'=>120]])))->read($bucket,$s3Key,$head);
+            $text = (new PdfTextractReader($textractOverride ?? Config::getTextract(['http'=>['connect_timeout'=>15,'timeout'=>120]])))->read($bucket,$s3Key,$head);
 
             if (trim($text) !== '') {
                 $extractor = 'aws-textract-async';
@@ -629,7 +629,7 @@ function idx_extract_legacy_office(string $tmp, string $ext, string $filename, s
         }
     }
 
-    if ($ext === 'ppt') {
+    if (in_array($ext,['ppt','pps'],true)) {
         if (idx_command_exists('catppt')) {
             $text = @shell_exec('catppt ' . escapeshellarg($tmp) . ' 2>/dev/null');
             if (trim((string)$text) !== '') {
@@ -639,46 +639,8 @@ function idx_extract_legacy_office(string $tmp, string $ext, string $filename, s
         }
     }
 
-    // Fallback genérico con LibreOffice headless.
-    $soffice = null;
+    throw new DocumentProcessingException('legacy_reader','missing_reader',"Falta un lector seguro para .{$ext}: antiword/catdoc, xls2csv o catppt. No se ejecutó Office ni macros; convierte una copia a DOCX, XLSX o PPTX.");
 
-    if (idx_command_exists('soffice')) {
-        $soffice = 'soffice';
-    } elseif (idx_command_exists('libreoffice')) {
-        $soffice = 'libreoffice';
-    }
-
-    if ($soffice !== null) {
-        $outdir = dirname($tmp) . '/lo_' . bin2hex(random_bytes(4));
-        @mkdir($outdir, 0775, true);
-
-        $cmd = escapeshellarg($soffice)
-            . ' --headless --norestore --convert-to txt --outdir '
-            . escapeshellarg($outdir)
-            . ' ' . escapeshellarg($tmp)
-            . ' 2>/dev/null';
-
-        @shell_exec($cmd);
-
-        $base = pathinfo(basename($tmp), PATHINFO_FILENAME);
-        $txt = $outdir . '/' . $base . '.txt';
-
-        if (is_file($txt)) {
-            $text = (string)file_get_contents($txt);
-            idx_rrmdir($outdir);
-
-            if (trim($text) !== '') {
-                $extractor = 'libreoffice';
-                return $text;
-            }
-        }
-
-        idx_rrmdir($outdir);
-    }
-
-    $error = "No hay conversor disponible para .{$ext}. Instala antiword/catdoc/xls2csv/catppt/LibreOffice, o usa un formato moderno como docx/xlsx/pptx/odt.";
-
-    return '';
 }
 
 /**
@@ -777,7 +739,8 @@ function idx_extract_file(
     string $s3Key,
     string &$extractor,
     string &$error,
-    array|ArrayAccess $sourceHead=[]
+    array|ArrayAccess $sourceHead=[],
+    ?object $textractOverride=null
 ): string {
     $extractor = '';
     $error = '';
@@ -791,7 +754,7 @@ function idx_extract_file(
             break;
 
         case 'pdf':
-            $text = idx_extract_pdf($tmp, $bucket, $s3Key, $extractor, $error, $sourceHead);
+            $text = idx_extract_pdf($tmp, $bucket, $s3Key, $extractor, $error, $sourceHead, $textractOverride);
             break;
 
         case 'docx':
@@ -827,6 +790,7 @@ function idx_extract_file(
 
         case 'doc':
         case 'xls':
+        case 'pps':
         case 'ppt':
             $text = idx_extract_legacy_office($tmp, $ext, $filename, $extractor, $error);
             break;
@@ -977,7 +941,7 @@ function idx_text_extensions(): array {
 function idx_extractable_extensions(): array {
     return [
         'pdf','docx','dotx','xlsx','xlsm','xltx','xltm','pptx','ppsx',
-        'odt','ods','odp','rtf','epub','doc','xls','ppt','db','sqlite','sqlite3'
+        'odt','ods','odp','rtf','epub','doc','xls','ppt','pps','db','sqlite','sqlite3'
     ];
 }
 
@@ -1007,7 +971,9 @@ function idx_file_belongs_to_chat_session(array $file, int $userId, int $session
 function idx_extract_s3_text(
     string $s3Key,
     string $filename,
-    int $maxChars = IDX_MAX_EXTRACTED_CHARS
+    int $maxChars = IDX_MAX_EXTRACTED_CHARS,
+    ?object $s3Override = null,
+    ?object $textractOverride = null
 ): array {
     $s3Key = ltrim(str_replace('\\', '/', trim($s3Key)), '/');
     $filename = basename(trim($filename));
@@ -1025,7 +991,7 @@ function idx_extract_s3_text(
     $tmpFile = $tmpDir . '/' . idx_safe_filename($filename);
 
     try {
-        $s3 = Config::getS3();
+        $s3 = $s3Override ?? Config::getS3();
         $bucket = Config::getBucket();
 
         $head = $s3->headObject(['Bucket'=>$bucket,'Key'=>$s3Key]);
@@ -1047,7 +1013,7 @@ function idx_extract_s3_text(
         if (in_array($ext, $textExts, true)) {
             $content = idx_read_safe_text($tmpFile);
         } else {
-            $content = idx_extract_file($tmpFile, $ext, $filename, $bucket, $s3Key, $extractor, $extractError, $head);
+            $content = idx_extract_file($tmpFile, $ext, $filename, $bucket, $s3Key, $extractor, $extractError, $head, $textractOverride);
         }
 
         $after=$s3->headObject(['Bucket'=>$bucket,'Key'=>$s3Key]);
@@ -1086,11 +1052,11 @@ function idx_extract_s3_text(
  * Descarga y extrae el contenido textual de un FileS3.
  * Devuelve content, extractor, ext, s3_key, truncated.
  */
-function idx_extract_files3_text(array $file, int $maxChars = IDX_MAX_EXTRACTED_CHARS): array {
+function idx_extract_files3_text(array $file, int $maxChars = IDX_MAX_EXTRACTED_CHARS, ?object $s3Override = null): array {
     $filename = (string)($file['Nombre'] ?? 'archivo');
     $s3Key = idx_build_s3_key($file);
     if ($s3Key === '') throw new RuntimeException('No se pudo resolver la clave S3 del archivo.');
-    return idx_extract_s3_text($s3Key, $filename, $maxChars);
+    return idx_extract_s3_text($s3Key, $filename, $maxChars, $s3Override);
 }
 
 /** Prefer recognized signatures/container parts over a renamed display filename. */

@@ -83,7 +83,7 @@ final class DriveAnalysisService
                     }
                     $meta=$block?(json_decode((string)$block['source_ids'],true) ?: []):[];
                     $analysis=['source'=>$source,'created_at'=>gmdate('c'),'summary'=>$block?(string)$block['content_preview']:'',
-                        'coverage'=>!empty($meta['truncated'])?'partial':($image?'visual_description':'extracted_text'),
+                        'coverage'=>$chunks?'extracted_text':($image?'visual_description':'unknown'),'summary_partial'=>!empty($meta['truncated']),
                         'extractor'=>$meta['extractor'] ?? ($chunks[0]['meta']['extractor'] ?? 'unknown'),
                         'model'=>$meta['semantic_model'] ?? $meta['visual_model'] ?? null,'kind'=>'generated_summary_not_original_evidence','interactions'=>[]];
                 }
@@ -109,7 +109,7 @@ final class DriveAnalysisService
                     'chunks'=>count($chunks),'semantic_available'=>!empty($analysis['summary']),'sidecar_saved'=>$saved,'warnings'=>$warnings]);
                 self::progress($progress,'prepared','completed','Preparación del archivo terminada',['chunks'=>count($chunks),'reused'=>$reused,'sidecar_saved'=>$saved]);
                 return ['ok'=>true,'file_id'=>$fileId,'filename'=>$file['Nombre'],'reused'=>$reused,'summary'=>$analysis['summary'],
-                    'coverage'=>$analysis['coverage'],'chunks'=>count($chunks),'lexical_rag_available'=>(bool)$chunks,'semantic_available'=>!empty($analysis['summary']),
+                    'coverage'=>$analysis['coverage'],'summary_partial'=>!empty($analysis['summary_partial']),'chunks'=>count($chunks),'lexical_rag_available'=>(bool)$chunks,'semantic_available'=>!empty($analysis['summary']),
                     'message'=>$message,'warnings'=>$warnings,'interaction_count'=>count($analysis['interactions'] ?? []),
                     'sidecar_name'=>basename(AnalysisSidecarStore::key($cacheFile)),'sidecar_saved'=>$saved];
             });
@@ -187,7 +187,7 @@ final class DriveAnalysisService
         $hash=hash('sha256',$summary);$key=$state['source']['key'];
         $meta=json_encode(['filename'=>$file['Nombre'],'files3_id'=>(int)$file['id_'],'type'=>'semantic_summary',
             'source_etag'=>$state['source']['etag'],'semantic_model'=>$analysis['model'] ?? null,
-            'extractor'=>$analysis['extractor'] ?? 'sidecar','truncated'=>($analysis['coverage'] ?? 'partial')==='partial',
+            'extractor'=>$analysis['extractor'] ?? 'sidecar','truncated'=>!empty($analysis['summary_partial'])||($analysis['coverage'] ?? 'partial')==='partial',
             'sidecar_revision'=>$state['revision_key'],'summary_sha256'=>$hash],JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);
         $tokens=(int)ceil(mb_strlen($summary)/4);
         $s=$this->db->prepare("INSERT INTO SessionContextBlocks (session_id_,block_type,content_preview,s3_path,source_ids,is_locked,token_count) VALUES (?,'file',?,?,?,1,?)");

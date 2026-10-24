@@ -9,10 +9,10 @@ $files=[
 $source=[];foreach($files as$key=>$file)$source[$key]=(string)file_get_contents($file);
 $passed=0;$failed=0;$check=function(bool $ok,string $label)use(&$passed,&$failed){echo($ok?'PASS ':'FAIL ').$label."\n";$ok?$passed++:$failed++;};
 $catalog=(new MigrationCatalog())->all();
-$expected=['fase8_1_task_orchestrator','fase8_6d_3d_toolcalls_code_edit','fase8_7b_task_artifacts','fase10d_task_recurrence','fase11b_project_autonomy','fase11c_next_work_proposals','fase11d_post_task_continuations','fase11e0_replan_checkpoint','fase11e1_versioned_replanning','fase11f2_hitl_controls','fase12b_2c_global_ai_configuration_scope','fase12b_4_ai_scope_default_reconciliation','fase12b_5_mysql_generated_column_compatibility','fase12b_6_system_role_authorization','fase13_document_knowledge'];
+$expected=['fase8_1_task_orchestrator','fase8_6d_3d_toolcalls_code_edit','fase8_7b_task_artifacts','fase10d_task_recurrence','fase11b_project_autonomy','fase11c_next_work_proposals','fase11d_post_task_continuations','fase11e0_replan_checkpoint','fase11e1_versioned_replanning','fase11f2_hitl_controls','fase12b_2c_global_ai_configuration_scope','fase12b_4_ai_scope_default_reconciliation','fase12b_5_mysql_generated_column_compatibility','fase12b_6_system_role_authorization','fase13_document_knowledge','fase14_attachment_processing'];
 $ids=array_column($catalog,'migration_id');$names=array_column($catalog,'filename');
-$check($ids===$expected&&count($catalog)===15,'closed catalog has approved 15-migration order');
-$check(count(array_unique($ids))===15&&count(array_unique($names))===15,'migration IDs and filenames are unique');
+$check($ids===$expected&&count($catalog)===16,'closed catalog has approved 16-migration order');
+$check(count(array_unique($ids))===16&&count(array_unique($names))===16,'migration IDs and filenames are unique');
 $check(array_reduce($catalog,fn($ok,$m)=>$ok&&$m['migration_id']===basename($m['filename'],'.sql'),true),'migration IDs follow basename contract');
 $sqlRoot=realpath($root.'/michat/sql').DIRECTORY_SEPARATOR;
 $check(array_reduce($catalog,fn($ok,$m)=>$ok&&str_starts_with($m['path'],$sqlRoot)&&is_file($m['path'])&&!is_link($m['path']),true),'catalog paths remain regular files under SQL root');

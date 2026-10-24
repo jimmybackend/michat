@@ -71,7 +71,7 @@ $indexer=function(int $user,int $session,int $file) use($db,$s3,&$indexCalls) {
 $service=new DriveAnalysisService($db,$store,$analyzer,$indexer);
 $result=$service->analyze(1,1,1);$file=(new DocumentAccessRepository($db))->file(1,1);$sidecar=AnalysisSidecarStore::key($file);
 checkDrive(!$result['reused']&&$analyzeCalls===1&&isset($s3->objects[$sidecar]),'Explicit selection analyzes and writes a private standard sibling JSON');
-checkDrive($result['coverage']==='partial','Partial summary coverage is retained in JSON and UI result');
+checkDrive($result['coverage']==='extracted_text'&&!empty($result['summary_partial']),'Partial summary is distinguished from complete literal extraction in JSON and UI result');
 checkDrive(dirname($sidecar)==='Data'&&$s3->objects['Data/a.pdf']['body']==='original-bytes','JSON lives beside source and original is never overwritten');
 checkDrive(!isset($s3->writes[0]['ACL'])&&$s3->writes[0]['IfNoneMatch']==='*','No public ACL and first write is conditional');
 $again=$service->analyze(1,2,1);

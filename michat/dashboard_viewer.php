@@ -448,28 +448,28 @@ $monthName = $monthNames[(int)substr($selectedMonth,5,2)] . ' de ' . substr($sel
     }
 
     @media (max-width: 768px) {
-        .dashboard-container { 
-            padding: 16px; 
+        .dashboard-container {
+            padding: 16px;
             padding-bottom: 60px;
         }
-        .dashboard-header { 
-            padding: 16px; 
+        .dashboard-header {
+            padding: 16px;
         }
-        .dashboard-header h1 { 
-            font-size: 1.2rem; 
+        .dashboard-header h1 {
+            font-size: 1.2rem;
         }
-        .stats-grid { 
-            grid-template-columns: repeat(2, 1fr); 
-            gap: 10px; 
+        .stats-grid {
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
         }
-        .stat-value { 
-            font-size: 1.5rem; 
+        .stat-value {
+            font-size: 1.5rem;
         }
-        .data-table { 
-            font-size: 0.75rem; 
+        .data-table {
+            font-size: 0.75rem;
         }
-        .data-table th, .data-table td { 
-            padding: 8px 10px; 
+        .data-table th, .data-table td {
+            padding: 8px 10px;
         }
     }
 
@@ -617,7 +617,7 @@ function renderDashboard(data) {
     const container = document.getElementById('dashboard-content');
 
     const totalTokens = data.tokens && data.tokens.total ? data.tokens.total : 0;
-    const totalCost = data.tokens && data.tokens.cost ? data.tokens.cost : 0;
+    const totalCost = Number(data.combined_estimated_cost ?? data.tokens?.cost ?? 0);
     const activeSessions = data.sessions ? data.sessions.length : 0;
     const ladderSuccess = calculateLadderSuccess(data.ladder);
     const byPhase = data.tokens && data.tokens.by_phase ? data.tokens.by_phase : {};
@@ -665,7 +665,7 @@ function renderDashboard(data) {
                 <canvas id="chartTokenUsage"></canvas>
             </div>
         </div>
-        
+
         <!-- Desglose por fase - TABLA -->
         <div class="section-title">
             <i class="fas fa-table"></i>
@@ -709,14 +709,20 @@ function renderDashboard(data) {
             Estado de Compresión de Contexto por Sesión
         </div>
         ${renderCompressionTable(data.sessions)}
-        
+
         <!-- Footer invisible para forzar más altura -->
         <div style="height: 1px; opacity: 0;"></div>
     `;
 
     container.innerHTML = html;
+    if(data.processing?.services?.length){
+      const section=document.createElement('div');section.className='alert alert-info';
+      section.textContent='Procesamiento de archivos: '+data.processing.services.map(row=>row.service+': '+row.operations+' operaciones · $'+Number(row.cost||0).toFixed(6)).join(' | ')+'. '+Number(data.processing.unpriced_operations||0)+' operaciones con tarifa o resultado por reconciliar. Son estimaciones; no es una factura AWS.';
+      document.getElementById('dashboard-content').append(section);
+    }
+
     renderPhaseChart(byPhase);
-    
+
     // Forzar que el body tenga altura después de renderizar
     document.body.style.height = 'auto';
     document.body.style.minHeight = '100vh';

@@ -2439,6 +2439,15 @@ async function sendMessage() {
     };
 
     try {
+        if(window.prepareAttachmentsForQuestion && sessionAttachments.length) {
+            const preparationSession=currentSessionId;
+            await changeDriveKnowledge(null,'token',preparationSession);
+            await window.prepareAttachmentsForQuestion({sessionId:preparationSession,csrf:driveKnowledgeCsrf,query:text,traceId:activityTraceId,
+                isCurrent:()=>Number(currentSessionId)===Number(preparationSession),
+                onProgress:jobs=>{if(Number(currentSessionId)===Number(preparationSession)&&jobs.length)setStatus('Preparando archivos · '+jobs.map(job=>'#'+job.id+' '+job.message).join(' · '));}});
+            if(Number(currentSessionId)!==Number(preparationSession))return;
+            await loadSessionAttachments(preparationSession);
+        }
         // ──────────────────────────────────────────────────────
         // FASE 1: COMPILAR PROMPT (máximo 5 segundos)
         // ──────────────────────────────────────────────────────
@@ -4074,7 +4083,7 @@ function updateKnowledgePipelineSummary(files, error = '') {
   const semanticReady = files.filter(file => file.semantic_status === 'ready').length;
   const chunks = files.reduce((n, file) => n + Math.max(0, Number(file.chunks_total || 0)), 0);
   const embeddedChunks = files.reduce((n, file) => n + Math.max(0, Number(file.chunks_with_embedding || 0)), 0);
-  const pending = files.filter(file => file.index_status !== 'indexed' || file.semantic_status !== 'ready').length;
+  const pending = files.filter(file => ['processing_failed','stale_embedding','extraction_partial'].includes(file.index_status) || file.analysis_attempt?.status==='failed').length;
   label.textContent = files.length + ' archivo(s) · ' + textReady + ' con texto consultable · ' + ragReady + ' con RAG listo · '
     + semanticReady + ' con semántica lista · ' + embeddedChunks + '/' + chunks
     + ' fragmentos con embedding del modelo activo'
@@ -4209,6 +4218,7 @@ async function loadSessionAttachments(sessionId) {
             ${file.semantic_status === 'ready' ? '<span class="badge badge-info">Semántica lista</span>' : file.semantic_status === 'embedding_disabled' ? '<span class="badge badge-secondary">Semántica sin vector</span>' : file.semantic_status === 'pending_embedding' ? '<span class="badge badge-warning">Semántica pendiente</span>' : file.semantic_status === 'stale_embedding' ? '<span class="badge badge-danger">Semántica requiere nuevo embedding</span>' : ''}
           </div>
 
+          ${file.analysis_attempt?.evidence_kind ? '<a class="chat-session-file-meta" target="_blank" rel="noopener" href="session_derived_json.php?session_id='+encodeURIComponent(currentSessionId)+'&file_id='+encodeURIComponent(fileId)+'">Ver JSON de la información extraída</a>' : ''}
           ${file.analysis_attempt?.message ? `<div class="chat-session-file-meta" role="status">${esc(file.analysis_attempt.message)} ${(file.analysis_attempt.warnings || []).map(esc).join(' ')}</div>` : ''}
           ${file.central_knowledge ? `<div class="chat-session-file-meta">Fase: ${esc(({extract:'Extracción',chunks:'Generación de fragmentos',embeddings:'Embeddings'})[file.central_knowledge.job?.phase] || '')} · ${Number(file.central_knowledge.chunks_done || 0)}/${Number(file.central_knowledge.chunks_total || 0)} chunks · ${Number(file.central_knowledge.extracted_chars || 0)} caracteres ${file.central_knowledge.job?.error_message ? ' · ' + esc(file.central_knowledge.job.error_message) : ''}</div>` : ''}
           <div class="chat-session-file-actions">

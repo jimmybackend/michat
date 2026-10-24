@@ -37,10 +37,15 @@ final class DashboardStatisticsService
                 FROM LintAttempts la INNER JOIN FileVersions fv ON fv.id_=la.file_version_id_
                 INNER JOIN Projects p ON p.id_=fv.project_id_ WHERE p.user_id_=? AND la.created_at>=? AND la.created_at<? GROUP BY la.model_used",$userId,$from,$until);
         } catch (Throwable $e) { $warnings[] = 'El detalle opcional de lint no está disponible.'; }
+        $processing=['estimated_cost'=>0.0,'unpriced_operations'=>0,'services'=>[]];
+        try{
+            $usage=$this->rows("SELECT service,COUNT(*) operations,SUM(estimated_cost_usd) cost,SUM(estimated_cost_usd IS NULL) unpriced FROM AttachmentProcessingCosts WHERE user_id_=? AND created_at>=? AND created_at<? GROUP BY service",$userId,$from,$until);
+            foreach($usage as $row){$processing['estimated_cost']+=(float)$row['cost'];$processing['unpriced_operations']+=(int)$row['unpriced'];$processing['services'][]=$row;}
+        }catch(mysqli_sql_exception $e){if($e->getCode()!==1146)throw $e;}
         return ['ok'=>true,'month'=>$month,'scope'=>'authenticated_user','cost_basis'=>'TokenUsage.estimated_cost_usd',
             'cost_note'=>'Estimaciones registradas al ejecutar cada operación; no es una factura de AWS. Un costo guardado como cero no demuestra que el servicio fuera gratuito.',
             'tokens'=>['total'=>$total,'cost'=>round($cost,6),'by_phase'=>$phases],
-            'models'=>array_values($models),'ladder'=>$ladder,'sessions'=>$sessions,'warnings'=>$warnings];
+            'processing'=>$processing,'combined_estimated_cost'=>round($cost+$processing['estimated_cost'],6),'models'=>array_values($models),'ladder'=>$ladder,'sessions'=>$sessions,'warnings'=>$warnings];
     }
 
     private function rows(string $sql,int $user,string $from,string $until): array
