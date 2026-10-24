@@ -78,6 +78,7 @@ final class AttachmentProcessingSchema
                     unset($row['Privileges']);
                     // MySQL exposes DEFAULT_GENERATED differently for persistent and temporary tables.
                     // The actual default value and ON UPDATE expression are still compared separately.
+                    $row['Extra']=strtoupper(trim((string)$row['Extra']))==='NULL'?'':$row['Extra'];
                     $row['Extra']=trim((string)preg_replace('/\s+/',' ',str_replace('DEFAULT_GENERATED','',(string)$row['Extra'])));
                 }
                 return $rows;
