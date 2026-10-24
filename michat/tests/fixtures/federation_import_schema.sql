@@ -1,0 +1,52 @@
+-- DDL exacto de jimmybackend/s3 @965b1ad7, solo tablas necesarias para el adaptador.
+
+CREATE TABLE IF NOT EXISTS `FederationShares` (
+  `ShareId` varchar(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `UserId` int NOT NULL,
+  `Direction` enum('received','sent') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ResourceId` varchar(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `RemoteNodeId` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `Title` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `MediaType` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'application/octet-stream',
+  `Status` enum('active','expired','revoked') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `AccessUrl` varchar(2048) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `DecisionJson` mediumtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ExpiresAt` datetime(6) DEFAULT NULL,
+  `LocalFileId` int DEFAULT NULL,
+  `LocalS3Key` varchar(1024) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `ImportedAt` datetime(6) DEFAULT NULL,
+  `ImportedResourceUpdatedAt` datetime(6) DEFAULT NULL,
+  `ImportedContentId` varchar(80) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `CreatedAt` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `UpdatedAt` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`ShareId`),
+  KEY `idx_fshares_user_direction_status` (`UserId`,`Direction`,`Status`,`UpdatedAt`),
+  KEY `idx_fshares_resource` (`ResourceId`,`Status`),
+  KEY `idx_fshares_remote` (`RemoteNodeId`,`Status`),
+  KEY `idx_fshares_local_file` (`UserId`,`LocalFileId`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `FederatedResources` (
+  `ResourceId` varchar(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `OriginNodeId` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `OwnerUserId` int DEFAULT NULL COMMENT 'Sólo se conserva en el nodo propietario; nunca se replica',
+  `ResourceType` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'file',
+  `Title` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `MediaType` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'application/octet-stream',
+  `SizeBytes` bigint UNSIGNED NOT NULL DEFAULT '0',
+  `ContentId` varchar(80) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  `Visibility` enum('PUBLIC','UNLISTED','PRIVATE') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'UNLISTED',
+  `DiscoveryPolicy` enum('local_only','public_metadata','requestable_metadata') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'local_only',
+  `Rights` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'link_only',
+  `OriginUrl` varchar(512) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `FederationUrl` varchar(512) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ArcadeLinkJson` mediumtext COLLATE utf8mb4_unicode_ci,
+  `LastOriginSequence` bigint UNSIGNED NOT NULL DEFAULT '0',
+  `UpdatedAt` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `Tombstoned` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`ResourceId`),
+  KEY `idx_fed_resource_origin` (`OriginNodeId`,`Tombstoned`),
+  KEY `idx_fed_resource_discovery` (`DiscoveryPolicy`,`Tombstoned`,`UpdatedAt`),
+  KEY `idx_fed_resource_content` (`ContentId`),
+  KEY `idx_fed_resource_media` (`MediaType`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

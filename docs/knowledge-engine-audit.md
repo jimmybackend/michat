@@ -36,3 +36,13 @@ Las preguntas sobre esas fuentes utilizan ahora los mismos lectores, localizador
 Se mantienen `ProjectIndexer`, `SourceChunks`, `ChunkEmbeddings` y `EmbeddingJobs` por compatibilidad con herramientas de código y el RAG histórico. No se ha migrado ni certificado esa ruta histórica completa. Fuentes antiguas sin enlace `files3_id_` requieren reconciliación verificable; no se enlazan por nombre. Los catálogos conservan un límite explícito de consulta de 101 filas por ámbito; proyectos mayores requieren paginación adicional. No se implementa una revisión exhaustiva usando una selección RAG.
 
 Prueba `project_attachment_engine_mysql_test.php`: dato al final de texto, localizadores, reutilización entre chats, exclusión de sesión libre/usuario ajeno/FK de proyecto ajeno, retirada sin borrar original, XLSX por cola persistente, vectores reutilizados y revocación al cambiar de proyecto. Usa MariaDB real aislada y proveedores controlados.
+
+## Conjunto 3: permisos de importaciones federadas
+
+`FederationImportedAccess` utiliza el esquema real de ArcadeCloud (DDL de referencia incluido en el fixture de pruebas, tomado de `965b1ad7`). Para archivos marcados `federationcloud.source=share_received`, MiChat comprueba `FederationShares` y `FederatedResources`: destinatario, dirección recibida, estado activo, expiración UTC, recurso, nodo origen, copia local y versión importada. Cambiar esas condiciones invalida búsqueda, acceso a la copia de chat, recuperación e incluso el resolvedor de descarga directa. No se altera el funcionamiento ni los permisos del Drive original.
+
+La versión se verifica mediante `ContentId`/`ImportedContentId`; si no existe ContentId, se exige la fecha de revisión importada. Si faltan tablas, relaciones o prueba de versión, el acceso de MiChat se deniega. El adaptador no crea/repara tablas de FederationCloud ni sigue URLs remotas. El catálogo conserva cursores de las filas inspeccionadas aunque filtre todas las inaccesibles de una página.
+
+Esto integra **importaciones locales verificables**, no archivos compartidos remotos sin importar, enlaces públicos o membresías genéricas entre propietarios. No hay ampliación de la consulta de propietario. El manifiesto y las interacciones siguen siendo privados del usuario de la copia importada; no se escriben en el origen remoto. La revocación depende del estado local sincronizado por FederationCloud, no de una comprobación en vivo contra el nodo remoto.
+
+`federation_import_access_mysql_test.php` verifica el flujo selección→copia→extracción→cita y deniega revocación, expiración, cambio de destinatario, clave, nodo, versión, tombstone y esquema ausente. No borra originales ni realiza llamadas reales a AWS.

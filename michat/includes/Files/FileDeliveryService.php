@@ -30,6 +30,8 @@ final class FileDeliveryService
         }
         $stmt->close();
         if ($own !== null) {
+            require_once dirname(__DIR__).'/Drive/FederationImportedAccess.php';
+            if (!(new FederationImportedAccess($this->db))->allows($own)) throw new FileDeliveryException('Archivo no encontrado o sin acceso.',404);
             if(!empty((json_decode((string)($own['Metadatos']??''),true)?:[])['drive_source'])) {
                 require_once dirname(__DIR__).'/Memory/DocumentAccessRepository.php';
                 if(!(new DocumentAccessRepository($this->db))->file($userId,(int)$own['id_'])) throw new FileDeliveryException('Archivo no encontrado o sin acceso.',404);

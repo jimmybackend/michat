@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once dirname(__DIR__) . '/session_file_extractor.php';
+require_once dirname(__DIR__) . '/Drive/FederationImportedAccess.php';
 
 /** Live FileS3 checks. A cached chunk never grants access to its source. */
 final class DocumentAccessRepository
@@ -27,6 +28,7 @@ final class DocumentAccessRepository
         // Secure files require Drive's unlock flow; never bypass it with an index.
         if(!$row || ($row['AccessType'] ?? '')==='secure') return null;
         $meta=json_decode((string)$row['Metadatos'],true)?:[];
+        if (!(new FederationImportedAccess($this->db))->allows($row)) return null;
         if(isset($meta['drive_source']) && !$this->original($row)) return null;
         return $row;
     }
@@ -40,7 +42,8 @@ final class DocumentAccessRepository
         $id=(int)($ref['file_id']??0);$owner=(int)$file['user_id_'];
         $s=$this->db->prepare("SELECT id_,user_id_,Nombre,Ruta,Encriptado,Found,AccessType,Metadatos FROM FileS3 WHERE id_=? AND user_id_=? AND Found=1 AND AccessType<>'secure' LIMIT 1");
         $s->bind_param('ii',$id,$owner);$s->execute();$row=$s->get_result()->fetch_assoc();$s->close();
-        if(!$row || idx_build_s3_key($row)!==($ref['key']??'') || !empty((json_decode((string)$row['Metadatos'],true)?:[])['drive_source'])) return null;
+        if(!$row || idx_build_s3_key($row)!==($ref['key']??'') || !empty((json_decode((string)$row['Metadatos'],true)?:[])['drive_source'])
+            || !(new FederationImportedAccess($this->db))->allows($row)) return null;
         return $row;
     }
 
