@@ -12,7 +12,7 @@ try{
         http_response_code(403);echo json_encode(['ok'=>false,'error'=>'Acceso denegado']);exit;
     }
     $service=new AttachmentProcessingService($db_connection);
-    if(!$service->available()){if($service->plan($user,$session,trim((string)($_POST['query']??'')),'',true))throw new RuntimeException('Aplica la migración fase14_attachment_processing');echo json_encode(['ok'=>true,'available'=>false,'jobs'=>[]]);exit;}
+    if(!$service->available()){if($service->plan($user,$session,trim((string)($_POST['query']??'')),'',true)){http_response_code(422);echo json_encode(['ok'=>false,'code'=>'processing_schema_required','error'=>'Falta aplicar la migración fase14_attachment_processing en el servidor para preparar documentos y transcribir audio/vídeo. El archivo adjunto se conserva.']);exit;}echo json_encode(['ok'=>true,'available'=>false,'jobs'=>[]]);exit;}
     $trace=(string)($_POST['trace_id']??'');if(!preg_match('/^[A-Za-z0-9_-]{16,36}$/',$trace))$trace='';
     // Release PHP session lock so real progress can be polled while a phase runs.
     session_write_close();

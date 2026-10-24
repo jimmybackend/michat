@@ -18,6 +18,18 @@ final class AttachmentProcessingService
     {
         return in_array(strtolower(pathinfo($name,PATHINFO_EXTENSION)),array_merge(idx_extractable_extensions(),['jpg','jpeg','png','webp','gif','mp3','mp4','wav','flac','ogg','amr','webm','m4a','opus','mov','avi','mkv']),true);
     }
+    public static function media(string $name):bool
+    {
+        return in_array(strtolower(pathinfo($name,PATHINFO_EXTENSION)),['mp3','mp4','wav','flac','ogg','amr','webm','m4a','opus','mov','avi','mkv'],true);
+    }
+    /** Shared manual/legacy entry point; polling must finish before claiming success. */
+    public function requestFile(int $user,int $session,int $file):array
+    {
+        $job=$this->enqueue($user,$session,$file);$done=in_array($job['status'],['ready','partial'],true);
+        if(!$done)(new FileKnowledgeState($this->db))->save($user,$session,$file,['status'=>'processing','message'=>'Tarea #'.$job['id_'].' · '.self::label($job['phase'])]);
+        return ['ok'=>true,'queued'=>!$done,'file_id'=>$file,'session_id'=>$session,'processing_jobs'=>[self::publicJob($job)],
+            'message'=>$done?'Contenido preparado para responder.':'Tarea guardada; esperando extracción, embeddings y semántica.'];
+    }
     public function plan(int $user,int $session,string $query,string $trace,bool $dryRun=false):array
     {
         $access=new DocumentAccessRepository($this->db);$owned=$access->session($user,$session);
