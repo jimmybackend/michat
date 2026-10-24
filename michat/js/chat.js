@@ -3612,7 +3612,7 @@ if (btnIndexPending) {
           await loadSessions();
           await selectSession(targetSessionId);
         }
-        setStatus('Subiendo e indexando ' + files.length + ' archivo(s) para RAG…');
+        setStatus('Adjuntando ' + files.length + ' archivo(s)…');
         const fd = new FormData();
         fd.append('session_id', String(targetSessionId));
         if (parentFileId) fd.append('version_of_file_id', String(parentFileId));
@@ -3632,18 +3632,14 @@ if (btnIndexPending) {
         const pending = Math.max(0, Number(data.embedding_pending || 0));
         const truncated = (Array.isArray(data.uploaded) ? data.uploaded : [])
           .filter(x => x.knowledge?.index?.truncated === true).length;
-        const description = uploaded + ' archivo(s) guardado(s) en S3. '
-          + Math.min(ready, uploaded) + ' listo(s) para RAG.'
-          + (errors ? ' ' + errors + ' archivo(s) fallaron.' : '')
-          + (pending ? ' ' + pending + ' con embeddings pendientes.' : '')
-          + (truncated ? ' ' + truncated + ' archivo(s) tienen índice parcial por límite de extracción.' : '')
-          + (issues.length ? ' ' + issues.length + ' requieren análisis manual.' : '')
-          + (ready < uploaded && !pending && !issues.length ? ' Revisa el estado del índice en 🧠.' : '');
+        const description = uploaded + ' archivo(s) guardado(s) en S3 · pendientes de solicitud.'
+          + (errors ? ' ' + errors + ' archivo(s) fallaron.' : '');
         if (Number(currentSessionId) === targetSessionId) setStatus(description);
-        showToast('Adjuntos de conversación', esc(description), ready === uploaded && errors === 0 ? 'success' : 'warning');
-        if (issues.length) showToast('🧠 Indexación', esc(issues[0].message || 'Faltan datos de análisis automático'), 'warning');
-        // La API session_upload.php ya invoca SessionAttachmentKnowledgeService
-        // o SessionImageKnowledgeService. No hacer una segunda indexación.
+        showToast('Adjuntos de conversación', esc(description), errors ? 'warning' : 'success');
+        if (Number(currentSessionId) === targetSessionId && el.input && !el.input.value.trim()) {
+          const names=(data.uploaded || []).map(f=>JSON.stringify(f.filename)).join(', ');
+          el.input.value='Analiza '+(uploaded===1?'el archivo ':'los archivos ')+names+'. Explica su contenido y cita sus ubicaciones reales.';
+        }
         if (Number(currentSessionId) === targetSessionId) await loadSessionAttachments(targetSessionId);
       } catch (error) {
         console.error('Error adjuntando archivos:', error);
@@ -4209,7 +4205,7 @@ async function loadSessionAttachments(sessionId) {
           </div>
 
           <div class="chat-session-file-index-state" style="font-size:.62rem; margin:.2rem 0; display:flex; gap:.25rem; flex-wrap:wrap;">
-            ${file.analysis_attempt?.status === 'ocr_pending' ? '<span class="badge badge-info">OCR en proceso · reintentar</span>' : file.analysis_attempt?.status === 'failed' && !file.chunks_total && !file.semantic_exists ? '<span class="badge badge-danger">Extracción no disponible</span>' : file.index_status === 'queued' ? '<span class="badge badge-info">Procesamiento en cola / en curso</span>' : file.index_status === 'processing_failed' ? '<span class="badge badge-danger">Fallo de procesamiento · reintentar</span>' : file.index_status === 'extraction_partial' ? '<span class="badge badge-warning">Extracción parcial · consultar con límites</span>' : file.index_status === 'indexed' ? '<span class="badge badge-success">RAG listo</span>' : file.index_status === 'embedding_disabled' ? (file.chunks_total>0?'<span class="badge badge-info">Texto disponible · embeddings desactivados</span>':'<span class="badge badge-secondary">Embeddings desactivados · comprobar extracción</span>') : file.index_status === 'processing' ? '<span class="badge badge-warning">Embedding pendiente</span>' : file.index_status === 'stale_embedding' ? '<span class="badge badge-danger">Reindexar · modelo cambió</span>' : file.chunks_total > 0 ? '<span class="badge badge-info">Texto disponible · embeddings pendientes</span>' : file.semantic_exists ? '<span class="badge badge-info">Resumen disponible · sin fragmentos literales</span>' : '<span class="badge badge-secondary">Vinculado · contenido pendiente</span>'}
+            ${file.analysis_attempt?.status === 'ocr_pending' ? '<span class="badge badge-info">OCR en proceso · reintentar</span>' : file.analysis_attempt?.status === 'failed' && !file.chunks_total && !file.semantic_exists ? '<span class="badge badge-danger">Extracción no disponible</span>' : file.index_status === 'on_request_ready' ? '<span class="badge badge-info">Texto disponible · sin embeddings solicitados</span>' : file.index_status === 'awaiting_request' ? '<span class="badge badge-secondary">Adjunto · pendiente de solicitud</span>' : file.index_status === 'queued' ? '<span class="badge badge-info">Procesamiento en cola / en curso</span>' : file.index_status === 'processing_failed' ? '<span class="badge badge-danger">Fallo de procesamiento · reintentar</span>' : file.index_status === 'extraction_partial' ? '<span class="badge badge-warning">Extracción parcial · consultar con límites</span>' : file.index_status === 'indexed' ? '<span class="badge badge-success">RAG listo</span>' : file.index_status === 'embedding_disabled' ? (file.chunks_total>0?'<span class="badge badge-info">Texto disponible · embeddings desactivados</span>':'<span class="badge badge-secondary">Embeddings desactivados · comprobar extracción</span>') : file.index_status === 'processing' ? '<span class="badge badge-warning">Embedding pendiente</span>' : file.index_status === 'stale_embedding' ? '<span class="badge badge-danger">Reindexar · modelo cambió</span>' : file.chunks_total > 0 ? '<span class="badge badge-info">Texto disponible · embeddings pendientes</span>' : file.semantic_exists ? '<span class="badge badge-info">Resumen disponible · sin fragmentos literales</span>' : '<span class="badge badge-secondary">Vinculado · contenido pendiente</span>'}
             ${file.semantic_status === 'ready' ? '<span class="badge badge-info">Semántica lista</span>' : file.semantic_status === 'embedding_disabled' ? '<span class="badge badge-secondary">Semántica sin vector</span>' : file.semantic_status === 'pending_embedding' ? '<span class="badge badge-warning">Semántica pendiente</span>' : file.semantic_status === 'stale_embedding' ? '<span class="badge badge-danger">Semántica requiere nuevo embedding</span>' : ''}
           </div>
 
@@ -4904,7 +4900,7 @@ async function searchDriveMetadata(more) {
       info.textContent='Clave y metadatos';metadata.textContent=JSON.stringify({id:file.id_,clave:file.Encriptado,ruta:file.Ruta,metadatos:file.Metadatos},null,2);details.append(info);details.append(metadata);
       row.append(label);
       const button=document.createElement('button');button.type='button';button.className='btn btn-sm btn-outline-primary mt-1';
-      button.textContent='Seleccionar y analizar';
+      button.textContent='Adjuntar al chat';
       button.addEventListener('click',()=>selectDriveAnalysis(file,button,sid));row.append(button);row.append(details);target.append(row);
     }
     if (!(data.files || []).length && !more) target.textContent='No hay coincidencias entre tus archivos accesibles.';
@@ -4936,16 +4932,16 @@ async function selectDriveAnalysis(file,button,searchSession) {
     if(sid!==currentSessionId) return;
     await loadSessionAttachments(sid);
     if(sid!==currentSessionId) return;
-    if(output) output.textContent='Archivo adjunto a la conversación. Puedes trabajar con él en el chat.';
+    if(output) output.textContent='Archivo adjunto. Envía una petición para iniciar el análisis.';
     if(window.jQuery) window.jQuery('#driveKnowledgeModal').modal('hide');
     closeChatFilesDrawer();
     const filename=data.attachment?.filename || data.filename || file.Nombre;
     const question='Analiza el archivo '+JSON.stringify(filename)+'. Explica su contenido usando los fragmentos adjuntos y cita sus líneas o ubicaciones reales.';
     // Preserve a draft the user already wrote; otherwise start the requested
-    // analysis in the actual conversation, through the normal send pipeline.
-    if(el.input && !el.input.value.trim() && !isSending) {el.input.value=question;await sendMessage();}
+    // question in the composer. Sending it explicitly starts content processing.
+    if(el.input && !el.input.value.trim() && !isSending) {el.input.value=question;el.input.focus();}
     else if(el.input) {el.input.focus();showToast('Archivo adjunto',esc(filename+' ya está disponible para tu siguiente mensaje.'),'success');}
-    button.textContent=data.chunks?'Texto disponible para consultar':'Descripción disponible';
+    button.textContent='Adjunto · pendiente de solicitud';
   } catch(error) {if(output) output.textContent=error.message;}
   finally {button.disabled=false;if(currentSessionId) await loadSessionAttachments(currentSessionId);}
 }

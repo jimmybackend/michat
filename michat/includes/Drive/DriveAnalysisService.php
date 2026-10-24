@@ -4,7 +4,7 @@ require_once dirname(__DIR__).'/Memory/DocumentAccessRepository.php';
 require_once __DIR__.'/AnalysisSidecarStore.php';
 require_once __DIR__.'/FileKnowledgeState.php';
 
-/** Explicit selection starts analysis. Catalog search never instantiates this service. */
+/** Explicit content requests or manual actions start analysis; attaching never invokes this service. */
 final class DriveAnalysisService
 {
     private DocumentAccessRepository $access;
@@ -14,7 +14,7 @@ final class DriveAnalysisService
     {
         return new self($db,new AnalysisSidecarStore(Config::getS3(),Config::getBucket()));
     }
-    public function analyze(int $user,int $session,int $fileId,bool $summarize=true): array
+    public function analyze(int $user,int $session,int $fileId,bool $summarize=true,bool $withEmbeddings=true): array
     {
         $states=new FileKnowledgeState($this->db);
         $authorized=$this->access->requireFile($user,$session,$fileId);
@@ -22,7 +22,7 @@ final class DriveAnalysisService
         $lockId=(int)($lockFile['id_']??$fileId);
         $stage='lock';
         try {
-            return $this->locked($user,$lockId,function() use($user,$session,$fileId,$states,&$stage,$summarize) {
+            return $this->locked($user,$lockId,function() use($user,$session,$fileId,$states,&$stage,$summarize,$withEmbeddings) {
                 $stage='access_recheck';
                 $file=$this->access->requireFile($user,$session,$fileId);
                 $stage='state_persistence';
@@ -51,7 +51,7 @@ final class DriveAnalysisService
                     if (is_callable($this->indexer)) $indexed=($this->indexer)($user,$session,$fileId);
                     else {
                         require_once dirname(__DIR__).'/SessionAttachmentKnowledgeService.php';
-                        $indexed=(new SessionAttachmentKnowledgeService($this->db))->index($user,$session,$fileId);
+                        $indexed=(new SessionAttachmentKnowledgeService($this->db))->index($user,$session,$fileId,$withEmbeddings);
                     }
                     $warnings=array_merge($warnings,(array)($indexed['warnings'] ?? []));
                     $chunks=$this->chunks($session,$source);
@@ -66,7 +66,7 @@ final class DriveAnalysisService
                             else {
                                 require_once dirname(__DIR__).'/SessionAttachmentKnowledgeService.php';
                                 require_once dirname(__DIR__).'/SessionImageKnowledgeService.php';
-                                if ($image) (new SessionImageKnowledgeService($this->db))->process($user,$session,$fileId);
+                                if ($image) (new SessionImageKnowledgeService($this->db))->process($user,$session,$fileId,$withEmbeddings);
                                 else (new SessionAttachmentKnowledgeService($this->db))->semantic($user,$session,$fileId);
                             }
                             $block=$this->existingSummary($session,$source);

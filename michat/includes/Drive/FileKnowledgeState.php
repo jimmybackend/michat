@@ -83,6 +83,8 @@ final class FileKnowledgeState
     }
     public static function unavailableReply(object $bundle): ?string
     {
+        $request=$bundle->telemetry()['attachment_request']??null;
+        if($request!==null && !empty($request['requested']) && !$bundle->selectedItems('attachments')) return trim((string)($request['message']??''))?:'Indica qué necesitas consultar del archivo.';
         $state=$bundle->telemetry()['file_availability'] ?? [];
         if (empty($state['explicit_question']) || empty($state['files']) || $bundle->selectedItems('attachments')) return null;
         $parts=['El archivo está vinculado a esta conversación, pero no hay contenido verificable recuperado para responder:'];

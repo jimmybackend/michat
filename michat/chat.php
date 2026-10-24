@@ -495,7 +495,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
     </button>
   </div>
   <div class="chat-files-drawer-body">
-    <p class="chat-files-help">Los archivos se almacenan en S3 y al subirlos se intenta extraer su contenido, dividirlo en fragmentos, generar un resumen semántico y crear embeddings para RAG. Si algo queda pendiente, aquí puedes comprobarlo y reintentarlo. El clip junto a Imagen sube archivos; este panel permite analizarlos, compararlos y crear versiones.</p>
+    <p class="chat-files-help">Los archivos se adjuntan sin analizar su contenido. La pregunta con su nombre queda preparada en el chat; al enviarla se elige el procesamiento adecuado. Buscar texto o listar estructura no genera embeddings ni un resumen adicional. Los botones de indexación y semántica inician esos trabajos solo si los solicitas. El clip junto a Imagen sube archivos; este panel permite analizarlos, compararlos y crear versiones.</p>
     <p id="chatFilesPipelineSummary" class="chat-files-scope-note" role="status" aria-live="polite">Selecciona una conversación para revisar sus archivos.</p>
     <button id="driveKnowledgeOpen" type="button" class="btn btn-outline-primary w-100 mb-2" data-toggle="modal" data-target="#driveKnowledgeModal">Ver en ArcadeCloud · Buscar archivos</button>
     <div class="sidebar-section adjuntos-section">

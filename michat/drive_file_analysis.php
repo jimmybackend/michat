@@ -32,6 +32,9 @@ try {
         require_once __DIR__.'/includes/Drive/DriveChatAttachmentService.php';
         $working=(new DriveChatAttachmentService($db_connection,Config::getS3(),Config::getBucket()))->attach($user,$session,$file);
         $file=(int)$working['id_'];
+        echo json_encode(['ok'=>true,'deferred'=>true,'file_id'=>$file,'filename'=>$working['Nombre'],
+            'message'=>'Adjunto · pendiente de solicitud. No se ha procesado contenido.',
+            'attachment'=>['file_id'=>$file,'filename'=>$working['Nombre'],'s3_key'=>idx_build_s3_key($working)]],JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);exit;
     }
     $result=DriveAnalysisService::production($db_connection)->analyze($user,$session,$file,!$attach);
     if($attach) $result['attachment']=['file_id'=>$file,'filename'=>$working['Nombre'],'s3_key'=>idx_build_s3_key($working)];

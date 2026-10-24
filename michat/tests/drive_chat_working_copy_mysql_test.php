@@ -14,13 +14,13 @@ foreach(['FileS3','ChatSessions','ChatMessages','SessionContextBlocks','Embeddin
 $db->query("INSERT INTO ChatSessions(id_,user_id_,title,model_id,meta) VALUES(1,1,'Current','fixture','{\"knowledge_file_ids\":[3823]}'),(2,1,'New','fixture','{}'),(3,2,'Private','fixture','{}')");
 $db->query("INSERT INTO FileS3(id_,user_id_,Nombre,Ruta,Encriptado,Tamano,Found,Metadatos) VALUES(3823,1,'thankyou-old.php','Data/Jas/Amazon Linux/','thankyou-old.php',7000,1,'{\"custom\":\"keep\"}')");
 final class WorkMissing extends RuntimeException {public function getAwsErrorCode():string{return 'NoSuchKey';}}
-final class Config {public static object $s3;public static function getS3():object{return self::$s3;}public static function getBucket():string{return 'private-bucket';}}
+final class Config {public static int $modelCalls=0;public static function getBedrockRuntime(array $options=[]):object{self::$modelCalls++;throw new RuntimeException('No model expected for deterministic preparation');}public static object $s3;public static function getS3():object{return self::$s3;}public static function getBucket():string{return 'private-bucket';}}
 $code="<?php\n".str_repeat("// Revisar bible_progress y extraer el siguiente versiculo; evidencia verificable 41837.\n",90);
 $key='Data/Jas/Amazon Linux/thankyou-old.php';
 Config::$s3=new class($key,$code){
-    public array $objects=[],$copies=[],$gets=[],$puts=[];public bool $denyCopy=false;
+    public array $objects=[],$copies=[],$gets=[],$puts=[],$heads=[];public bool $denyCopy=false;
     public function __construct(string $key,string $body){$this->objects[$key]=['bytes'=>$body,'etag'=>'"original-v1"'];}
-    public function headObject(array $p):ArrayAccess{$o=$this->objects[$p['Key']]??throw new WorkMissing();return documentSdkResult(['ETag'=>$o['etag'],'ContentLength'=>strlen($o['bytes'])]);}
+    public function headObject(array $p):ArrayAccess{$this->heads[]=$p['Key'];$o=$this->objects[$p['Key']]??throw new WorkMissing();return documentSdkResult(['ETag'=>$o['etag'],'ContentLength'=>strlen($o['bytes'])]);}
     public function getObject(array $p):array{$o=$this->objects[$p['Key']]??throw new WorkMissing();$this->gets[]=$p['Key'];if(isset($p['IfMatch'])&&$p['IfMatch']!==$o['etag'])throw new RuntimeException('Revision changed');if(isset($p['SaveAs']))file_put_contents($p['SaveAs'],$o['bytes']);return ['Body'=>$o['bytes']];}
     public function putObject(array $p):array{$old=$this->objects[$p['Key']]??null;if(isset($p['IfMatch'])&&($old['etag']??null)!==$p['IfMatch'])throw new RuntimeException('Write conflict');if(($p['IfNoneMatch']??'')==='*'&&$old)throw new RuntimeException('Already exists');$this->puts[]=$p['Key'];$this->objects[$p['Key']]=['bytes'=>$p['Body'],'etag'=>'"'.hash('sha256',$p['Body']).'"'];return [];}
     public function copyObject(array $p):array{if($this->denyCopy)throw new RuntimeException('Copy denied');$source=rawurldecode(substr($p['CopySource'],strlen('private-bucket/')));$o=$this->objects[$source]??throw new WorkMissing();if($p['CopySourceIfMatch']!==$o['etag'])throw new RuntimeException('Copy revision changed');$this->copies[]=$p;$this->objects[$p['Key']]=['bytes'=>$o['bytes'],'etag'=>'"copy-'.hash('sha256',$p['Key']).'"'];return [];}
@@ -70,4 +70,36 @@ workCheck(count($catalog['files'])===1&&(int)$catalog['files'][0]['id_']===3823,
 Config::$s3->denyCopy=true;
 $db->query("INSERT INTO ChatSessions(id_,user_id_,title,model_id,meta) VALUES(4,1,'Copy failure','fixture','{}')");$count=(int)$db->query('SELECT COUNT(*) n FROM FileS3')->fetch_assoc()['n'];$denied=false;try{$attach->attach(1,4,3823);}catch(Throwable){$denied=true;}
 workCheck($denied&&(int)$db->query('SELECT COUNT(*) n FROM FileS3')->fetch_assoc()['n']===$count,'Failed S3 copy cannot create a fake successful attachment row');
+// Deferred selection: no downloads, chunks, summaries, queue or model calls.
+Config::$s3->denyCopy=false;
+$lazyCode="<?php\nclass LazyExample { public function run() { return 41837; } }\n// SECRET_UNUSED_CONTEXT\n".str_repeat("// Filler that must not enter the grep result.\n",120);
+$lazyKey='Data/original/lazy.php';Config::$s3->objects[$lazyKey]=['bytes'=>$lazyCode,'etag'=>'"lazy-v1"'];
+$db->query("INSERT INTO FileS3(id_,user_id_,Nombre,Ruta,Encriptado,Tamano,Found) VALUES(5000,1,'lazy.php','Data/original/','lazy.php',7000,1)");
+$db->query("INSERT INTO ChatSessions(id_,user_id_,title,model_id,meta) VALUES(5,1,'Deferred','fixture','{}')");
+$beforeGets=count(Config::$s3->gets);$beforePuts=count(Config::$s3->puts);
+$lazy=$attach->attach(1,5,5000);$lazyId=(int)$lazy['id_'];$lazyCopy=idx_build_s3_key($lazy);
+workCheck(count(Config::$s3->gets)===$beforeGets&&count(Config::$s3->puts)===$beforePuts,'Attach copies object server-side without reading content or creating a JSON analysis');
+workCheck((int)$db->query('SELECT COUNT(*) n FROM SessionContextBlocks WHERE session_id_=5')->fetch_assoc()['n']===0,'Deferred attachment creates no content blocks');
+$features=['procedural_memory_read'=>false,'project_memory_read'=>false,'session_memory_read'=>false,'question_memory_read'=>false,'project_rag'=>false,'attachment_rag'=>true,'context_ranking'=>true];
+$build=static fn(string $query)=>$builder->build(new MemoryRoute(['intent'=>'code','use_attachment_context'=>true]),['stage'=>'respond','user_id'=>1,'session_id'=>5,'query_text'=>$query,'pipeline_features'=>$features]);
+$heads=count(Config::$s3->heads);$idle=$build('Hola, ¿cómo estás?');
+workCheck(!$idle->selectedItems('attachments')&&count(Config::$s3->heads)===$heads&&Config::$modelCalls===0,'Unrelated message ignores passive attachments even when router requests them');
+$metadata=$build('Cuál es el tamaño del archivo "lazy.php"');
+workCheck(!$metadata->selectedItems('attachments')&&str_contains($metadata->block('attachment_request_block'),'lazy.php')&&count(Config::$s3->heads)===$heads,'Metadata-only question does not read S3 content');
+$literal=$build('Busca "41837" en el archivo "lazy.php"');
+workCheck(($literal->telemetry()['attachment_request']['strategy']??'')==='literal'&&str_contains(AttachmentPromptGrounding::append('',$literal),'41837'),'Explicit literal request starts extraction and returns matching evidence');
+$literalText=implode(' ',array_map(static fn($i)=>$i->content,$literal->selectedItems('attachments')));
+workCheck(!str_contains($literalText,'Filler that must not enter')&&str_contains($literalText,'L2:'),'Grep narrows content and preserves original source line numbers');
+workCheck(Config::$modelCalls===0&&(int)$db->query("SELECT COUNT(*) n FROM EmbeddingJobs ej JOIN SessionContextBlocks b ON b.id_=ej.target_id WHERE b.session_id_=5")->fetch_assoc()['n']===0,'Requested literal preparation creates neither model calls nor embedding jobs');
+workCheck(isset(Config::$s3->objects[$lazyKey.'.michat-u1.analysis.v1.json']),'Requested extraction persists reusable JSON beside original');
+$beforeCopyReads=count(array_filter(Config::$s3->gets,static fn($k)=>$k===$lazyCopy));
+$structure=$build('Lista las clases y métodos del archivo "lazy.php"');$structureText=implode(' ',array_map(static fn($i)=>$i->content,$structure->selectedItems('attachments')));
+workCheck(str_contains($structureText,'LazyExample')&&str_contains($structureText,'run')&&str_contains($structureText,'línea 2')&&!str_contains($structureText,'return 41837'),'PHP structure uses tokens and named declarations instead of method bodies');
+workCheck(count(array_filter(Config::$s3->gets,static fn($k)=>$k===$lazyCopy))===$beforeCopyReads&&Config::$modelCalls===0,'Follow-up reuses extracted evidence without another original download or extra model');
+$heads=count(Config::$s3->heads);$idle=$build('Qué hora es');workCheck(!$idle->selectedItems('attachments')&&count(Config::$s3->heads)===$heads,'Already analyzed attachments remain silent for unrelated messages');
+$otherLazy=$attach->attach(1,5,3823);$heads=count(Config::$s3->heads);$ambiguous=$build('Resume el documento');
+workCheck(!$ambiguous->selectedItems('attachments')&&str_contains(FileKnowledgeState::unavailableReply($ambiguous)??'','Indica el nombre')&&count(Config::$s3->heads)===$heads,'Ambiguous multi-file request asks which file without processing one arbitrarily');
+$db->query("UPDATE FileS3 SET AccessType='secure' WHERE id_=5000");$revoked=$build('Analiza el archivo "lazy.php"');
+workCheck(!$revoked->selectedItems('attachments'),'On-demand selection cannot use revoked originals or cached working evidence');
+$db->query("UPDATE FileS3 SET AccessType='normal' WHERE id_=5000");
 echo "OK $n Drive chat working-copy checks\n";

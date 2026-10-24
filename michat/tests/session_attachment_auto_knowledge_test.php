@@ -18,7 +18,7 @@ $check = static function (bool $ok, string $label) use (&$passed, &$failed): voi
     $ok ? $passed++ : $failed++;
 };
 
-$check(str_contains($upload, 'SessionAttachmentKnowledgeService') && str_contains($upload, '->process('), 'session upload dispara indexación + semántica automática');
+$check(str_contains($upload, "'knowledge_status' => 'awaiting_request'") && !str_contains($upload, '->process('), 'upload conserva solo metadatos y espera una petición explícita');
 $check(str_contains($service, "'file_chunk'") && str_contains($service, "'file'"), 'servicio persiste chunks y resumen semántico');
 $check(str_contains($service, "'search_document'") && str_contains($service, 'saveSessionBlockEmbedding'), 'adjuntos se vectorizan como documentos y se guardan inmediatamente');
 $check(str_contains($service, "status='pending'") && str_contains($service, 'Mantenimiento'), 'fallo de embedding conserva retry en cola');
