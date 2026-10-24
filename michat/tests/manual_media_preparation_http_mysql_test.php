@@ -34,6 +34,6 @@ try{
         [$code,$data]=$request($endpoint,2);$check($code>=400&&empty($data['ok']),$endpoint.' rejects a foreign conversation/file before processing');
     }
     [$code,$data]=$request('attachment_processing.php');$check($code===200&&($data['jobs'][0]['phase']??'')==='extract','Question preflight identifies the named MP3 from live metadata');
-    [$code,$data]=$request('attachment_processing.php',1,'missing');$check($code===422&&($data['code']??'')==='processing_schema_required','Missing migration is actionable instead of an unsupported-audio extraction error');
+    [$code,$data]=$request('attachment_processing.php',1,'missing');$check($code===200&&!empty($data['ok'])&&($data['jobs'][0]['phase']??'')==='extract','Missing processing tables are created automatically and the MP3 request is queued');
     echo "OK $count manual media HTTP checks\n";
 }finally{proc_terminate($process);proc_close($process);unlink($log);unlink($serverLog);}

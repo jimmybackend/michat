@@ -12,7 +12,8 @@ try{
         http_response_code(403);echo json_encode(['ok'=>false,'error'=>'Acceso denegado']);exit;
     }
     $service=new AttachmentProcessingService($db_connection);
-    if(!$service->available()){if($service->plan($user,$session,trim((string)($_POST['query']??'')),'',true)){http_response_code(422);echo json_encode(['ok'=>false,'code'=>'processing_schema_required','error'=>'Falta aplicar la migración fase14_attachment_processing en el servidor para preparar documentos y transcribir audio/vídeo. El archivo adjunto se conserva.']);exit;}echo json_encode(['ok'=>true,'available'=>false,'jobs'=>[]]);exit;}
+    try{$service->available();}
+    catch(Throwable $e){error_log('ATTACHMENT_SCHEMA '.$e->getMessage());http_response_code(422);echo json_encode(['ok'=>false,'code'=>'processing_schema_failed','error'=>'No se pudieron preparar automáticamente las tablas de procesamiento. Revisa los permisos CREATE y CREATE TEMPORARY TABLES de la cuenta MySQL de MiChat y el registro del servidor. El archivo adjunto se conserva.']);exit;}
     $trace=(string)($_POST['trace_id']??'');if(!preg_match('/^[A-Za-z0-9_-]{16,36}$/',$trace))$trace='';
     // Release PHP session lock so real progress can be polled while a phase runs.
     session_write_close();

@@ -79,3 +79,15 @@ if ($configPath === null || $dbPath === null) {
 
 require_once $configPath;
 require_once $dbPath;
+
+// After a Git update, prepare only the reviewed additive processing tables.
+// Existing historical migrations and shared ArcadeCloud data are never replayed.
+if(isset($db_connection)&&$db_connection instanceof mysqli) {
+    require_once __DIR__.'/includes/Chat/ChatIdentity.php';
+    if(PHP_SAPI==='cli'||ChatIdentity::resolveUserId($db_connection)>0) {
+        try {
+            require_once __DIR__.'/includes/Migrations/AttachmentProcessingSchema.php';
+            (new AttachmentProcessingSchema($db_connection))->ensure();
+        }catch(Throwable $e){error_log('MICHAT_ADDITIVE_SCHEMA: '.$e->getMessage());}
+    }
+}

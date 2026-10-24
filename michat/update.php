@@ -27,6 +27,11 @@ try {
   $stmt->bind_param('i',$userId);$stmt->execute();$row=$stmt->get_result()->fetch_assoc();$stmt->close();
   if(!$row||$password===''||!password_verify($password,(string)$row['password']))updaterResponse(403,['ok'=>false,'error'=>'Contraseña incorrecta']);
   $result=(new MiChatUpdaterService())->execute($action);
+  // Runs without root using the configured application DB identity, including with older Git-only helpers.
+  require_once __DIR__.'/includes/Migrations/AttachmentProcessingSchema.php';
+  $result['database_update']=(new AttachmentProcessingSchema($db_connection))->ensure(true);
+  $result['message']='Código actualizado y tablas de procesamiento verificadas automáticamente. No se modificaron tablas existentes ni se reiniciaron servicios.';
+
   $detail='MiChat web updater: '.substr((string)($result['previous_commit']??''),0,12).' -> '.substr((string)($result['local_commit']??''),0,12);
   try {
     $ip=substr((string)($_SERVER['REMOTE_ADDR']??''),0,45);$event='Otro';

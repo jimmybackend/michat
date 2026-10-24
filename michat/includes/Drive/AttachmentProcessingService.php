@@ -11,8 +11,8 @@ final class AttachmentProcessingService
     public function __construct(private mysqli $db,private $clients=null){}
     public function available():bool
     {
-        try{if($this->db->query('SELECT id_ FROM AttachmentProcessingJobs LIMIT 0')===false||$this->db->query('SELECT id_ FROM AttachmentProcessingCosts LIMIT 0')===false)throw new mysqli_sql_exception('Processing schema unavailable',$this->db->errno);return true;}
-        catch(mysqli_sql_exception $e){if($e->getCode()===1146)return false;throw $e;}
+        require_once dirname(__DIR__).'/Migrations/AttachmentProcessingSchema.php';
+        return (new AttachmentProcessingSchema($this->db))->ensure()['ready'];
     }
     public static function complex(string $name):bool
     {
