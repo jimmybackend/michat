@@ -2,6 +2,8 @@
 
 Adjuntar conserva la copia de trabajo y los metadatos; no inicia embeddings ni análisis. Se mantiene el borrador automático con el nombre. Al enviar una pregunta sobre un documento complejo, el navegador espera la preparación y muestra las fases reales antes de solicitar la respuesta. Texto y código conservan la ruta ligera (lectura/búsqueda según intención).
 
+Las fuentes publicadas del proyecto con `files3_id_` y clave verificables aparecen en el mismo catálogo de la conversación y usan esa preparación al preguntar. El acceso depende del proyecto actual y su propietario; no se agregan a `knowledge_file_ids`. Se reutilizan resultados entre conversaciones autorizadas del proyecto. La ruta histórica de `SourceChunks` permanece para compatibilidad; esto no certifica su unificación completa ni añade membresías inexistentes.
+
 ## Preparación y evidencia
 
 `AttachmentProcessingJobs` conserva revisión, fase, checkpoints, reintentos y espera de proveedores. Las fases son extracción, chunks, embeddings por lotes, semántica y persistencia. Un fallo no se marca como terminado. Se verifican permisos y ETags de original y copia en cada avance; un bloqueo por configuración requiere una nueva petición tras corregirla. La recuperación usa el modelo activo y las respuestas añaden referencias de los fragmentos realmente recuperados. Esto no significa que cada respuesta revise todos los fragmentos: la recuperación selecciona evidencia relevante. Un límite de salida se anuncia como respuesta incompleta.

@@ -15,6 +15,7 @@ final class CentralDocumentIndex
         if (!$this->repo->available()) throw new RuntimeException('Falta la migración del índice documental central');
         $meta=json_decode((string)($session['meta']??''),true)?:[];
         $ids=array_slice(array_values(array_filter(array_map('intval',(array)($meta['knowledge_file_ids']??[])),static fn($id)=>$id>0)),0,100);
+        $ids=array_values(array_unique(array_merge($ids,array_keys((new DocumentAccessRepository($this->db))->projectFiles($userId,$session)))));
         $linked=$ids?' OR f.id_ IN ('.implode(',',$ids).')':'';
         $complete=$indexedOnly?' AND s.chunks_total>0 AND s.chunks_done=s.chunks_total':'';
         $rows=$this->repo->all("SELECT s.id_,s.files3_id,s.user_id_,s.revision_hash,s.s3_key,s.source_etag,s.source_sha256,s.format,s.extractor,s.state,s.coverage,s.extracted_chars,s.chunks_total,s.chunks_done,s.embedding_model,s.created_at,s.updated_at,f.Nombre,f.Ruta,f.Encriptado,f.Found,f.AccessType,f.Metadatos FROM DocumentKnowledgeSources s JOIN FileS3 f ON f.id_=s.files3_id AND f.user_id_=s.user_id_ WHERE s.user_id_=? AND f.Found=1 AND f.AccessType<>'secure' AND (f.Ruta LIKE ?{$linked}){$complete} ORDER BY s.id_ DESC",'is',$userId,'Data/Chat/Uploads/'.$userId.'/%/'.$sessionId.'/');
@@ -23,7 +24,7 @@ final class CentralDocumentIndex
             $fileId=(int)$source['files3_id'];
             if(!(new DocumentAccessRepository($this->db))->file($userId,$fileId)) continue;
             if (isset($sources[$fileId])) continue;
-            if (!idx_file_belongs_to_chat_session($source,$userId,$sessionId) && !DocumentAccessRepository::linked($session,$fileId)) continue;
+            try {(new DocumentAccessRepository($this->db))->requireFile($userId,$sessionId,$fileId);}catch(Throwable){continue;}
             if (idx_build_s3_key($source)!==$source['s3_key'] || strtolower(pathinfo($source['Nombre'],PATHINFO_EXTENSION))!==$source['format']) continue;
             $key=$source['s3_key'];
             if (!array_key_exists($key,$heads)) {

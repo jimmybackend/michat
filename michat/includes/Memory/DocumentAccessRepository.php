@@ -10,7 +10,7 @@ final class DocumentAccessRepository
     public function session(int $userId, int $sessionId): ?array
     {
         if ($userId <= 0 || $sessionId <= 0) return null;
-        $s = $this->db->prepare('SELECT id_,meta,status FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1');
+        $s = $this->db->prepare('SELECT id_,project_id_,meta,status FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1');
         if (!$s) return null;
         $s->bind_param('ii', $sessionId, $userId);
         $s->execute(); $row = $s->get_result()->fetch_assoc(); $s->close();
@@ -50,6 +50,47 @@ final class DocumentAccessRepository
         return in_array($fileId, array_map('intval', (array)($meta['knowledge_file_ids'] ?? [])), true);
     }
 
+    /** Published sources only; project ownership is checked independently of the session FK. */
+    public function projectFiles(int $userId, array $session): array
+    {
+        $project = (int)($session['project_id_'] ?? 0);
+        if ($project < 1) return [];
+        $s = $this->db->prepare("SELECT f.*, ps.id_ AS project_source_id, ps.s3_key AS published_key
+            FROM ProjectSources ps JOIN Projects p ON p.id_=ps.project_id_
+            JOIN FileS3 f ON f.id_=ps.files3_id_ AND f.user_id_=p.user_id_
+            WHERE p.id_=? AND p.user_id_=? AND p.status<>'deleted'
+              AND f.Found=1 AND f.AccessType<>'secure' ORDER BY ps.id_ LIMIT 101");
+        $s->bind_param('ii', $project, $userId);
+        $s->execute(); $rows=$s->get_result()->fetch_all(MYSQLI_ASSOC); $s->close();
+        $out=[];
+        foreach ($rows as $row) {
+            if (idx_build_s3_key($row)!==$row['published_key'] || !$this->file($userId,(int)$row['id_'])) continue;
+            $row['knowledge_origin']='project'; $row['knowledge_project_id']=$project;
+            $out[(int)$row['id_']]=$row;
+        }
+        return $out;
+    }
+
+    /** One metadata-only catalog for planning, UI and preparation. No S3 or model calls. */
+    public function conversationFiles(int $userId, int $sessionId): array
+    {
+        $session=$this->session($userId,$sessionId);
+        if (!$session) return [];
+        $meta=json_decode((string)$session['meta'],true)?:[];
+        $ids=array_slice(array_values(array_filter(array_map('intval',(array)($meta['knowledge_file_ids']??[])),static fn($id)=>$id>0)),0,100);
+        $extra=$ids?' OR id_ IN ('.implode(',',$ids).')':'';
+        $pattern='Data/Chat/Uploads/'.$userId.'/%/'.$sessionId.'/';
+        $s=$this->db->prepare("SELECT * FROM FileS3 WHERE user_id_=? AND Found=1 AND AccessType<>'secure' AND (Ruta LIKE ?$extra) ORDER BY id_ LIMIT 101");
+        $s->bind_param('is',$userId,$pattern);$s->execute();$rows=$s->get_result()->fetch_all(MYSQLI_ASSOC);$s->close();
+        $out=$this->projectFiles($userId,$session);
+        foreach($rows as $row) {
+            $id=(int)$row['id_'];
+            if ((!idx_file_belongs_to_chat_session($row,$userId,$sessionId)&&!self::linked($session,$id)) || !$this->file($userId,$id)) continue;
+            if (!isset($out[$id])) { $row['knowledge_origin']='session'; $out[$id]=$row; }
+        }
+        return array_values($out);
+    }
+
     /** Fail closed if an indexed S3 object changed or cannot be verified. */
     public static function currentObject(array $meta, string $key): bool
     {
@@ -78,7 +119,8 @@ final class DocumentAccessRepository
     {
         $session = $this->session($userId, $sessionId);
         $file = $session ? $this->file($userId, $fileId) : null;
-        if (!$file || (!idx_file_belongs_to_chat_session($file, $userId, $sessionId) && !self::linked($session, $fileId))) {
+        if (!$file || (!idx_file_belongs_to_chat_session($file, $userId, $sessionId) && !self::linked($session, $fileId)
+            && !isset($this->projectFiles($userId,$session)[$fileId]))) {
             throw new RuntimeException('El archivo no pertenece a esta sesión o su acceso fue revocado');
         }
         return $file;

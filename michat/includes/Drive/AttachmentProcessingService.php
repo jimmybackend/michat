@@ -34,11 +34,8 @@ final class AttachmentProcessingService
     {
         $access=new DocumentAccessRepository($this->db);$owned=$access->session($user,$session);
         if(!$owned||$owned['status']!=='open')throw new RuntimeException('Conversación no autorizada');
-        $meta=json_decode((string)$owned['meta'],true)?:[];$ids=array_slice(array_map('intval',(array)($meta['knowledge_file_ids']??[])),0,100);
-        $extra=$ids?' OR id_ IN ('.implode(',',$ids).')':'';$pattern='Data/Chat/Uploads/'.$user.'/%/'.$session.'/';
-        $q=$this->db->prepare("SELECT id_,Nombre FROM FileS3 WHERE user_id_=? AND Found=1 AND AccessType<>'secure' AND (Ruta LIKE ?$extra) LIMIT 101");
-        $q->bind_param('is',$user,$pattern);$q->execute();$files=$q->get_result()->fetch_all(MYSQLI_ASSOC);$q->close();
-        $files=array_values(array_filter($files,static function($file)use($access,$user,$session){try{$access->requireFile($user,$session,(int)$file['id_']);return true;}catch(Throwable){return false;}}));
+        $meta=json_decode((string)$owned['meta'],true)?:[];
+        $files=$access->conversationFiles($user,$session);
         $plan=AttachmentRequestService::plan($query,$files,(int)($meta['last_requested_attachment_id']??0));$jobs=[];
         if(!$plan['requested']||$plan['strategy']==='metadata')return [];
         foreach($plan['files'] as $file)if(self::complex($file['Nombre']))$jobs[]=$dryRun?$file:$this->enqueue($user,$session,(int)$file['id_'],$trace);
