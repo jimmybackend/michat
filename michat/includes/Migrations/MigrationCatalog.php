@@ -19,6 +19,7 @@ final class MigrationCatalog
         'fase12b_5_mysql_generated_column_compatibility.sql',
         'fase12b_6_system_role_authorization.sql',
         'fase13_document_knowledge.sql',
+        'fase14_attachment_processing.sql',
     ];
 
     private string $sqlDirectory;

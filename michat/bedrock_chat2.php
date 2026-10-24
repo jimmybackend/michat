@@ -3221,11 +3221,13 @@ if (isset($contextBundle) && empty($successfulToolNames)) {
     if ($availabilityReply!==null) $reply_text=$availabilityReply;
 }
 
+if(isset($contextBundle)){require_once __DIR__.'/includes/Memory/AttachmentPromptGrounding.php';$reply_text=AttachmentPromptGrounding::sourceFooter($reply_text,$contextBundle);}
+if(($stopReason??'')==='max_tokens')$reply_text.="\n\n⚠️ La respuesta alcanzó el límite de salida del modelo y quedó incompleta. El contenido extraído se conserva.";
 // ===== Guardar respuesta del asistente =====
 $assistant_id = next_id($db_connection,'ChatMessages','id_');
 $role_assistant = 'assistant'; $ctypeA='text'; $contentA=$reply_text;
 $s3_key=null; $mime=null; $size_bytes=null; $thumb_key=null; $duration_ms=null;
-$model_msg=$model_id; $stop_reason=null; $prompt_tok=$usage['prompt_tokens']; $compl_tok=$usage['completion_tokens']; $latency_ms=null; $meta=$activityTraceId !== '' ? json_encode(['trace_id'=>$activityTraceId], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
+$model_msg=$model_id; $stop_reason=$stopReason ?? null; $prompt_tok=$usage['prompt_tokens']; $compl_tok=$usage['completion_tokens']; $latency_ms=null; $meta=$activityTraceId !== '' ? json_encode(['trace_id'=>$activityTraceId], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
 
 // Campos de metacognición para la respuesta
 $is_primordial = 0;

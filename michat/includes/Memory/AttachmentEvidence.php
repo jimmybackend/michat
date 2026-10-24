@@ -41,6 +41,9 @@ final class AttachmentEvidence
         if (isset($location['slide_part'])) $parts[] = 'parte interna ' . $location['slide_part'] . '; posición no verificada';
         if (isset($location['table'])) $parts[] = 'tabla ' . $location['table'];
         if (isset($location['sheet'])) $parts[] = 'hoja ' . $location['sheet'];
+        if(isset($location['timestamp_start_seconds'],$location['timestamp_end_seconds']))$parts[]='segundos '.$location['timestamp_start_seconds'].'–'.$location['timestamp_end_seconds'];
+        if(($meta['evidence_kind']??'')==='audio_transcript')$parts[]='transcripción AWS; no análisis visual del video';
+        if(($meta['evidence_kind']??'')==='visual_description')$parts[]='descripción visual generada, no texto literal';
         if (isset($location['line_start'])) $parts[] = 'líneas ' . (int)$location['line_start'] . '–' . (int)$location['line_end'];
         if (isset($meta['chunk'])) $parts[] = 'fragmento ' . (int)$meta['chunk'];
         if (($row['block_type'] ?? '') === 'file') $parts[] = 'resumen generado; comprobar en fragmentos originales';

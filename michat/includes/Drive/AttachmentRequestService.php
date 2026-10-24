@@ -11,9 +11,9 @@ final class AttachmentRequestService
     public static function plan(string $query,array $files,int $lastRequested=0): array
     {
         $named=array_values(array_filter($files,static fn($f)=>mb_stripos($query,(string)$f['Nombre'])!==false));
-        $action=(bool)preg_match('/anal[ií]z|exp[líi]c|res[uú]m|qu[eé] (?:dice|hace|contiene)|de qu[eé] trata|busc|grep|encuentra|localiz|lista|clases|m[eé]todos|funciones|compar|diferenci|revisa|corrig|errores|mejoras|refactor/iu',$query);
+        $action=(bool)preg_match('/transcri|describe|anal[ií]z|exp[líi]c|res[uú]m|qu[eé] (?:dice|hace|contiene)|de qu[eé] trata|busc|grep|encuentra|localiz|lista|clases|m[eé]todos|funciones|compar|diferenci|revisa|corrig|errores|mejoras|refactor/iu',$query);
         $metadata=(bool)preg_match('/(?:cu[aá]l|qu[eé]|d[oó]nde|dime|muestra).*(?:nombre|tama[ñn]o|ruta|fecha|tipo|ubicaci[oó]n)/iu',$query)&&!$action;
-        $reference=(bool)preg_match('/archivo|documento|adjunto|c[oó]digo|pdf|excel|presentaci|este|ese|sus? |tiene|hace|[aá]l?o\b/iu',$query);
+        $reference=(bool)preg_match('/audio|video|imagen|archivo|documento|adjunto|c[oó]digo|pdf|excel|presentaci|este|ese|sus? |tiene|hace|[aá]l?o\b/iu',$query);
         if(!$action&&!$metadata) return ['requested'=>false,'files'=>[],'strategy'=>'none'];
         if(!$named&&preg_match('/[^\s"“”]+\.[a-z][a-z0-9]{0,7}\b/iu',$query)) return ['requested'=>true,'files'=>[],'strategy'=>'clarify','message'=>'El archivo solicitado no está entre los adjuntos accesibles de esta conversación. Comprueba su nombre y permisos; no se procesó otro archivo.'];
         $targets=$named;
@@ -59,6 +59,7 @@ final class AttachmentRequestService
         if(!$plan['requested']) return $result;
         self::notify($progress,'plan','completed','Acción elegida: '.(['literal'=>'búsqueda literal','structure'=>'estructura del código','overview'=>'explicación general','review'=>'revisión del contenido','metadata'=>'consulta de metadatos','clarify'=>'identificar el archivo'][$plan['strategy']]??$plan['strategy']),['strategy'=>$plan['strategy'],'files'=>array_column($plan['files'],'Nombre')]);
         if(!$plan['files']) {self::notify($progress,'clarification','waiting','La petición necesita identificar el archivo',['message'=>$plan['message']??'']);return $result;}
+        $queryVector=null;
         $budget=48000;$chars=0;$fileBudget=intdiv($budget,max(1,count($plan['files'])));
         foreach($plan['files'] as $target) {
             $id=(int)$target['id_'];
@@ -66,6 +67,19 @@ final class AttachmentRequestService
                 self::notify($progress,'file_'.$id.'_metadata','completed','Metadatos del archivo disponibles',['filename'=>$target['Nombre']]);
                 $result['telemetry']['message'].="\n".json_encode($target,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE);
                 continue;
+            }
+            $complexReady=false;
+            require_once __DIR__.'/AttachmentProcessingService.php';
+            if(AttachmentProcessingService::complex($target['Nombre'])){
+                $processing=new AttachmentProcessingService($this->db);
+                if($processing->available()){
+                    $job=$processing->enqueue($user,$session,$id);
+                    if(!in_array($job['status'],['ready','partial'],true)){
+                        $result['telemetry']['message'].="\n".$target['Nombre'].': tarea #'.$job['id_'].' — '.AttachmentProcessingService::label($job['phase']).'. La respuesta espera el resultado; no hay que reenviar el archivo.';
+                        $result['telemetry']['processing_jobs'][]=AttachmentProcessingService::publicJob($job);continue;
+                    }
+                    $complexReady=true;
+                }
             }
             $fileProgress=static function(string $key,string $status,string $title,array $details=[])use($progress,$id,$target){self::notify($progress,'file_'.$id.'_'.$key,$status,$title,['file_id'=>$id,'filename'=>$target['Nombre']]+$details);};
             $prepared=DriveAnalysisService::production($this->db)->analyze($user,$session,$id,false,false,$fileProgress);
@@ -76,6 +90,13 @@ final class AttachmentRequestService
             $rows=array_values(array_filter($rows,static function($r)use($id,$source){$m=json_decode($r['source_ids'],true)?:[];return (int)($m['files3_id']??0)===$id&&($m['source_etag']??'')===$source['etag'];}));
             $fileProgress('selecting','started','Ejecutando la acción sobre el contenido',['strategy'=>$plan['strategy'],'extracted_chunks'=>count($rows)]);
             $selection=self::select($rows,$plan['strategy'],$plan['term']??'',strtolower(pathinfo($file['Nombre'],PATHINFO_EXTENSION)));
+            if($complexReady&&$plan['strategy']==='overview'&&preg_match('/sobre|acerca|importe|cu[aá]nt|celda|f[oó]rmula|referencia/iu',$query)){
+                if($queryVector===null){$queryVector=[];if(function_exists('generateTitanEmbedding')&&class_exists('QueryEmbeddingProvider'))$queryVector=(new QueryEmbeddingProvider($this->db,Config::getBedrockRuntime(),$session,null))->get($query);}
+                $found=(new AttachmentContextRepository($this->db,null))->retrieve($user,$session,$query,'rag',$queryVector?:null,null);
+                $byId=array_column($rows,null,'id_');$relevant=[];
+                foreach($found['items'] as $item)if(($item->metadata['files3_id']??0)===$id&&isset($byId[$item->sourceId]))$relevant[]=$byId[$item->sourceId];
+                if($relevant)$selection=['rows'=>$relevant,'matches'=>0,'partial'=>count($relevant)<count($rows),'message'=>'RAG híbrido: '.count($relevant).' fragmentos relevantes de '.count($rows).' extraídos; la respuesta usa esa selección.'];
+            }
             $partial=($prepared['coverage']??'')==='partial';$sent=0;$fileChars=0;
             foreach($selection['rows'] as $row) {
                 $content=(string)$row['content_preview'];$meta=json_decode($row['source_ids'],true)?:[];
@@ -83,7 +104,7 @@ final class AttachmentRequestService
                 if($chars+mb_strlen($content)+mb_strlen($citation)>$budget||$fileChars+mb_strlen($content)+mb_strlen($citation)>$fileBudget) break;
                 $chars+=mb_strlen($content)+mb_strlen($citation);$fileChars+=mb_strlen($content)+mb_strlen($citation);$sent++;
                 $result['items'][]=new ContextItem('SessionContextBlocks',(int)$row['id_'],'file_chunk','session_attachment',$content,1.0,null,
-                    ['mode'=>'always','files3_id'=>$id,'source_etag'=>$source['etag'],'filename'=>$file['Nombre'],'citation'=>$citation,'locator'=>$meta['locator']??[],'strategy'=>$plan['strategy'],'literal_no_match'=>$plan['strategy']==='literal'&&$selection['matches']===0,'truncated'=>$partial]);
+                    ['mode'=>'always','files3_id'=>$id,'source_etag'=>$source['etag'],'filename'=>$file['Nombre'],'citation'=>$citation,'locator'=>$meta['locator']??[],'evidence_kind'=>$meta['evidence_kind']??'document_text','strategy'=>$plan['strategy'],'literal_no_match'=>$plan['strategy']==='literal'&&$selection['matches']===0,'truncated'=>$partial]);
             }
             // Vision is only invoked after an explicit request. Its existing
             // description is evidence of a generated interpretation, not raw OCR.

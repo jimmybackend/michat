@@ -38,6 +38,11 @@ final class ChatExecutionService
             if ($availabilityReply!==null) $result=new ChatExecutionResult($availabilityReply,$result->assistantMessageId,$result->modelId,$result->traceId,$result->tokenUsage,$result->tools,$result->artifacts,$result->warnings,$result->stopReason,$result->latencyMs,$result->controlDecision);
         }
 
+        if(isset($prepared['bundle'])&&$prepared['bundle']->selectedItems('attachments')){
+            require_once dirname(__DIR__).'/Memory/AttachmentPromptGrounding.php';
+            $cited=AttachmentPromptGrounding::sourceFooter($result->replyText,$prepared['bundle']);
+            $result=new ChatExecutionResult($cited,$result->assistantMessageId,$result->modelId,$result->traceId,$result->tokenUsage,$result->tools,$result->artifacts,$result->warnings,$result->stopReason,$result->latencyMs,$result->controlDecision);
+        }
         $modelDuration=$result->latencyMs??max(0,(int)round((microtime(true)-$modelStartedAt)*1000));
         $this->activity?->emit($request->traceId,$request->userId,$request->sessionId,'respond','model_round_completed','completed','Respuesta del modelo completada','El modelo efectivo terminó la generación.',['usage'=>$result->tokenUsage,'stop_reason'=>$result->stopReason],$result->modelId,$modelDuration);
         if($this->responses&&!empty($request->taskContext['persist_final_response'])){

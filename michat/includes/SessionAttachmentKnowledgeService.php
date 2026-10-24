@@ -22,9 +22,10 @@ final class SessionAttachmentKnowledgeService
     private mysqli $db;
     private $bedrock = null;
 
-    public function __construct(mysqli $db)
+    public function __construct(mysqli $db, private bool $metered = false, ?object $runtime = null, private ?object $s3Override = null)
     {
         $this->db = $db;
+        $this->bedrock = $runtime;
     }
 
     /** @return array<string,mixed> */
@@ -84,6 +85,29 @@ final class SessionAttachmentKnowledgeService
         return $this->semanticPrepared($sessionId, $fileId, $file, $extracted);
     }
 
+    /** Trusted extraction adapters only; never accepts raw HTTP content. */
+    public function indexDerived(int $user,int $session,int $id,array $extracted): array
+    {
+        $file=$this->ownedFile($user,$session,$id);
+        $head=($this->s3Override??Config::getS3())->headObject(['Bucket'=>Config::getBucket(),'Key'=>idx_build_s3_key($file)]);
+        if(!hash_equals((string)$head['ETag'],(string)($extracted['source_etag']??'')))throw new RuntimeException('La revisión de trabajo cambió');
+        return $this->indexPrepared($session,$id,$file,$extracted,[],false);
+    }
+    public function embedPending(int $user,int $session,int $id,int $limit=4): array
+    {
+        $this->loadRuntime($user);$file=$this->ownedFile($user,$session,$id);$state=$this->embeddingState();
+        if(!$state['active']||!$state['model'])throw new RuntimeException('Activa y configura embedding_main para completar el RAG');
+        $key=idx_build_s3_key($file);
+        $q=$this->db->prepare("SELECT id_ FROM SessionContextBlocks WHERE session_id_=? AND s3_path=? AND block_type='file_chunk' AND (embedding_json IS NULL OR embedding_model IS NULL OR embedding_model<>?) ORDER BY id_ LIMIT ".max(1,min(8,$limit)));
+        $q->bind_param('iss',$session,$key,$state['model']);$q->execute();$ids=array_column($q->get_result()->fetch_all(MYSQLI_ASSOC),'id_');$q->close();
+        if($ids){$result=$this->embedBlocksNow($session,array_map('intval',$ids),$state['model']);if($result['pending'])throw new RuntimeException('No se completó el lote de embeddings; se conservará para reintentar');}
+        return ['done'=>!$ids,'model'=>$state['model']];
+    }
+    public function summarizeDerived(int $user,int $session,int $id,array $extracted): array
+    {
+        $this->loadRuntime($user);return $this->semanticPrepared($session,$id,$this->ownedFile($user,$session,$id),$extracted,false);
+    }
+
     /** Shared embedding adapter for central jobs; never silently truncates a chunk. */
     public function vectorizeDocumentChunk(int $userId,string $text,string $expectedModel): array
     {
@@ -126,6 +150,17 @@ final class SessionAttachmentKnowledgeService
      * @param array<string,mixed> $extracted
      * @return array<string,mixed>
      */
+    private function derivedLocator(array $locator,array $extracted):array
+    {
+        if(($extracted['evidence_kind']??'')==='visual_description'){unset($locator['line_start'],$locator['line_end']);return $locator;}
+        $segments=$extracted['segments']??[];
+        if($segments&&isset($locator['line_start'],$locator['line_end'])){
+            $first=$segments[$locator['line_start']-1]??[];$last=$segments[$locator['line_end']-1]??[];
+            if(isset($first['start_seconds'],$last['end_seconds'])){$locator['timestamp_start_seconds']=$first['start_seconds'];$locator['timestamp_end_seconds']=$last['end_seconds'];}
+        }
+        return $locator;
+    }
+
     private function indexPrepared(int $sessionId, int $fileId, array $file, array $extracted, array $warnings = [], bool $withEmbeddings = true): array
     {
         $warnings=array_merge($warnings,(array)($extracted['warnings'] ?? []));
@@ -155,7 +190,8 @@ final class SessionAttachmentKnowledgeService
                     'filename' => (string)$file['Nombre'],
                     'files3_id' => $fileId,
                     'chunk' => $i + 1,
-                    'locator' => $located['locator'],
+                    'locator' => $this->derivedLocator($located['locator'],$extracted),
+                    'evidence_kind' => $extracted['evidence_kind']??'document_text',
                     'chunk_sha256' => $located['sha256'],
                     'source_sha256' => $extracted['source_sha256'] ?? null,
                     'source_etag' => $extracted['source_etag'] ?? null,
@@ -231,7 +267,7 @@ final class SessionAttachmentKnowledgeService
      * @param array<string,mixed> $extracted
      * @return array<string,mixed>
      */
-    private function semanticPrepared(int $sessionId, int $fileId, array $file, array $extracted): array
+    private function semanticPrepared(int $sessionId, int $fileId, array $file, array $extracted, bool $withEmbeddings = true): array
     {
         if (!aiAgentConfig('attachment_semantic_prompt')) {
             throw new RuntimeException('Falta attachment_semantic_prompt en UserAIAgentConfigs');
@@ -297,7 +333,7 @@ final class SessionAttachmentKnowledgeService
             (int)($usage['outputTokens'] ?? 0)
         );
 
-        $embedding = $this->embeddingState();
+        $embedding = $withEmbeddings ? $this->embeddingState() : ['active'=>false,'model'=>null];
         $this->db->begin_transaction();
         try {
             $this->deleteBlocks($sessionId, $s3Key, 'file');
@@ -586,9 +622,11 @@ final class SessionAttachmentKnowledgeService
 
     private function logSemanticUsage(int $sessionId, string $modelId, int $input, int $output): void
     {
+        if($this->metered)return;
         try {
+            require_once __DIR__.'/Chat/ChatTokenUsageService.php';
             $phase = 'summarize';
-            $cost = 0.0;
+            $cost = ChatTokenUsageService::calculateCost($modelId,$input,$output);
             $duration = 0;
             $stmt = $this->db->prepare('INSERT INTO TokenUsage (session_id_,message_id_,phase,model_id,input_tokens,output_tokens,estimated_cost_usd,duration_ms) VALUES (?,NULL,?,?,?,?,?,?)');
             if ($stmt) {
@@ -603,7 +641,7 @@ final class SessionAttachmentKnowledgeService
 
     private function logEmbeddingUsage(int $sessionId, string $modelId, int $inputTokens): void
     {
-        if ($inputTokens <= 0) return;
+        if ($this->metered || $inputTokens <= 0) return;
         try {
             $phase = (string)aiAgentValue('embedding_main', 'token_usage_phase', 'rag');
             $output = 0;

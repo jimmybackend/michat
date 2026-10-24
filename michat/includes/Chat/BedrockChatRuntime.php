@@ -46,6 +46,7 @@ final class BedrockChatRuntime implements ChatRuntimeInterface
             $usage['total_tokens'] += $response->usage['total_tokens'];
             $budget?->recordUsage($response->usage['prompt_tokens'],$response->usage['completion_tokens']);
             $text=$response->text;$uses=$response->toolUses;
+            if($response->stopReason==='max_tokens')$text.="\n\n⚠️ La respuesta alcanzó el límite de salida del modelo y quedó incompleta. El contenido extraído se conserva.";
             if ($response->stopReason !== 'tool_use' || !$uses) {
                 if($this->toolGate instanceof ToolExecutionCompletionGuardInterface)$this->toolGate->assertCompletionAllowed($this->serverContext($request));
                 return new ChatExecutionResult(trim($text),null,$model,$request->traceId,$usage,[],[],[],$response->stopReason,null);
