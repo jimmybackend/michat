@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once dirname(__DIR__).'/Memory/DocumentAccessRepository.php';
 
 /** The model proposes data filters only. It never supplies SQL or sees file content. */
 final class MetadataSearchService
@@ -56,6 +57,9 @@ final class MetadataSearchService
         try { $s->bind_param($types,...$params); if (!$s->execute()) throw new RuntimeException('No se pudo buscar'); $rows=$s->get_result()->fetch_all(MYSQLI_ASSOC); }
         finally { $s->close(); }
         $more = count($rows)>40; if ($more) array_pop($rows);
-        return ['files'=>$rows,'filters'=>$filters,'ai_used'=>$used,'has_more'=>$more,'next_cursor'=>$rows?(int)end($rows)['id_']:0,'search_scope'=>'FileS3 metadata only'];
+        $next=$rows?(int)end($rows)['id_']:0;
+        $access=new DocumentAccessRepository($this->db);
+        $rows=array_values(array_filter($rows,static fn($row)=>$access->file($user,(int)$row['id_'])!==null));
+        return ['files'=>$rows,'filters'=>$filters,'ai_used'=>$used,'has_more'=>$more,'next_cursor'=>$next,'search_scope'=>'FileS3 metadata only'];
     }
 }
