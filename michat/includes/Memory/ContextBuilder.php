@@ -58,7 +58,8 @@ final class ContextBuilder
         );
         $policySession=(new DocumentAccessRepository($this->db))->session($userId,$sessionId);
         $policyMeta=json_decode((string)($policySession['meta']??''),true)?:[];
-        $onDemand=($policyMeta['attachment_processing_policy']??'')==='on_request';
+        $onDemand=($policyMeta['attachment_processing_policy']??'')==='on_request'
+            || ($policySession && (int)($policySession['project_id_']??0)>0 && (bool)(new DocumentAccessRepository($this->db))->projectFiles($userId,$policySession));
         $activeAttachmentFocus=0;
         if(!$onDemand && $stage==='respond' && !$explicitFileQuestion && preg_match('/error|mejor|corr[ií]g|refactor|optimiz|exp[líi]ca|res[uú]m|modific|segur|vulnerab|qu[eé] hace|anal[ií]za/iu',$queryText)) {
             $access=new DocumentAccessRepository($this->db);$sessionRow=$access->session($userId,$sessionId);

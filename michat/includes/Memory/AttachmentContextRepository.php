@@ -68,7 +68,7 @@ final class AttachmentContextRepository
                 if (!array_key_exists($fileId, $files)) $files[$fileId] = $this->access->file($userId, $fileId);
                 $file = $files[$fileId];
                 if (!$file || idx_build_s3_key($file) !== $row['s3_path']) continue;
-                if (!idx_file_belongs_to_chat_session($file, $userId, $sessionId) && !DocumentAccessRepository::linked($session, $fileId)) continue;
+                try { $this->access->requireFile($userId,$sessionId,$fileId); } catch(Throwable) { continue; }
                 $revision = $row['s3_path'] . ':' . (string)($meta['source_etag'] ?? '');
                 if (!array_key_exists($revision,$revisions)) $revisions[$revision] = $this->access->currentFileObject($file,$meta,$row['s3_path']);
                 if (!$revisions[$revision]) { $t['stale_or_unavailable_blocks'] = ($t['stale_or_unavailable_blocks'] ?? 0) + 1; continue; }

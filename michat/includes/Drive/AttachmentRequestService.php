@@ -11,10 +11,11 @@ final class AttachmentRequestService
     public static function plan(string $query,array $files,int $lastRequested=0): array
     {
         $named=array_values(array_filter($files,static fn($f)=>mb_stripos($query,(string)$f['Nombre'])!==false));
+        $question=(bool)preg_match('/[¿?]|\b(?:cu[aá]l|cu[aá]nt[oa]s?|qui[eé]n|d[oó]nde|c[oó]mo|qu[eé])\b/iu',$query);
         $action=(bool)preg_match('/transcri|describe|anal[ií]z|exp[líi]c|res[uú]m|qu[eé] (?:dice|hace|contiene)|de qu[eé] trata|busc|grep|encuentra|localiz|lista|clases|m[eé]todos|funciones|compar|diferenci|revisa|corrig|errores|mejoras|refactor/iu',$query);
         $metadata=(bool)preg_match('/(?:cu[aá]l|qu[eé]|d[oó]nde|dime|muestra).*(?:nombre|tama[ñn]o|ruta|fecha|tipo|ubicaci[oó]n)/iu',$query)&&!$action;
         $reference=(bool)preg_match('/audio|video|imagen|archivo|documento|adjunto|c[oó]digo|pdf|excel|presentaci|este|ese|sus? |tiene|hace|[aá]l?o\b/iu',$query);
-        if(!$action&&!$metadata) return ['requested'=>false,'files'=>[],'strategy'=>'none'];
+        if(!$action&&!$metadata&&!($question&&($named||count($files)===1))) return ['requested'=>false,'files'=>[],'strategy'=>'none'];
         if(!$named&&preg_match('/[^\s"“”]+\.[a-z][a-z0-9]{0,7}\b/iu',$query)) return ['requested'=>true,'files'=>[],'strategy'=>'clarify','message'=>'El archivo solicitado no está entre los adjuntos accesibles de esta conversación. Comprueba su nombre y permisos; no se procesó otro archivo.'];
         $targets=$named;
         if(!$targets&&$reference&&count($files)===1) $targets=$files;
@@ -48,12 +49,8 @@ final class AttachmentRequestService
 
     public function prepare(int $user,int $session,string $query,array $sessionMeta,?callable $progress=null): array
     {
-        $ids=array_slice(array_map('intval',(array)($sessionMeta['knowledge_file_ids']??[])),0,100);
-        $extra=$ids?' OR id_ IN ('.implode(',',$ids).')':'';$pattern='Data/Chat/Uploads/'.$user.'/%/'.$session.'/';
-        $q=$this->db->prepare("SELECT id_,Nombre,Ruta,Encriptado,Tamano,Fecha FROM FileS3 WHERE user_id_=? AND Found=1 AND AccessType<>'secure' AND (Ruta LIKE ?$extra) ORDER BY id_ LIMIT 101");
-        $q->bind_param('is',$user,$pattern);$q->execute();$files=$q->get_result()->fetch_all(MYSQLI_ASSOC);$q->close();
         $access=new DocumentAccessRepository($this->db);
-        $files=array_values(array_filter($files,static function($f)use($access,$user,$session){try{$access->requireFile($user,$session,(int)$f['id_']);return true;}catch(Throwable){return false;}}));
+        $files=$access->conversationFiles($user,$session);
         $plan=self::plan($query,$files,(int)($sessionMeta['last_requested_attachment_id']??0));
         $result=['items'=>[],'telemetry'=>['requested'=>$plan['requested'],'strategy'=>$plan['strategy'],'files'=>[],'message'=>$plan['message']??'']];
         if(!$plan['requested']) return $result;
@@ -65,7 +62,7 @@ final class AttachmentRequestService
             $id=(int)$target['id_'];
             if($plan['strategy']==='metadata') {
                 self::notify($progress,'file_'.$id.'_metadata','completed','Metadatos del archivo disponibles',['filename'=>$target['Nombre']]);
-                $result['telemetry']['message'].="\n".json_encode($target,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE);
+                $result['telemetry']['message'].="\n".json_encode(array_intersect_key($target,array_flip(['id_','Nombre','Ruta','Tamano','Fecha','knowledge_origin','knowledge_project_id'])),JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE);
                 continue;
             }
             $complexReady=false;
@@ -106,7 +103,7 @@ final class AttachmentRequestService
                 if($chars+mb_strlen($content)+mb_strlen($citation)>$budget||$fileChars+mb_strlen($content)+mb_strlen($citation)>$fileBudget) break;
                 $chars+=mb_strlen($content)+mb_strlen($citation);$fileChars+=mb_strlen($content)+mb_strlen($citation);$sent++;
                 $result['items'][]=new ContextItem('SessionContextBlocks',(int)$row['id_'],'file_chunk','session_attachment',$content,1.0,null,
-                    ['mode'=>'always','files3_id'=>$id,'source_etag'=>$source['etag'],'filename'=>$file['Nombre'],'citation'=>$citation,'locator'=>$meta['locator']??[],'evidence_kind'=>$meta['evidence_kind']??'document_text','chunk_ordinal'=>(int)($meta['chunk']??0),'chunk_total'=>(int)($meta['total']??0),'content_partial'=>in_array($plan['strategy'],['literal','structure'],true),'strategy'=>$plan['strategy'],'literal_no_match'=>$plan['strategy']==='literal'&&$selection['matches']===0,'truncated'=>$partial]);
+                    ['mode'=>'always','files3_id'=>$id,'source_etag'=>$source['etag'],'filename'=>$file['Nombre'],'citation'=>$citation,'locator'=>$meta['locator']??[],'evidence_kind'=>$meta['evidence_kind']??'document_text','chunk_ordinal'=>(int)($meta['chunk']??0),'chunk_total'=>(int)($meta['total']??0),'content_partial'=>in_array($plan['strategy'],['literal','structure'],true),'knowledge_origin'=>$target['knowledge_origin']??'session','project_id'=>$target['knowledge_project_id']??null,'strategy'=>$plan['strategy'],'literal_no_match'=>$plan['strategy']==='literal'&&$selection['matches']===0,'truncated'=>$partial]);
             }
             // Vision is only invoked after an explicit request. Its existing
             // description is evidence of a generated interpretation, not raw OCR.
