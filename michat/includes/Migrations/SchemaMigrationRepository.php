@@ -15,6 +15,7 @@ final class SchemaMigrationRepository
 
     public function ensureHistoryTable(): void
     {
+        if($this->historyTableExists())return;
         $this->db->query("CREATE TABLE IF NOT EXISTS SchemaMigrations (
           migration_id varchar(128) NOT NULL,
           filename varchar(255) NOT NULL,

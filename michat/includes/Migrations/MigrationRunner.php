@@ -36,6 +36,15 @@ final class MigrationRunner
             $applied=[];
             foreach($status['rows'] as $index=>$row){
                 if($row['state']!=='PENDING')continue;$migration=$migrations[$index];$start=hrtime(true);
+                if($migration['migration_id']==='fase14_attachment_processing') {
+                    require_once __DIR__.'/AttachmentProcessingSchema.php';
+                    // Same advisory lock is already held. Supports a verified runtime-created schema.
+                    (new AttachmentProcessingSchema($this->repository->db()))->ensure(true,true);
+                    $applied[]=$migration['migration_id'];
+                    // ensure() records when history exists; clean runner history may be empty.
+                    if(!isset($this->repository->fetchHistory()[$migration['migration_id']]))$this->repository->insertHistory($migration,0,'applied',self::VERSION);
+                    continue;
+                }
                 $this->assertPendingPreState($migration['migration_id']);
                 try {$this->executor->executeFile($migration['path']);}
                 catch(Throwable $e){throw new RuntimeException('MIGRATION FAILED / PARTIAL OR UNKNOWN STATE: '.$migration['migration_id'].': '.$e->getMessage(),0,$e);}

@@ -38,13 +38,11 @@ Desde la raíz del checkout EC2, con la configuración privada habitual disponib
 
 ```sh
 git pull --ff-only origin main
-php michat/bin/migrations.php status
-php michat/bin/migrations.php apply
-php michat/bin/migrations.php status
+# Al abrir MiChat se crean automáticamente las dos tablas fase14.
 php michat/bin/attachment_processing_worker.php --max-batches=10
 ```
 
-La migración `fase14_attachment_processing.sql` añade dos tablas sin modificar tablas ni datos anteriores. No adoptar una historia desconocida para forzar `apply`: si `status` denuncia una incompatibilidad, resolverla antes. Para revertir aplicación, detener el worker y volver al commit anterior; las tablas nuevas pueden permanecer. Una retirada definitiva de esas dos tablas exige respaldar previamente auditoría/checkpoints y un procedimiento separado; no hay borrado automático.
+La migración `fase14_attachment_processing.sql` añade dos tablas sin modificar tablas ni datos anteriores. Desde esta corrección, el arranque autenticado de MiChat, su worker y las acciones de procesamiento preparan esas tablas automáticamente después de actualizar Git; no se necesita ejecutar SQL manualmente. El actualizador web verifica además el esquema y comunica el resultado. No adoptar una historia desconocida para forzar `apply`: si `status` denuncia una incompatibilidad, resolverla antes. Para revertir aplicación, detener el worker y volver al commit anterior; las tablas nuevas pueden permanecer. Una retirada definitiva de esas dos tablas exige respaldar previamente auditoría/checkpoints y un procedimiento separado; no hay borrado automático.
 
 El worker usa los mismos permisos privados de la aplicación para S3, Bedrock, Textract y Transcribe. No conceder acceso público ni ampliar globalmente el bucket. La configuración global de agentes debe habilitar `embedding_main`, semántica y visión según corresponda.
 
@@ -56,7 +54,7 @@ En producción comprobar por separado: (1) adjuntar sin crear contenido; (2) pre
 
 ## Corrección de entradas manuales y salida cortada
 
-Los botones de indexar y crear semántica, incluida la acción de análisis de Drive, usan la misma cola para documentos complejos, imágenes y multimedia. El navegador continúa consultando esa tarea y no anuncia éxito al encolarla. MP3 y otros medios no pasan al detector de texto. La comprobación antes de preguntar consulta los adjuntos autorizados de la BD aunque la lista del navegador aún esté cargando. Si falta fase14, se indica la migración requerida explícitamente.
+Los botones de indexar y crear semántica, incluida la acción de análisis de Drive, usan la misma cola para documentos complejos, imágenes y multimedia. El navegador continúa consultando esa tarea y no anuncia éxito al encolarla. MP3 y otros medios no pasan al detector de texto. La comprobación antes de preguntar consulta los adjuntos autorizados de la BD aunque la lista del navegador aún esté cargando. Si faltan las tablas fase14, se crean automáticamente bajo bloqueo y se continúa con el archivo. Si falla la preparación, se indica revisar permisos MySQL y el log.
 
 Una respuesta con `stopReason=max_tokens` puede realizar hasta tres continuaciones automáticas adicionales, usando el contexto original y la salida previa. Se desactivan herramientas en esas continuaciones, se informa del avance y se suman todos los tokens para costos. Los presupuestos y la cancelación de Tasks siguen vigentes. Si ese presupuesto de continuación tampoco alcanza, permanece el aviso de respuesta incompleta; no implica que se haya perdido texto extraído del PDF. No se modifican tarifas ni configuraciones globales de salida.
 
