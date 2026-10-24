@@ -4,6 +4,7 @@ $host=getenv('DOCUMENT_TEST_DB_HOST');
 if (!$host){echo "SKIP selected-file production pipeline DB\n";exit;}
 if(!in_array($host,['127.0.0.1','localhost','::1'],true))throw new RuntimeException('Isolated loopback DB only');
 define('APP_BOOTSTRAP_LOADED',true);
+require_once __DIR__.'/fixtures/aws_result.php';
 require_once dirname(__DIR__).'/includes/Drive/DriveAnalysisService.php';
 require_once dirname(__DIR__).'/includes/SessionAttachmentKnowledgeService.php';
 require_once dirname(__DIR__).'/includes/Memory/bootstrap.php';
@@ -35,7 +36,7 @@ final class Config {
 Config::$s3=new class {
     public array $objects=['Data/codigo.txt'=>"Primera linea\nImporte verificable 41837\nUltima linea"];
     public bool $fail=false;public bool $ignoreSaveAs=false;
-    public function headObject(array $p):array{if($this->fail)throw new FixtureMissing('missing original');$b=$this->objects[$p['Key']]??throw new FixtureMissing('missing');return ['ETag'=>'"'.hash('sha256',$b).'"','ContentLength'=>strlen($b)];}
+    public function headObject(array $p):ArrayAccess{if($this->fail)throw new FixtureMissing('missing original');$b=$this->objects[$p['Key']]??throw new FixtureMissing('missing');return documentSdkResult(['ETag'=>'"'.hash('sha256',$b).'"','ContentLength'=>strlen($b)]);}
     public function getObject(array $p):array{$b=$this->objects[$p['Key']]??throw new FixtureMissing('missing');if(isset($p['SaveAs'])&&!$this->ignoreSaveAs)file_put_contents($p['SaveAs'],$b);return ['Body'=>$b];}
     public function putObject(array $p):array{$this->objects[$p['Key']]=$p['Body'];return [];}
 };

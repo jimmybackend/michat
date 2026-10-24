@@ -5,7 +5,7 @@ require_once __DIR__.'/DocumentProcessingException.php';
 /** Bounded download of the already authorized exact object revision. */
 final class S3DocumentDownload
 {
-    public static function save(object $s3,string $bucket,string $key,array $head,string $path,int $limit=67108864): void
+    public static function save(object $s3,string $bucket,string $key,array|ArrayAccess $head,string $path,int $limit=67108864): void
     {
         $expected=(int)($head['ContentLength']??-1);
         if ($expected===0) throw new DocumentProcessingException('source_download','empty_object','El objeto original de S3 está vacío; no hay contenido que indexar.');

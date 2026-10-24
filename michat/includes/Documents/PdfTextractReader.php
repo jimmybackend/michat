@@ -6,7 +6,7 @@ final class PdfOcrPendingException extends RuntimeException {}
 final class PdfTextractReader
 {
     public function __construct(private object $client) {}
-    public function read(string $bucket,string $key,array $head,?int $epoch=null): string
+    public function read(string $bucket,string $key,array|ArrayAccess $head,?int $epoch=null): string
     {
         $object=['Bucket'=>$bucket,'Name'=>$key];
         if (!empty($head['VersionId']) && $head['VersionId']!=='null') $object['Version']=(string)$head['VersionId'];
