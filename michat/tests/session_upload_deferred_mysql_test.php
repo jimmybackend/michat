@@ -7,7 +7,7 @@ if(PHP_SAPI==='cli-server') {
     define('APP_BOOTSTRAP_LOADED',true);
     $db_connection=new mysqli($host,getenv('DOCUMENT_TEST_DB_USER')?:'root',getenv('DOCUMENT_TEST_DB_PASSWORD')?:'',getenv('DOCUMENT_TEST_DB_NAME')?:'mysql',(int)(getenv('DOCUMENT_TEST_DB_PORT')?:3306));
     $db_connection->set_charset('utf8mb4');$schema=file_get_contents(dirname(__DIR__,2).'/adbbmis1_Cloud.sql');
-    foreach(['FileS3','S3Folders','ChatSessions','SessionContextBlocks','EmbeddingJobs'] as $name) {
+    foreach(['FileS3','S3Folders','ChatSessions','SessionContextBlocks','EmbeddingJobs','ChatActivityEvents'] as $name) {
         preg_match('/CREATE TABLE IF NOT EXISTS `'.$name.'` \(.*?\) ENGINE=.*?;/s',$schema,$m);
         $db_connection->query(str_replace(['CREATE TABLE IF NOT EXISTS','utf8mb4_0900_ai_ci','VIRTUAL NOT NULL'],['CREATE TEMPORARY TABLE','utf8mb4_unicode_ci','VIRTUAL'],$m[0]));
     }
@@ -31,6 +31,15 @@ if(PHP_SAPI==='cli-server') {
             'jobs'=>(int)$db_connection->query('SELECT COUNT(*) n FROM EmbeddingJobs')->fetch_assoc()['n']];
         file_put_contents(getenv('DEFERRED_UPLOAD_LOG'),json_encode($state)."\n",FILE_APPEND);
     });
+    if(parse_url($_SERVER['REQUEST_URI'],PHP_URL_PATH)==='/chat_activity_poll.php') {
+        require_once dirname(__DIR__).'/includes/Drive/AttachmentProgressReporter.php';
+        $progress=new AttachmentProgressReporter($db_connection,'attachment-poll-fixture-00001',1,1);
+        $progress('plan','completed','Acción elegida: explicación general',['strategy'=>'overview']);
+        $progress('file_1_extracting','started','Extrayendo contenido y preparando fragmentos',['filename'=>'direct.php']);
+        $progress('file_1_extracted','completed','Texto extraído y fragmentos guardados',['chunks'=>3]);
+        $progress('file_1_context_ready','completed','Contenido preparado para responder',['sent_items'=>3]);
+        require dirname(__DIR__).'/chat_activity_poll.php';exit;
+    }
     require dirname(__DIR__).'/session_upload.php';exit;
 }
 $socket=stream_socket_server('tcp://127.0.0.1:0',$errno,$error);if(!$socket)throw new RuntimeException($error);
@@ -59,5 +68,15 @@ try {
     [$code]=$request(1,2);$check($code===403,'Other users cannot upload into the conversation');
     $states=array_map(static fn($line)=>json_decode($line,true),file($log,FILE_IGNORE_NEW_LINES));$state=end($states);
     $check($state['calls']===[],'Rejected upload never touches S3 or models');
+    $poll=static function(int $user)use($address):array{
+        $ctx=stream_context_create(['http'=>['header'=>'X-Fixture-User: '.$user,'ignore_errors'=>true,'timeout'=>10]]);
+        $body=file_get_contents('http://'.$address.'/chat_activity_poll.php?session_id=1&trace_id=attachment-poll-fixture-00001',false,$ctx);
+        preg_match('/\s(\d{3})\s/',$http_response_header[0]??'',$m);return [(int)($m[1]??0),json_decode($body,true)];
+    };
+    [$code,$activity]=$poll(1);
+    $check($code===200&&count($activity['events']??[])===4,'Actual activity poller accepts user_id_ identity and returns file progress');
+    $check(($activity['events'][1]['event_key']??'')==='attachment_file_1_extracting'&&($activity['events'][3]['event_key']??'')==='attachment_file_1_context_ready','HTTP polling preserves processing milestone order');
+    $check(($activity['terminal']??true)===false,'Attachment preparation completion does not stop polling before the model finishes');
+    [$code]=$poll(2);$check($code===403,'Another user cannot poll the attachment progress trace');
     echo "OK $n deferred HTTP upload checks\n";
 } finally {proc_terminate($process);proc_close($process);unlink($log);unlink($serverLog);}

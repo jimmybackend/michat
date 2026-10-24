@@ -14,7 +14,7 @@ final class DriveAnalysisService
     {
         return new self($db,new AnalysisSidecarStore(Config::getS3(),Config::getBucket()));
     }
-    public function analyze(int $user,int $session,int $fileId,bool $summarize=true,bool $withEmbeddings=true): array
+    public function analyze(int $user,int $session,int $fileId,bool $summarize=true,bool $withEmbeddings=true,?callable $progress=null): array
     {
         $states=new FileKnowledgeState($this->db);
         $authorized=$this->access->requireFile($user,$session,$fileId);
@@ -22,12 +22,13 @@ final class DriveAnalysisService
         $lockId=(int)($lockFile['id_']??$fileId);
         $stage='lock';
         try {
-            return $this->locked($user,$lockId,function() use($user,$session,$fileId,$states,&$stage,$summarize,$withEmbeddings) {
+            return $this->locked($user,$lockId,function() use($user,$session,$fileId,$states,&$stage,$summarize,$withEmbeddings,$progress) {
                 $stage='access_recheck';
                 $file=$this->access->requireFile($user,$session,$fileId);
                 $stage='state_persistence';
                 $states->save($user,$session,$fileId,['status'=>'extracting','message'=>'Archivo vinculado. Comprobando contenido e índice.']);
                 $warnings=[];$state=null;
+                self::progress($progress,'verifying','started','Comprobando revisión y análisis guardado');
                 $stage='source_verification';
                 $source=$this->store->identity($file);
                 $origin=$this->access->original($file);$cacheFile=$origin?:$file;$cacheSource=$source;
@@ -42,11 +43,13 @@ final class DriveAnalysisService
                 $stage='index_lookup';
                 $chunks=$this->chunks($session,$source);
                 if (!$chunks && !empty($analysis['chunks'])) {
+                    self::progress($progress,'reusing','started','Reutilizando fragmentos del JSON verificado');
                     try { $this->importChunks($session,$source,$origin?self::remapChunks($analysis['chunks'],$cacheSource,$source):$analysis['chunks']);$chunks=$this->chunks($session,$source); }
                     catch(Throwable $e) { error_log('cached chunks: '.$e->getMessage());$warnings[]='No se pudo reutilizar el índice JSON; se comprobará el original.'; }
                 }
                 // Literal evidence is independent of summarization, embeddings and sidecar persistence.
                 if (!$chunks && !$image) {
+                    self::progress($progress,'extracting','started','Extrayendo contenido y preparando fragmentos');
                     $stage='extraction_index';
                     if (is_callable($this->indexer)) $indexed=($this->indexer)($user,$session,$fileId);
                     else {
@@ -56,7 +59,9 @@ final class DriveAnalysisService
                     $warnings=array_merge($warnings,(array)($indexed['warnings'] ?? []));
                     $chunks=$this->chunks($session,$source);
                     if (!$chunks) throw new RuntimeException('La extracción no produjo fragmentos verificables');
+                    self::progress($progress,'extracted','completed','Texto extraído y fragmentos guardados',['chunks'=>count($chunks)]);
                 }
+                if($chunks) self::progress($progress,'evidence_available','completed','Fragmentos verificados disponibles',['chunks'=>count($chunks),'reused'=>$reused]);
                 $stage='summary';
                 if (!$reused) {
                     $block=$this->existingSummary($session,$source);
@@ -102,6 +107,7 @@ final class DriveAnalysisService
                 $stage='state_persistence';
                 $states->save($user,$session,$fileId,['status'=>$chunks?'text_ready':'summary_ready','message'=>$message,'source_etag'=>$source['etag'],
                     'chunks'=>count($chunks),'semantic_available'=>!empty($analysis['summary']),'sidecar_saved'=>$saved,'warnings'=>$warnings]);
+                self::progress($progress,'prepared','completed','Preparación del archivo terminada',['chunks'=>count($chunks),'reused'=>$reused,'sidecar_saved'=>$saved]);
                 return ['ok'=>true,'file_id'=>$fileId,'filename'=>$file['Nombre'],'reused'=>$reused,'summary'=>$analysis['summary'],
                     'coverage'=>$analysis['coverage'],'chunks'=>count($chunks),'lexical_rag_available'=>(bool)$chunks,'semantic_available'=>!empty($analysis['summary']),
                     'message'=>$message,'warnings'=>$warnings,'interaction_count'=>count($analysis['interactions'] ?? []),
@@ -112,9 +118,16 @@ final class DriveAnalysisService
             $state=FileKnowledgeState::reportFailure($e,$stage,['user_id'=>$user,'session_id'=>$session,'file_id'=>$fileId]);
             try { $states->save($user,$session,$fileId,$state); }
             catch(Throwable $saveError) { error_log('FILE_ANALYSIS_STATE '.($state['error_id'] ?? 'ocr_pending').' '.get_class($saveError).' code='.$saveError->getCode()); }
+            self::progress($progress,'preparation_failed',$e instanceof PdfOcrPendingException?'waiting':'error',$e instanceof PdfOcrPendingException?'OCR del archivo en proceso':'No se pudo completar la preparación',['stage'=>$stage,'error_code'=>$state['error_code'],'message'=>$state['message']]);
             return ['ok'=>false,'pending'=>$e instanceof PdfOcrPendingException,'retry_after'=>15,'file_id'=>$fileId,'error'=>$state['message'],'error_code'=>$state['error_code'],'error_id'=>$state['error_id'] ?? null,'stage'=>$stage];
         }
     }
+    private static function progress(?callable $progress,string $key,string $status,string $title,array $details=[]): void
+    {
+        if(!$progress)return;
+        try{$progress($key,$status,$title,$details);}catch(Throwable $e){error_log('ATTACHMENT_PROGRESS '.get_class($e));}
+    }
+
     private static function remapChunks(array $chunks,array $from,array $to): array
     {
         foreach($chunks as &$chunk) {

@@ -37,6 +37,12 @@ final class AttachmentContextRepository
         $limit = max(1000, min(48000, (int)aiAgentExtra('embedding_main', 'attachment_rag_max_chars', 16000)));
         preg_match_all('/["“]([^"”]+)["”]/u',$queryText,$quoted);
         $requestedNames = array_values(array_filter(array_map('mb_strtolower',$quoted[1]), static fn($name)=>in_array(strtolower(pathinfo($name,PATHINFO_EXTENSION)),array_merge(idx_text_extensions(),idx_extractable_extensions(),['jpg','jpeg','png','webp','gif']),true)));
+        if(!$requestedNames) {
+            $extensions=array_unique(array_merge(idx_text_extensions(),idx_extractable_extensions(),['jpg','jpeg','png','webp','gif']));
+            $pattern='/([\\pL\\pN_.-]+\\.(?:'.implode('|',array_map(static fn($ext)=>preg_quote($ext,'/'),$extensions)).'))\\b/iu';
+            preg_match_all($pattern,$queryText,$unquotedNames);
+            $requestedNames=array_values(array_unique(array_map('mb_strtolower',$unquotedNames[1])));
+        }
         if (preg_match('/busca|referenci/iu',$queryText)) $requestedNames=[];
         $central=new CentralDocumentIndex($this->db);
         $centralSources=$central->sources($userId,$sessionId,$session);

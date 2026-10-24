@@ -10,7 +10,7 @@ require_once dirname(__DIR__).'/includes/Memory/bootstrap.php';
 require_once dirname(__DIR__).'/includes/Memory/AttachmentPromptGrounding.php';
 $db=new mysqli($host,getenv('DOCUMENT_TEST_DB_USER')?:'root',getenv('DOCUMENT_TEST_DB_PASSWORD')?:'',getenv('DOCUMENT_TEST_DB_NAME')?:'mysql',(int)(getenv('DOCUMENT_TEST_DB_PORT')?:3306));$db->set_charset('utf8mb4');$GLOBALS['db_connection']=$db;
 $schema=file_get_contents(dirname(__DIR__,2).'/adbbmis1_Cloud.sql');
-foreach(['FileS3','ChatSessions','ChatMessages','SessionContextBlocks','EmbeddingJobs','UserAIAgentConfigs','Projects'] as $name){preg_match('/CREATE TABLE IF NOT EXISTS `'.$name.'` \(.*?\) ENGINE=.*?;/s',$schema,$m);$db->query(str_replace(['CREATE TABLE IF NOT EXISTS','utf8mb4_0900_ai_ci','VIRTUAL NOT NULL'],['CREATE TEMPORARY TABLE','utf8mb4_unicode_ci','VIRTUAL'],$m[0]));}
+foreach(['FileS3','ChatSessions','ChatMessages','SessionContextBlocks','EmbeddingJobs','UserAIAgentConfigs','Projects','ChatActivityEvents'] as $name){preg_match('/CREATE TABLE IF NOT EXISTS `'.$name.'` \(.*?\) ENGINE=.*?;/s',$schema,$m);$db->query(str_replace(['CREATE TABLE IF NOT EXISTS','utf8mb4_0900_ai_ci','VIRTUAL NOT NULL'],['CREATE TEMPORARY TABLE','utf8mb4_unicode_ci','VIRTUAL'],$m[0]));}
 $db->query("INSERT INTO ChatSessions(id_,user_id_,title,model_id,meta) VALUES(1,1,'Current','fixture','{\"knowledge_file_ids\":[3823]}'),(2,1,'New','fixture','{}'),(3,2,'Private','fixture','{}')");
 $db->query("INSERT INTO FileS3(id_,user_id_,Nombre,Ruta,Encriptado,Tamano,Found,Metadatos) VALUES(3823,1,'thankyou-old.php','Data/Jas/Amazon Linux/','thankyou-old.php',7000,1,'{\"custom\":\"keep\"}')");
 final class WorkMissing extends RuntimeException {public function getAwsErrorCode():string{return 'NoSuchKey';}}
@@ -18,10 +18,10 @@ final class Config {public static int $modelCalls=0;public static function getBe
 $code="<?php\n".str_repeat("// Revisar bible_progress y extraer el siguiente versiculo; evidencia verificable 41837.\n",90);
 $key='Data/Jas/Amazon Linux/thankyou-old.php';
 Config::$s3=new class($key,$code){
-    public array $objects=[],$copies=[],$gets=[],$puts=[],$heads=[];public bool $denyCopy=false;
+    public array $objects=[],$copies=[],$gets=[],$puts=[],$heads=[];public bool $denyCopy=false;public $beforeRead=null;
     public function __construct(string $key,string $body){$this->objects[$key]=['bytes'=>$body,'etag'=>'"original-v1"'];}
     public function headObject(array $p):ArrayAccess{$this->heads[]=$p['Key'];$o=$this->objects[$p['Key']]??throw new WorkMissing();return documentSdkResult(['ETag'=>$o['etag'],'ContentLength'=>strlen($o['bytes'])]);}
-    public function getObject(array $p):array{$o=$this->objects[$p['Key']]??throw new WorkMissing();$this->gets[]=$p['Key'];if(isset($p['IfMatch'])&&$p['IfMatch']!==$o['etag'])throw new RuntimeException('Revision changed');if(isset($p['SaveAs']))file_put_contents($p['SaveAs'],$o['bytes']);return ['Body'=>$o['bytes']];}
+    public function getObject(array $p):array{if(is_callable($this->beforeRead))($this->beforeRead)($p);$o=$this->objects[$p['Key']]??throw new WorkMissing();$this->gets[]=$p['Key'];if(isset($p['IfMatch'])&&$p['IfMatch']!==$o['etag'])throw new RuntimeException('Revision changed');if(isset($p['SaveAs']))file_put_contents($p['SaveAs'],$o['bytes']);return ['Body'=>$o['bytes']];}
     public function putObject(array $p):array{$old=$this->objects[$p['Key']]??null;if(isset($p['IfMatch'])&&($old['etag']??null)!==$p['IfMatch'])throw new RuntimeException('Write conflict');if(($p['IfNoneMatch']??'')==='*'&&$old)throw new RuntimeException('Already exists');$this->puts[]=$p['Key'];$this->objects[$p['Key']]=['bytes'=>$p['Body'],'etag'=>'"'.hash('sha256',$p['Body']).'"'];return [];}
     public function copyObject(array $p):array{if($this->denyCopy)throw new RuntimeException('Copy denied');$source=rawurldecode(substr($p['CopySource'],strlen('private-bucket/')));$o=$this->objects[$source]??throw new WorkMissing();if($p['CopySourceIfMatch']!==$o['etag'])throw new RuntimeException('Copy revision changed');$this->copies[]=$p;$this->objects[$p['Key']]=['bytes'=>$o['bytes'],'etag'=>'"copy-'.hash('sha256',$p['Key']).'"'];return [];}
 };
@@ -81,11 +81,13 @@ $lazy=$attach->attach(1,5,5000);$lazyId=(int)$lazy['id_'];$lazyCopy=idx_build_s3
 workCheck(count(Config::$s3->gets)===$beforeGets&&count(Config::$s3->puts)===$beforePuts,'Attach copies object server-side without reading content or creating a JSON analysis');
 workCheck((int)$db->query('SELECT COUNT(*) n FROM SessionContextBlocks WHERE session_id_=5')->fetch_assoc()['n']===0,'Deferred attachment creates no content blocks');
 $features=['procedural_memory_read'=>false,'project_memory_read'=>false,'session_memory_read'=>false,'question_memory_read'=>false,'project_rag'=>false,'attachment_rag'=>true,'context_ranking'=>true];
-$build=static fn(string $query)=>$builder->build(new MemoryRoute(['intent'=>'code','use_attachment_context'=>true]),['stage'=>'respond','user_id'=>1,'session_id'=>5,'query_text'=>$query,'pipeline_features'=>$features]);
+$requestNumber=0;$lastTrace='';
+$build=static function(string $query)use($builder,$features,&$requestNumber,&$lastTrace){$lastTrace='attachment-test-'.str_pad((string)++$requestNumber,16,'0',STR_PAD_LEFT);return $builder->build(new MemoryRoute(['intent'=>'code','use_attachment_context'=>true]),['stage'=>'respond','user_id'=>1,'session_id'=>5,'query_text'=>$query,'pipeline_features'=>$features,'trace_id'=>$lastTrace]);};
 $heads=count(Config::$s3->heads);$idle=$build('Hola, ¿cómo estás?');
 workCheck(!$idle->selectedItems('attachments')&&count(Config::$s3->heads)===$heads&&Config::$modelCalls===0,'Unrelated message ignores passive attachments even when router requests them');
 $metadata=$build('Cuál es el tamaño del archivo "lazy.php"');
 workCheck(!$metadata->selectedItems('attachments')&&str_contains($metadata->block('attachment_request_block'),'lazy.php')&&count(Config::$s3->heads)===$heads,'Metadata-only question does not read S3 content');
+$seenDuringRead=[];Config::$s3->beforeRead=static function(array $p)use($db,$lazyCopy,&$seenDuringRead){if($p['Key']===$lazyCopy)$seenDuringRead=array_column($db->query('SELECT event_key FROM ChatActivityEvents ORDER BY id_')->fetch_all(MYSQLI_ASSOC),'event_key');};
 $literal=$build('Busca "41837" en el archivo "lazy.php"');
 workCheck(($literal->telemetry()['attachment_request']['strategy']??'')==='literal'&&str_contains(AttachmentPromptGrounding::append('',$literal),'41837'),'Explicit literal request starts extraction and returns matching evidence');
 $literalText=implode(' ',array_map(static fn($i)=>$i->content,$literal->selectedItems('attachments')));
@@ -102,4 +104,20 @@ workCheck(!$ambiguous->selectedItems('attachments')&&str_contains(FileKnowledgeS
 $db->query("UPDATE FileS3 SET AccessType='secure' WHERE id_=5000");$revoked=$build('Analiza el archivo "lazy.php"');
 workCheck(!$revoked->selectedItems('attachments'),'On-demand selection cannot use revoked originals or cached working evidence');
 $db->query("UPDATE FileS3 SET AccessType='normal' WHERE id_=5000");
+workCheck(in_array('attachment_file_'.$lazyId.'_extracting',$seenDuringRead,true),'Live extraction milestone is persisted before the actual S3 content read');
+$events=$db->query("SELECT event_key,title,status,details_json FROM ChatActivityEvents WHERE trace_id='attachment-test-0000000000000003' ORDER BY id_")->fetch_all(MYSQLI_ASSOC);
+$keys=array_column($events,'event_key');
+workCheck(array_search('attachment_plan',$keys,true)<array_search('attachment_file_'.$lazyId.'_extracting',$keys,true)&&in_array('attachment_file_'.$lazyId.'_context_ready',$keys,true),'A real request records action selection, extraction and context-ready milestones in order');
+workCheck(!str_contains(json_encode($events),'SECRET_UNUSED_CONTEXT'),'Progress events contain stage/count metadata, not source code');
+$generic=$build('Analiza el archivo "lazy.php". Explica qué contiene y dónde se encuentra cada dato relevante.');
+workCheck(($generic->telemetry()['attachment_request']['strategy']??'')==='overview'&&str_contains(AttachmentPromptGrounding::append('',$generic),'SECRET_UNUSED_CONTEXT'),'Automatic analysis request gets actual document context rather than a synthetic zero-match result');
+$noHit=$build('Busca "NEVER_PRESENT_LITERAL" en "lazy.php"');
+workCheck(!empty($noHit->selectedItems('attachments')[0]->metadata['literal_no_match'])&&str_contains(AttachmentPromptGrounding::append('',$noHit),'no significa que falten fragmentos'),'An actual zero-match result is distinguished from unavailable or unindexed content');
+// Old conversations with a linked file and no processing policy prepare missing
+// content automatically, including a second file while another index exists.
+$db->query("INSERT INTO ChatSessions(id_,user_id_,title,model_id,meta) VALUES(6,1,'Legacy','fixture','{\"knowledge_file_ids\":[5000,3823]}')");
+$legacy=$builder->build(new MemoryRoute(['intent'=>'code','use_attachment_context'=>true]),['stage'=>'respond','user_id'=>1,'session_id'=>6,'query_text'=>'Analiza el archivo "lazy.php" y explica dónde se encuentra cada dato.','pipeline_features'=>$features,'trace_id'=>'legacy-attachment-test-00001']);
+workCheck(count($legacy->selectedItems('attachments'))>0&&($legacy->telemetry()['attachment_request']['strategy']??'')==='overview','Legacy conversation automatically prepares a named file without asking the user to index it');
+$second=$builder->build(new MemoryRoute(['intent'=>'code','use_attachment_context'=>true]),['stage'=>'respond','user_id'=>1,'session_id'=>6,'query_text'=>'Analiza el archivo thankyou-old.php','pipeline_features'=>$features,'trace_id'=>'legacy-attachment-test-00002']);
+workCheck(count($second->selectedItems('attachments'))>0&&str_contains(AttachmentPromptGrounding::append('',$second),'thankyou-old.php'),'Missing named-file evidence is prepared even when another attachment is already indexed');
 echo "OK $n Drive chat working-copy checks\n";

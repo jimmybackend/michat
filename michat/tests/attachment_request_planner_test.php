@@ -24,4 +24,10 @@ $text=$structure['rows'][0]['content_preview'];
 requestCheck(str_contains($text,'Real')&&str_contains($text,'run · línea 5')&&!str_contains($text,'Fake')&&!str_contains($text,'fake'),'PHP tokenizer ignores fake declarations in comments and strings');
 $invalid=false;try{AttachmentRequestService::select([['id_'=>1,'content_preview'=>'<?php class A {}','source_ids'=>json_encode(['locator'=>['line_start'=>2147483647]])]],'structure','','php');}catch(DocumentProcessingException $e){$invalid=$e->reason==='invalid_locator';}
 requestCheck($invalid,'Untrusted cached locators cannot allocate an unbounded reconstructed source');
+$automatic='Analiza el archivo "cleanupec2s3_tmp.txt". Explica de qué trata, qué contiene, dónde se encuentra cada dato relevante, y cita el nombre del archivo y los fragmentos. Si no está indexado o falta contexto, indícalo sin inventar.';
+$plan=AttachmentRequestService::plan($automatic,[['id_'=>3,'Nombre'=>'cleanupec2s3_tmp.txt']]);
+requestCheck($plan['strategy']==='overview'&&$plan['term']==='','The existing automatic question explains the document instead of searching for its own instructions');
+requestCheck(AttachmentRequestService::plan('Busca errores en "uno.php"',$files)['strategy']==='review','Searching for errors requests a review rather than grepping for the word errors');
+requestCheck(AttachmentRequestService::plan('Busca "errores" en "uno.php"',$files)['strategy']==='literal','A quoted search for errors remains a literal search');
+requestCheck(AttachmentRequestService::plan('Explica dónde se  encuentra cada dato de "uno.php"',$files)['strategy']==='overview','Variable whitespace in a location clause never becomes an imperative search');
 echo "OK $n attachment request planning checks\n";
