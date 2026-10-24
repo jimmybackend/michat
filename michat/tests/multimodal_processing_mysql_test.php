@@ -71,6 +71,13 @@ try{
  $check(($m['evidence_kind']??'')==='audio_transcript'&&($m['locator']['timestamp_start_seconds']??null)===2,'AWS transcript timestamps become verifiable chunk locators');
  $bundle=$builder->build(new MemoryRoute(['intent'=>'general']),['stage'=>'respond','user_id'=>1,'session_id'=>1,'query_text'=>'Analiza el archivo "Nueva.wav"','pipeline_features'=>$features]);
  $check(str_contains(AttachmentPromptGrounding::append('',$bundle),'no se escuchó directamente'),'Final prompt discloses JSON transcription instead of direct audio or video analysis');
+ $coverage=AttachmentPromptGrounding::transcriptCoverage($bundle->selectedItems('attachments'));
+ $check(($coverage[0]['status']??'')==='all_extracted_text'&&$coverage[0]['selected_chunks']===1,'One-chunk audio reaches the final prompt as all available transcribed text, not an invented incomplete beginning');
+ $startCount=count($transcribe->starts);$repeat=$builder->build(new MemoryRoute(['intent'=>'general']),['stage'=>'respond','user_id'=>1,'session_id'=>1,'query_text'=>'Analiza el archivo "Nueva.wav"','pipeline_features'=>$features]);
+ $check(count($transcribe->starts)===$startCount&&(AttachmentPromptGrounding::transcriptCoverage($repeat->selectedItems('attachments'))[0]['status']??'')==='all_extracted_text','Re-reading the audio reuses verified transcript evidence without resubmitting media to AWS');
+ $retrieved=(new AttachmentContextRepository($db,null))->retrieve(1,1,'Analiza el archivo "Nueva.wav"','rag',null,null);
+ $audioItems=array_values(array_filter($retrieved['items'],static fn($item)=>(int)($item->metadata['files3_id']??0)===$audioId));
+ $check($audioItems&&($audioItems[0]->metadata['evidence_kind']??'')==='audio_transcript'&&($audioItems[0]->metadata['chunk_total']??0)===1,'Hybrid retrieval preserves transcript provenance and real chunk counts for grounding');
  $cost=$db->query('SELECT SUM(estimated_cost_usd) total,SUM(estimated_cost_usd IS NULL) unknown FROM AttachmentProcessingCosts')->fetch_assoc();
  $check((float)$cost['total']>0&&(int)$cost['unknown']>0,'Ledger preserves configured estimates and explicit unknown prices/outcomes');
  $job=$service->tick(1,(int)$audioJob['id_']);

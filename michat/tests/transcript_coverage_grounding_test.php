@@ -1,0 +1,26 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__.'/../includes/Memory/ContextItem.php';
+require_once __DIR__.'/../includes/Memory/AttachmentPromptGrounding.php';
+$count=0;$check=static function(bool $ok,string $message)use(&$count){$count++;if(!$ok)throw new RuntimeException($message);echo "PASS $message\n";};
+$make=static fn(int $ordinal,int $total,array $extra=[])=>new ContextItem('SessionContextBlocks',$ordinal,'file_chunk','session_attachment','Sentencia definitiva, oficio y causa penal.',1,null,$extra+['filename'=>'legal actual.mp3','files3_id'=>7,'source_etag'=>'v1','evidence_kind'=>'audio_transcript','chunk_ordinal'=>$ordinal,'chunk_total'=>$total,'truncated'=>false,'content_partial'=>false,'citation'=>'[SCB:166 · legal actual.mp3 · segundos 0–24.09 · fragmento 1]']);
+$coverage=AttachmentPromptGrounding::transcriptCoverage([$make(1,1)]);
+$check($coverage[0]['status']==='all_extracted_text'&&$coverage[0]['selected_chunks']===1,'One intact chunk can contain the entire available transcript');
+$check(AttachmentPromptGrounding::transcriptCoverage([$make(1,3)]) [0]['status']==='selected_text','A real missing-context selection is distinguished from extraction failure');
+$check(AttachmentPromptGrounding::transcriptCoverage([$make(1,1,['truncated'=>true])])[0]['status']==='extraction_partial','Explicit extraction truncation remains partial');
+$check(AttachmentPromptGrounding::transcriptCoverage([$make(1,1,['content_partial'=>true])])[0]['status']==='selected_text','A grep or character-budget excerpt never claims full transcript context');
+$check(AttachmentPromptGrounding::transcriptCoverage([$make(0,0)])[0]['status']==='unknown','Old evidence without counts never invents coverage');
+$check(AttachmentPromptGrounding::transcriptCoverage([$make(1,2),$make(1,2)])[0]['status']==='selected_text','Duplicate selected chunks do not inflate the coverage count');
+$check(AttachmentPromptGrounding::transcriptCoverage([$make(1,2),$make(2,2)])[0]['status']==='all_extracted_text','All distinct final-context chunks yield complete available transcript coverage');
+$check(AttachmentPromptGrounding::transcriptCoverage([$make(1,2),$make(2,3)])[0]['status']==='unknown','Conflicting totals fail closed instead of assuming completion');
+$coverage=AttachmentPromptGrounding::transcriptCoverage([$make(1,1),$make(1,2,['source_etag'=>'v2'])]);$check(count($coverage)===2&&$coverage[0]['status']==='all_extracted_text'&&$coverage[1]['status']==='selected_text','Coverage cannot combine different source revisions');
+$summary=$make(1,1,['truncated'=>true]);$summary->type='file';
+$check(AttachmentPromptGrounding::transcriptCoverage([$make(1,1),$summary])[0]['status']==='all_extracted_text','A generated partial summary does not invalidate complete literal transcript evidence');
+$check(AttachmentPromptGrounding::transcriptCoverage([$summary])[0]['status']==='unknown','Summary-only context cannot claim complete literal transcript coverage');
+$bundle=new class($make(1,1)){public function __construct(private object $item){}public function selectedItems($bucket){return [$this->item];}public function block($name){return '';}};
+$prompt=AttachmentPromptGrounding::append('',$bundle);
+$check(str_contains($prompt,'"status":"all_extracted_text"')&&str_contains($prompt,'sin usarla como razón para negarte')&&str_contains($prompt,'no son la duración comprobada del archivo'),'Prompt permits analysis and distinguishes transcript coverage from media duration');
+$row=['id_'=>166,'source_ids'=>json_encode(['filename'=>'legal actual.mp3','evidence_kind'=>'audio_transcript','locator'=>['timestamp_start_seconds'=>0,'timestamp_end_seconds'=>24.09,'line_start'=>1,'line_end'=>1],'chunk'=>1])];$citation=AttachmentEvidence::citation($row);
+$check(str_contains($citation,'segundos 0–24.09')&&str_contains($citation,'líneas de transcripción')&&!str_contains($citation,'video')&&!str_contains($citation,'vídeo')&&!str_contains($citation,'fotogramas'),'MP3 citation retains actual timestamps and does not describe video limitations');
+$meta=json_decode($row['source_ids'],true);$meta['filename']='audiencia.mp4';$row['source_ids']=json_encode($meta);$check(str_contains(AttachmentEvidence::citation($row),'sin análisis de fotogramas'),'Video transcript still discloses absence of visual-frame analysis');
+echo "OK $count transcript coverage checks\n";
