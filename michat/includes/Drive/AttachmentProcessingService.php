@@ -38,7 +38,7 @@ final class AttachmentProcessingService
         $files=$access->conversationFiles($user,$session);
         $plan=AttachmentRequestService::plan($query,$files,(int)($meta['last_requested_attachment_id']??0));$jobs=[];
         if(!$plan['requested']||$plan['strategy']==='metadata')return [];
-        $goal=in_array($plan['strategy'],['literal','structure'],true)?'text':'full';
+        $goal=in_array($plan['strategy'],['literal','structure','evidence'],true)?'text':'full';
         foreach($plan['files'] as $file)if(self::complex($file['Nombre']))$jobs[]=$dryRun?$file:$this->enqueue($user,$session,(int)$file['id_'],$trace,$goal);
         return $jobs;
     }
@@ -86,6 +86,23 @@ final class AttachmentProcessingService
     public static function label(string $phase):string
     {
         return ['extract'=>'Leyendo formato y buscando JSON del origen','index'=>'Preparando fragmentos con localizadores','embeddings'=>'Generando embeddings por lotes','semantic'=>'Generando análisis semántico','persist'=>'Guardando JSON del origen y copia del chat','ready'=>'Contenido preparado para responder'][$phase]??$phase;
+    }
+
+    /** A revoked/detached source must not permanently starve unrelated due jobs. */
+    public function workOne(): ?array
+    {
+        $row=$this->db->query("SELECT id_,user_id_ FROM AttachmentProcessingJobs WHERE status IN ('pending','retry','waiting','running') AND available_at<=UTC_TIMESTAMP() ORDER BY updated_at,id_ LIMIT 1")->fetch_assoc();
+        if(!$row)return null;
+        $id=(int)$row['id_'];$user=(int)$row['user_id_'];
+        try{return $this->tick($user,$id);}
+        catch(DocumentAccessDenied){
+            $message='Acceso revocado o adjunto desvinculado. No se procesó contenido; vuelve a solicitarlo después de restablecer el acceso.';
+            $q=$this->db->prepare("UPDATE AttachmentProcessingJobs SET status='blocked',error_message=? WHERE id_=? AND user_id_=? AND status IN ('pending','retry','waiting','running')");
+            $q->bind_param('sii',$message,$id,$user);$q->execute();$q->close();
+            $q=$this->db->prepare('SELECT * FROM AttachmentProcessingJobs WHERE id_=? AND user_id_=?');
+            $q->bind_param('ii',$id,$user);$q->execute();$job=$q->get_result()->fetch_assoc();$q->close();
+            return $job?:null;
+        }
     }
     public function tick(int $user,int $id):array
     {

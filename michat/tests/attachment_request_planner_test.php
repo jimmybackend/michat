@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once dirname(__DIR__).'/includes/Drive/AttachmentRequestService.php';
+require_once dirname(__DIR__).'/includes/Memory/ContextItem.php';
 $n=0;function requestCheck(bool $ok,string $label):void{global $n;$n++;if(!$ok)throw new RuntimeException($label);echo "PASS $label\n";}
 $files=[['id_'=>1,'Nombre'=>'uno.php'],['id_'=>2,'Nombre'=>'dos.php']];
 requestCheck(!AttachmentRequestService::plan('Hola',$files)['requested'],'Idle attachments do not activate processing');
@@ -30,4 +31,10 @@ requestCheck($plan['strategy']==='overview'&&$plan['term']==='','The existing au
 requestCheck(AttachmentRequestService::plan('Busca errores en "uno.php"',$files)['strategy']==='review','Searching for errors requests a review rather than grepping for the word errors');
 requestCheck(AttachmentRequestService::plan('Busca "errores" en "uno.php"',$files)['strategy']==='literal','A quoted search for errors remains a literal search');
 requestCheck(AttachmentRequestService::plan('Explica dónde se  encuentra cada dato de "uno.php"',$files)['strategy']==='overview','Variable whitespace in a location clause never becomes an imperative search');
+$located=[['id_'=>7,'content_preview'=>'Wrong first chunk','source_ids'=>json_encode(['files3_id'=>1,'source_etag'=>'v1','chunk'=>1])],['id_'=>99,'content_preview'=>'Verified final evidence','source_ids'=>json_encode(['files3_id'=>1,'source_etag'=>'v1','chunk'=>20])]];
+$central=new ContextItem('DocumentKnowledgeChunks',7,'file_chunk','session_attachment','Verified final evidence',1,null,['files3_id'=>1,'source_etag'=>'v1','chunk_ordinal'=>20]);
+$matched=AttachmentRequestService::matchEvidence($located,[$central],1,'v1');
+requestCheck(count($matched)===1&&$matched[0]['id_']===99,'Independent central/session chunk IDs cannot select unrelated evidence');
+$central->metadata['source_etag']='v2';
+requestCheck(!AttachmentRequestService::matchEvidence($located,[$central],1,'v1'),'Central-to-session evidence matching rejects another revision');
 echo "OK $n attachment request planning checks\n";

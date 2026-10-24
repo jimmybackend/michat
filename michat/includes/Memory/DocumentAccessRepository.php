@@ -3,6 +3,8 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/session_file_extractor.php';
 require_once dirname(__DIR__) . '/Drive/FederationImportedAccess.php';
 
+final class DocumentAccessDenied extends RuntimeException {}
+
 /** Live FileS3 checks. A cached chunk never grants access to its source. */
 final class DocumentAccessRepository
 {
@@ -132,7 +134,7 @@ final class DocumentAccessRepository
         $file = $session ? $this->file($userId, $fileId) : null;
         if (!$file || self::detached($session,$fileId) || (!idx_file_belongs_to_chat_session($file, $userId, $sessionId) && !self::linked($session, $fileId)
             && !isset($this->projectFiles($userId,$session)[$fileId]))) {
-            throw new RuntimeException('El archivo no pertenece a esta sesión o su acceso fue revocado');
+            throw new DocumentAccessDenied('El archivo no pertenece a esta sesión o su acceso fue revocado');
         }
         return $file;
     }
