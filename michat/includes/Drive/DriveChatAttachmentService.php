@@ -61,6 +61,7 @@ final class DriveChatAttachmentService
                 $meta['knowledge_file_ids']=array_values(array_unique(array_merge(array_diff($ids,[$originalId]),[$copyId])));
                 $meta['drive_working_files'][$mapKey]=$copyId;
                 $meta['active_attachment_id']=$copyId;
+                $meta['attachment_processing_policy']='on_request';
                 $encoded=json_encode($meta,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);
                 $q=$this->db->prepare('UPDATE ChatSessions SET meta=? WHERE id_=? AND user_id_=?');$q->bind_param('sii',$encoded,$session,$user);$q->execute();$q->close();$this->db->commit();
             }catch(Throwable $e){$this->db->rollback();throw $e;}
@@ -69,7 +70,7 @@ final class DriveChatAttachmentService
     }
     private function focus(int $user,int $session,int $file): void
     {
-        $q=$this->db->prepare("UPDATE ChatSessions SET meta=JSON_SET(CASE WHEN JSON_VALID(meta) THEN meta ELSE '{}' END,'$.active_attachment_id',?) WHERE id_=? AND user_id_=? AND status='open'");
+        $q=$this->db->prepare("UPDATE ChatSessions SET meta=JSON_SET(CASE WHEN JSON_VALID(meta) THEN meta ELSE '{}' END,'$.active_attachment_id',?,'$.attachment_processing_policy','on_request') WHERE id_=? AND user_id_=? AND status='open'");
         $q->bind_param('iii',$file,$session,$user);$q->execute();$q->close();
     }
 

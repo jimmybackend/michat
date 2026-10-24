@@ -42,7 +42,7 @@ final class SessionImageKnowledgeService
     }
 
     /** @return array<string,mixed> */
-    public function process(int $userId, int $sessionId, int $fileId): array
+    public function process(int $userId, int $sessionId, int $fileId, bool $withEmbeddings = true): array
     {
         $this->loadRuntime($userId);
         $file = $this->ownedFile($userId, $sessionId, $fileId);
@@ -99,7 +99,7 @@ final class SessionImageKnowledgeService
             (int)($usage['outputTokens'] ?? 0)
         );
 
-        $embedding = $this->embeddingState();
+        $embedding = $withEmbeddings ? $this->embeddingState() : ['active'=>false,'model'=>null];
         $blockId = $this->persistVisualSummary(
             $sessionId,
             $fileId,

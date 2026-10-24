@@ -57,10 +57,9 @@ $check(
     'descripción visual reutiliza embedding_main y la cola existente'
 );
 $check(
-    str_contains($upload, "SessionImageKnowledgeService::supportsFilename(\$originalName)")
-    && str_contains($upload, '? $imageKnowledgeService->process')
-    && str_contains($upload, ': $knowledgeService->process'),
-    'upload enruta imágenes a visión sin alterar documentos'
+    str_contains($upload, "'deferred'=>true")
+    && !str_contains($upload, '->process('),
+    'upload de imágenes espera la petición antes de invocar visión'
 );
 $check(
     str_contains($index, 'SessionImageKnowledgeService')

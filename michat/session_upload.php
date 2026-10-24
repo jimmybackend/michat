@@ -87,8 +87,7 @@ $day = $now->format('d');
 $rutaDestino = "Data/Chat/Uploads/{$userId}/{$year}/{$month}/{$day}/{$sessionId}/";
 
 $manager = new S3Manager();
-$knowledgeService = new SessionAttachmentKnowledgeService($db_connection);
-$imageKnowledgeService = new SessionImageKnowledgeService($db_connection);
+
 $uploaded = [];
 $errors = [];
 
@@ -164,18 +163,10 @@ for ($i = 0; $i < $count; $i++) {
             if (!$saved) throw new RuntimeException('No se pudo registrar la versión nueva');
         }
 
-        try {
-            $knowledge = SessionImageKnowledgeService::supportsFilename($originalName)
-                ? $imageKnowledgeService->process($userId, $sessionId, $fileId)
-                : $knowledgeService->process($userId, $sessionId, $fileId);
-        } catch (Throwable $knowledgeError) {
-            $knowledge = [
-                'ok' => false,
-                'error' => $knowledgeError->getMessage(),
-                'ready_for_attachment_rag' => false,
-            ];
-            error_log('session_upload knowledge: ' . $knowledgeError->getMessage());
-        }
+        // Upload stores metadata only. Content work starts with a file request.
+        $policy=$db_connection->prepare("UPDATE ChatSessions SET meta=JSON_SET(CASE WHEN JSON_VALID(meta) THEN meta ELSE '{}' END,'$.attachment_processing_policy','on_request') WHERE id_=? AND user_id_=?");
+        $policy->bind_param('ii',$sessionId,$userId);$policy->execute();$policy->close();
+        $knowledge=['ok'=>false,'deferred'=>true,'ready_for_attachment_rag'=>false];
 
         $uploaded[] = [
             'id' => $fileId,
@@ -188,9 +179,7 @@ for ($i = 0; $i < $count; $i++) {
             'ruta' => $result['ruta'] ?? $rutaDestino,
             'created_at' => date('Y-m-d H:i:s'),
             'knowledge' => $knowledge,
-            'knowledge_status' => !empty($knowledge['queued']) ? 'queued' : (!empty($knowledge['index']['truncated']) ? 'extraction_partial'
-                : (!empty($knowledge['ready_for_attachment_rag']) ? 'ready'
-                : (!empty($knowledge['ok']) ? 'pending_embedding' : 'needs_attention'))),
+            'knowledge_status' => 'awaiting_request',
             'version_of_files3_id' => $versionParentId > 0 ? $versionParentId : null,
             'revision_number' => $versionParent ? $versionNumber : 1,
         ];
@@ -224,5 +213,5 @@ sessionUploadExit([
     'knowledge_indexed' => $indexed,
     'embedding_pending' => $pending,
     'knowledge_issues' => $knowledgeIssues,
-    'message' => count($uploaded) . ' archivo(s) subido(s); ' . $ready . ' listo(s) para búsqueda semántica/RAG.',
+    'message' => count($uploaded) . ' archivo(s) adjunto(s), pendientes de solicitud; no se analizó contenido.',
 ]);

@@ -11,7 +11,7 @@ const c={window:{jQuery:()=>({modal:()=>{modalHidden++;}})},el:{input:{value:'',
   closeChatFilesDrawer(){},loadSessions:async()=>{},createSession:async()=>({id:9}),selectSession:async id=>{c.currentSessionId=id;},esc:x=>x,showToast:(...x)=>toasts.push(x),loadSessionAttachments:async()=>{refreshes++;},
   fetch:async(url,options={})=>{calls.push({url,options});
     if(url==='drive_file_analysis.php' && analysisFailure)return {ok:false,json:async()=>({ok:false,error:'No se pudo descargar la revisión original desde S3.'})};
-    if(url==='drive_file_analysis.php')return {ok:true,json:async()=>({ok:true,attachment:{file_id:77,filename:'contrato.pdf'},filename:'contrato.pdf',summary:'Resumen guardado',coverage:'partial',reused:true,interaction_count:2,chunks:1,sidecar_saved:true})};
+    if(url==='drive_file_analysis.php')return {ok:true,json:async()=>({ok:true,deferred:true,attachment:{file_id:77,filename:'contrato.pdf'},filename:'contrato.pdf',summary:'Resumen guardado',coverage:'partial',reused:true,interaction_count:2,chunks:1,sidecar_saved:true})};
     const search=options.body?.get('action')==='search_ai'||url.includes('?');
     return {ok:true,json:async()=>search?{ok:true,csrf:'csrf',files:[{id_:31,Nombre:'contrato.pdf',Ruta:'Data/',Tamano:123,Fecha:'2026-10-01'}],filters:{extensions:['pdf']},has_more:true,next_cursor:31,plan:'server-plan'}:{ok:true}};
   }};
@@ -25,7 +25,7 @@ vm.createContext(c);vm.runInContext(src.slice(start,end),c);
   assert(!calls.some(x=>x.url==='drive_file_analysis.php'),'Browsing must not analyze/index');
   await button.handlers.click();
   assert.equal(calls[1].url,'drive_file_analysis.php');assert.equal(calls[1].options.body.get('action'),'attach');assert.equal(calls[1].options.body.get('file_id'),'31');assert.equal(calls[1].options.body.get('csrf'),'csrf');
-  assert.equal(refreshes,2);assert.equal(sends,1);assert.equal(modalHidden,1);
+  assert.equal(refreshes,2);assert.equal(sends,0);assert(c.el.input.value.includes('contrato.pdf'),'Attachment prepares the named question without sending it');assert.equal(modalHidden,1);
   assert(!nodes.driveKnowledgeAnalysis.textContent.includes('Resumen guardado'),'Analysis belongs to chat, never the search panel');
   c.currentSessionId=8;await button.handlers.click();assert.equal(calls.length,2,'Stale search cannot attach into another chat');
   await c.unlinkDriveKnowledge(31);assert.equal(calls[2].options.body.get('action'),'unlink');
@@ -37,7 +37,7 @@ vm.createContext(c);vm.runInContext(src.slice(start,end),c);
   const newChatButton=nodes.driveKnowledgeResults.children[0].children[1];
   await newChatButton.handlers.click();assert.equal(c.currentSessionId,9);const afterCreate=calls.length;
   await newChatButton.handlers.click();assert(calls.length>afterCreate,'Results from browsing before chat creation remain selectable in the auto-created chat');
-  assert.equal(toasts.length,0);
+  assert.equal(sends,0,'Repeated attachment never processes by sending a question automatically');
   c.el.input.value='Mi pregunta pendiente';const beforeDraft=sends;await newChatButton.handlers.click();
   assert.equal(sends,beforeDraft,'Attach never auto-sends an existing draft');assert.equal(c.el.input.value,'Mi pregunta pendiente');
   c.el.input.value='';analysisFailure=true;const beforeFailure=sends,beforeHidden=modalHidden;

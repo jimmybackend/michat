@@ -12,7 +12,7 @@ require_once __DIR__ . '/Memory/DocumentAccessRepository.php';
  *
  * index(): crea file_chunk y deja sus embeddings listos cuando embedding_main está activo.
  * semantic(): crea/actualiza block_type=file con resumen semántico y su embedding.
- * process(): ejecuta ambos pasos para el upload automático.
+ * process(): ejecuta ambos pasos para una acción manual explícita.
  *
  * Si Bedrock falla al vectorizar, el bloque queda guardado y el EmbeddingJob permanece
  * pending para que Mantenimiento > Procesar Embeddings pueda reintentarlo.
@@ -64,12 +64,12 @@ final class SessionAttachmentKnowledgeService
     }
 
     /** @return array<string,mixed> */
-    public function index(int $userId, int $sessionId, int $fileId): array
+    public function index(int $userId, int $sessionId, int $fileId, bool $withEmbeddings = true): array
     {
-        $runtimeWarnings = $this->loadIndexRuntime($userId);
+        $runtimeWarnings = $withEmbeddings ? $this->loadIndexRuntime($userId) : [];
         $file = $this->ownedFile($userId, $sessionId, $fileId);
         $extracted = idx_extract_files3_text($file, IDX_MAX_EXTRACTED_CHARS);
-        return $this->indexPrepared($sessionId, $fileId, $file, $extracted, $runtimeWarnings);
+        return $this->indexPrepared($sessionId, $fileId, $file, $extracted, $runtimeWarnings, $withEmbeddings);
     }
 
     /** @return array<string,mixed> */
@@ -126,7 +126,7 @@ final class SessionAttachmentKnowledgeService
      * @param array<string,mixed> $extracted
      * @return array<string,mixed>
      */
-    private function indexPrepared(int $sessionId, int $fileId, array $file, array $extracted, array $warnings = []): array
+    private function indexPrepared(int $sessionId, int $fileId, array $file, array $extracted, array $warnings = [], bool $withEmbeddings = true): array
     {
         $warnings=array_merge($warnings,(array)($extracted['warnings'] ?? []));
         $content = (string)($extracted['content'] ?? '');
@@ -137,7 +137,7 @@ final class SessionAttachmentKnowledgeService
         $chunks = idx_located_chunks($content, $ext, IDX_CHUNK_MAX_LEN);
         if (!$chunks) throw new RuntimeException('El archivo no generó chunks indexables');
 
-        try { $embedding = $this->embeddingState(); }
+        try { $embedding = $withEmbeddings ? $this->embeddingState() : ['active'=>false,'model'=>null]; }
         catch (Throwable $e) {
             error_log('ATTACHMENT_EMBEDDING_CONFIG: ' . $e->getMessage());
             $embedding = ['active'=>false, 'model'=>null];
