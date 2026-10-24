@@ -73,8 +73,21 @@ final class AttachmentProcessingSchema
                 ksort($out);return $out;
             };
             // Privileges in SHOW FULL COLUMNS depend on grants, not on schema identity.
-            $normalize=static function(array $rows):array{foreach($rows as &$row)unset($row['Privileges']);return $rows;};
-            if($normalize($columns($table))!==$normalize($columns($temporary))||$indexes($table)!==$indexes($temporary))throw new RuntimeException('Esquema incompatible de '.$table.'; no se modificó la estructura existente');
+            $normalize=static function(array $rows):array{
+                foreach($rows as &$row){
+                    unset($row['Privileges']);
+                    // MySQL exposes DEFAULT_GENERATED differently for persistent and temporary tables.
+                    // The actual default value and ON UPDATE expression are still compared separately.
+                    $row['Extra']=trim((string)preg_replace('/\s+/',' ',str_replace('DEFAULT_GENERATED','',(string)$row['Extra'])));
+                }
+                return $rows;
+            };
+            $actual=$normalize($columns($table));$expected=$normalize($columns($temporary));
+            if($actual!==$expected){
+                $position=0;while(isset($actual[$position],$expected[$position])&&$actual[$position]===$expected[$position])$position++;
+                throw new RuntimeException('Esquema incompatible de '.$table.'; columna '.json_encode(['actual'=>$actual[$position]??null,'expected'=>$expected[$position]??null]).'; no se modificó la estructura existente');
+            }
+            if($indexes($table)!==$indexes($temporary))throw new RuntimeException('Índices incompatibles de '.$table.'; no se modificó la estructura existente');
             $q=$this->db->prepare('SELECT ENGINE,TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?');$q->bind_param('s',$table);$q->execute();$row=$q->get_result()->fetch_assoc();$q->close();
             if(($row['ENGINE']??'')!=='InnoDB'||($row['TABLE_COLLATION']??'')!=='utf8mb4_unicode_ci')throw new RuntimeException('Motor o cotejamiento incompatible de '.$table);
         }finally{$this->db->query("DROP TEMPORARY TABLE IF EXISTS `$temporary`");}
