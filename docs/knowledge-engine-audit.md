@@ -54,3 +54,13 @@ Búsqueda literal y estructura piden ahora trabajos de **texto**: extracción ne
 Una petición completa posterior reutiliza el JSON extraído y completa las etapas solicitadas. Una operación textual sobre un índice completo conserva sus chunks y vectores verificados. Transcripción/OCR siguen siendo necesarios cuando el dato literal depende de ellos; su trabajo y costo no se omiten. Metadatos no inicia esos trabajos. No se añade DDL.
 
 `operation_preparation_mysql_test.php` comprueba XLSX con embeddings desactivados, evidencia real `G7`, ausencia de llamadas a embeddings/semántica, preparación completa posterior y conservación de vectores. Proveedores controlados y MariaDB aislada.
+
+## Conjunto 5: retirada y desvinculación sin borrar originales
+
+El endpoint histórico `project_source_delete.php` eliminaba bytes S3 antes de retirar la fuente. Ahora tanto ese endpoint como `project_sources.php?action=remove` delegan en `ProjectSourceRemovalService`: operación transaccional, propietario bloqueado durante la mutación, retirada de publicación, chunks, vectores y jobs derivados; conserva `FileS3`, objetos S3 y `FileVersions`, e invalida `Projects.index_gen`. Exige POST y CSRF.
+
+La acción de quitar adjuntos de la interfaz ahora desvincula la conversación, conservando también la copia de trabajo. `meta.detached_file_ids` impide que la ruta física de subida vuelva a conceder acceso o vuelva a listar el archivo. Seleccionarlo explícitamente otra vez restaura el vínculo y reutiliza la copia. Se permite desvincular una copia cuyo original fue revocado, sin acceder a sus bytes. Las fuentes de proyecto se retiran por su propia acción, con aviso de alcance de proyecto.
+
+Distinción de operaciones: **desvincular** afecta al contexto de una conversación; **retirar fuente** afecta a la publicación del proyecto y su índice; **eliminar copia física** y **borrar original** no son efectos de esos botones. No se añadieron limpiezas destructivas. La recuperación universal de versiones y las herramientas históricas de edición/borrado siguen requiriendo una auditoría independiente.
+
+Pruebas: `conversation_detach_mysql_test.php`, `project_source_withdrawal_mysql_test.php` y `safe_file_removal_ui_test.js`: aislamiento, revocación, reanexado sin duplicar, preservación de todos los bytes y filas FileS3, versiones, datos ajenos e índices sin FKs de cascada. Sin DDL adicional.

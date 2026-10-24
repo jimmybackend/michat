@@ -70,6 +70,8 @@ final class DriveChatAttachmentService
     }
     private function focus(int $user,int $session,int $file): void
     {
+        require_once __DIR__.'/ConversationAttachmentService.php';
+        (new ConversationAttachmentService($this->db))->change($user,$session,$file,true);
         $q=$this->db->prepare("UPDATE ChatSessions SET meta=JSON_SET(CASE WHEN JSON_VALID(meta) THEN meta ELSE '{}' END,'$.active_attachment_id',?,'$.attachment_processing_policy','on_request') WHERE id_=? AND user_id_=? AND status='open'");
         $q->bind_param('iii',$file,$session,$user);$q->execute();$q->close();
     }

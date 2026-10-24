@@ -283,48 +283,11 @@ if ($action === 'add') {
 ELIMINAR fuente del proyecto
 ============================ */
 if ($action === 'remove') {
-    $source_id = isset($_POST['source_id']) ? (int)$_POST['source_id'] : 0;
-    if ($source_id <= 0) jexit(['ok'=>false,'error'=>'source_id inválido'], 400);
-    
-    // Verificar que la fuente pertenezca a un proyecto del usuario
-    $sqlCheck = "SELECT ps.id_ FROM ProjectSources ps
-                 JOIN Projects p ON p.id_ = ps.project_id_
-                 WHERE ps.id_ = ? AND p.user_id_ = ?";
-    $stmtCheck = $db_connection->prepare($sqlCheck);
-    if (!$stmtCheck) jexit(['ok'=>false,'error'=>'Error preparando: '.$db_connection->error], 500);
-    $stmtCheck->bind_param('ii', $source_id, $user_id);
-    $stmtCheck->execute();
-    $resCheck = $stmtCheck->get_result();
-    if ($resCheck->num_rows === 0) {
-        $stmtCheck->close();
-        jexit(['ok'=>false,'error'=>'Fuente no encontrada'], 404);
-    }
-    $stmtCheck->close();
-    
-    // EmbeddingJobs no tiene FK hacia SourceChunks: limpiar antes de borrar la fuente.
-    $stmtJobs = $db_connection->prepare("
-        DELETE ej FROM EmbeddingJobs ej
-        JOIN SourceChunks sc ON ej.target_type='source_chunk' AND ej.target_id=sc.id_
-        WHERE sc.source_id_=?
-    ");
-    if ($stmtJobs) {
-        $stmtJobs->bind_param('i', $source_id);
-        $stmtJobs->execute();
-        $stmtJobs->close();
-    }
-
-    // Eliminar fuente (cascada eliminará SourceChunks y ChunkEmbeddings)
-    $sql = "DELETE FROM ProjectSources WHERE id_ = ?";
-    $stmt = $db_connection->prepare($sql);
-    if (!$stmt) jexit(['ok'=>false,'error'=>'Error preparando: '.$db_connection->error], 500);
-    $stmt->bind_param('i', $source_id);
-    if (!$stmt->execute()) {
-        $e = $stmt->error; $stmt->close();
-        jexit(['ok'=>false,'error'=>'Error eliminando: '.$e], 500);
-    }
-    $stmt->close();
-    
-    jexit(['ok' => true, 'message' => 'Fuente eliminada']);
+    if (($_SERVER['REQUEST_METHOD']??'')!=='POST') jexit(['ok'=>false,'error'=>'Método no permitido'],405);
+    if(!isset($_POST['csrf'],$_SESSION['document_link_csrf'])||!hash_equals($_SESSION['document_link_csrf'],(string)$_POST['csrf'])) jexit(['ok'=>false,'error'=>'Token inválido'],403);
+    require_once __DIR__.'/includes/ProjectSourceRemovalService.php';
+    try { jexit((new ProjectSourceRemovalService($db_connection))->withdraw($user_id,(int)($_POST['source_id']??0))); }
+    catch(Throwable $e) { error_log('PROJECT_SOURCE_WITHDRAW '.$e->getMessage()); jexit(['ok'=>false,'error'=>'No se pudo retirar la fuente. Comprueba sus permisos.'],422); }
 }
 
 /* ============================

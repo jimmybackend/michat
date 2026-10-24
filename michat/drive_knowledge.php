@@ -52,26 +52,10 @@ if (!$session) driveKnowledgeExit(['ok'=>false,'error'=>'Selecciona una conversa
 if ($session['status'] !== 'open') driveKnowledgeExit(['ok'=>false,'error'=>'La conversación está archivada'],409);
 if (!in_array($action,['link','unlink'],true)) driveKnowledgeExit(['ok'=>false,'error'=>'Acción inválida'],400);
 $fileId=(int)($_POST['file_id'] ?? 0);
-if (!$access->file($user,$fileId)) driveKnowledgeExit(['ok'=>false,'error'=>'Archivo no autorizado o bloqueado'],403);
 try {
-    $db_connection->begin_transaction();
-    $s=$db_connection->prepare('SELECT meta,status FROM ChatSessions WHERE id_=? AND user_id_=? FOR UPDATE');
-    $s->bind_param('ii',$sessionId,$user);$s->execute();$row=$s->get_result()->fetch_assoc();$s->close();
-    if (!$row || $row['status']!=='open' || !$access->file($user,$fileId)) throw new RuntimeException('Acceso revocado');
-    $meta=json_decode((string)$row['meta'],true) ?: [];
-    $ids=array_values(array_unique(array_map('intval',(array)($meta['knowledge_file_ids'] ?? []))));
-    if (($_POST['action'] ?? 'link') === 'unlink') $ids=array_values(array_diff($ids,[$fileId]));
-    elseif (!in_array($fileId,$ids,true)) {
-        if (count($ids)>=100) throw new RuntimeException('Máximo 100 documentos vinculados por conversación');
-        $ids[]=$fileId;
-    }
-    $meta['knowledge_file_ids']=$ids;
-    $encoded=json_encode($meta,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);
-    $s=$db_connection->prepare('UPDATE ChatSessions SET meta=? WHERE id_=? AND user_id_=?');
-    $s->bind_param('sii',$encoded,$sessionId,$user);$s->execute();$s->close();
-    $db_connection->commit();
-    driveKnowledgeExit(['ok'=>true,'linked_file_ids'=>$ids,'indexed'=>false]);
+    require_once __DIR__.'/includes/Drive/ConversationAttachmentService.php';
+    driveKnowledgeExit((new ConversationAttachmentService($db_connection))->change($user,$sessionId,$fileId,$action==='link'));
 } catch (Throwable $e) {
-    $db_connection->rollback();error_log('drive_knowledge: '.$e->getMessage());
-    driveKnowledgeExit(['ok'=>false,'error'=>'No se pudo actualizar el vínculo'],500);
+    error_log('drive_knowledge: '.$e->getMessage());
+    driveKnowledgeExit(['ok'=>false,'error'=>'No se pudo actualizar el vínculo'],422);
 }

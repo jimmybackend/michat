@@ -1709,54 +1709,9 @@ function downloadSessionFile(s3Key, filename) {
 }
 
 async function deleteSessionFile(fileId, s3Key, filename, btn) {
-  const label = filename || s3Key || ('#' + fileId);
-
-  if (!confirm('¿Eliminar el archivo "' + label + '"?\nEsta acción borra el archivo de S3 y no se puede deshacer.')) {
-    return;
-  }
-
-  const fd = new FormData();
-  if (fileId && !Number.isNaN(fileId)) fd.append('file_id', String(fileId));
-  else if (s3Key) fd.append('archivo', s3Key);
-  else { showToast('⚠️ Eliminar', 'Falta la referencia del archivo.', 'warning'); return; }
-
-  const originalHtml = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-
-  try {
-    const r = await fetch(FILE_ENDPOINTS.delete, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: fd
-    });
-
-    let j;
-    try { j = await r.json(); }
-    catch (err) { throw new Error('Respuesta inválida del servidor (HTTP ' + r.status + ')'); }
-
-    if (!r.ok || j.ok === false || j.estado === 'error') {
-      throw new Error(j.error || j.mensaje || ('HTTP ' + r.status));
-    }
-
-    showToast('🗑️ Eliminado', 'El archivo "' + label + '" se eliminó correctamente.', 'success');
-
-    if (currentSessionId) {
-      await loadSessionAttachments(currentSessionId);
-    }
-    return j;
-  } catch (e) {
-    console.error('Error eliminando archivo:', e);
-    showToast('⚠️ Error', 'No se pudo eliminar: ' + e.message, 'danger');
-    btn.disabled = false;
-    btn.innerHTML = originalHtml;
-  }
+  return deleteSessionAttachment(fileId);
 }
 
-/* ============================================================
-   PROCESAR ACCIONES DE INDEXACIÓN / SEMÁNTICA (genérica)
-   Envía POST con file_id + session_id al endpoint correspondiente.
-   ============================================================ */
 async function processSessionFileAction(endpoint, fileId, label, btn) {
   if (!currentSessionId) {
     showToast('⚠️ Sesión', 'Selecciona una conversación primero.', 'warning');
@@ -3096,7 +3051,7 @@ function renderProjectSources() {
       <span class="d-flex align-items-center" style="gap: 4px;">
         ${actionsHtml}
         <span class="badge badge-${badgeClass}" style="font-size:0.6rem;">${statusText}</span>
-        <button class="btn btn-sm btn-outline-danger btn-delete-source" data-id="${s.id}" title="Eliminar" style="padding: 0 .3rem; font-size: 0.6rem;">
+        <button class="btn btn-sm btn-outline-danger btn-delete-source" data-id="${s.id}" title="Retirar fuente" style="padding: 0 .3rem; font-size: 0.6rem;">
           <i class="fas fa-trash"></i>
         </button>
       </span>
@@ -3331,7 +3286,7 @@ function openProjectSourcesModal() {
                     </div>
                     <div class="d-flex align-items-center" style="gap: 8px;">
                         <span class="badge badge-${badgeClass}" style="font-size: 0.7rem;">${statusText}</span>
-                        <button class="btn btn-sm btn-outline-danger btn-delete-modal-source" data-id="${s.id}" title="Eliminar fuente" style="padding: 0 .4rem;">
+                        <button class="btn btn-sm btn-outline-danger btn-delete-modal-source" data-id="${s.id}" title="Retirar fuente" style="padding: 0 .4rem;">
                             <i class="fas fa-trash"></i>
                         </button>
                     </div>
@@ -3447,12 +3402,14 @@ async function uploadProjectFiles() {
 
 
 async function deleteProjectSource(sourceId) {
-  if (!confirm('¿Eliminar esta fuente del proyecto? Se borrará el archivo de S3 y todos sus chunks indexados.')) {
+  if (!confirm('¿Retirar esta fuente del proyecto? Se conservarán el archivo original y sus versiones.')) {
     return;
   }
   try {
     const fd = new FormData();
     fd.append('source_id', sourceId);
+    if(!driveKnowledgeCsrf) await changeDriveKnowledge(null,'token',currentSessionId);
+    fd.append('csrf',driveKnowledgeCsrf);
     const r = await fetch('project_source_delete.php', {
       method: 'POST',
       credentials: 'same-origin',
@@ -3462,7 +3419,7 @@ async function deleteProjectSource(sourceId) {
     if (!r.ok || j.ok === false) {
       throw new Error(j.error || `HTTP ${r.status}`);
     }
-    setStatus('Fuente eliminada');
+    setStatus('Fuente retirada; original conservado');
     await loadProjectSources(currentProjectId);
   } catch (e) {
     console.error('Error eliminando fuente:', e);
@@ -3550,7 +3507,7 @@ async function indexPendingSources() {
                   </div>
                   <div class="d-flex align-items-center" style="gap: 8px;">
                     <span class="badge badge-${badgeClass}" style="font-size: 0.7rem;">${statusText}</span>
-                    <button class="btn btn-sm btn-outline-danger btn-delete-modal-source" data-id="${s.id}" title="Eliminar fuente" style="padding: 0 .4rem;">
+                    <button class="btn btn-sm btn-outline-danger btn-delete-modal-source" data-id="${s.id}" title="Retirar fuente" style="padding: 0 .4rem;">
                       <i class="fas fa-trash"></i>
                     </button>
                   </div>
@@ -4270,7 +4227,7 @@ async function loadSessionAttachments(sessionId) {
               data-action="improve" data-file-id="${fileId}" data-filename="${filename}"><i class="fas fa-code"></i></button>
               <button type="button" class="chat-file-action" title="Subir una nueva versión de este código sin sobrescribir el original"
               data-action="version" data-file-id="${fileId}" data-filename="${filename}"><i class="fas fa-code-branch"></i></button>` : ''}
-            <button type="button" class="chat-file-action chat-file-action-danger" title="${file.drive_linked ? 'Desvincular de esta conversación' : 'Eliminar archivo'}"
+            <button type="button" class="chat-file-action chat-file-action-danger" title="${file.knowledge_origin === 'project' ? 'Retirar fuente del proyecto' : 'Desvincular de esta conversación'}"
               data-action="${file.drive_linked ? 'unlink' : 'delete'}" data-file-id="${fileId}">
               <i class="fas fa-trash"></i>
             </button>
@@ -4295,21 +4252,18 @@ async function loadSessionAttachments(sessionId) {
 
 
 async function deleteSessionAttachment(attachmentId) {
-  const file = sessionAttachments.find(a => Number(a.files3_id || a.id) === Number(attachmentId));
-  const label = file?.filename || ('#' + attachmentId);
-  if (!confirm('¿Eliminar el adjunto \"' + label + '\"?\nTambién se eliminará su índice y semántica de la conversación.')) return;
+  const file=sessionAttachments.find(a=>Number(a.files3_id || a.id)===Number(attachmentId));
+  if(file?.knowledge_origin==='project' && file.project_source_id) return deleteProjectSource(Number(file.project_source_id));
+  const label=file?.filename || ('#'+attachmentId);
+  if(!confirm('¿Quitar "'+label+'" de esta conversación? Se conservarán el archivo, la copia de trabajo y sus versiones.')) return;
+  const sid=currentSessionId;
   try {
-    const fd = new FormData();
-    fd.append('file_id', String(attachmentId));
-    const r = await fetch(FILE_ENDPOINTS.delete, { method:'POST', credentials:'same-origin', body:fd });
-    const j = toJSONorThrow(await r.text(), r.status, 'Eliminar adjunto');
-    if (!r.ok || j.ok === false) throw new Error(j.error || j.mensaje || `HTTP ${r.status}`);
-    await loadSessionAttachments(currentSessionId);
-  } catch (e) {
-    console.error('Error eliminando adjunto:', e);
-    alert('Error eliminando adjunto: ' + e.message);
-  }
+    await changeDriveKnowledge(Number(attachmentId),'unlink',sid);
+    if(Number(currentSessionId)===Number(sid)) await loadSessionAttachments(sid);
+    setStatus('Adjunto desvinculado; archivos conservados');
+  } catch(e) { showToast('Adjuntos',e.message,'warning'); }
 }
+
 async function uploadSessionFiles() {
   if (!currentSessionId) {
     alert('⚠️ No hay sesión seleccionada');

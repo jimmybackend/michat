@@ -4,12 +4,13 @@ $root=dirname(__DIR__,2);$pass=0;$fail=0;
 $ok=static function(bool$c,string$l)use(&$pass,&$fail):void{echo($c?'PASS ':'FAIL ').$l."\n";$c?$pass++:$fail++;};
 $projects=(string)file_get_contents($root.'/michat/projects.php');
 $source=(string)file_get_contents($root.'/michat/project_source_delete.php');
+$sourceService=(string)file_get_contents($root.'/michat/includes/ProjectSourceRemovalService.php');
 $lifecycle=(string)file_get_contents($root.'/michat/includes/Chat/SessionLifecycleService.php');
 $ok(str_contains($projects,'ChatIdentity::resolveUserId(')&&str_contains($projects,"'Sesión de usuario no válida'"),'projects rejects missing server identity');
 $ok(str_contains($projects,'user_id no coincide con la sesión autenticada'),'projects treats request user_id as assertion');
 $ok(str_contains($projects,'WHERE user_id_ = ?')&&substr_count($projects,'AND user_id_ = ?')>=2,'projects list/update/delete remain owner-scoped');
-$ok(str_contains($source,"p.user_id_ = ?")&&str_contains($source,"p.status <> 'deleted'"),'project source lookup is owner-scoped through project');
-$ok(str_contains($source,'DELETE ps FROM ProjectSources ps JOIN Projects p')&&str_contains($source,'p.user_id_=?'),'project source delete rechecks owner in mutation');
+$ok(str_contains($source,'ProjectSourceRemovalService')&&str_contains($sourceService,"p.user_id_=?")&&str_contains($sourceService,"p.status<>'deleted'"),'project source lookup is owner-scoped through project service');
+$ok(str_contains($sourceService,'FOR UPDATE')&&str_contains($sourceService,'begin_transaction')&&str_contains($sourceService,'DELETE FROM ProjectSources WHERE id_=?'),'project source mutation holds ownership row locks in the transaction');
 foreach(['rename','archive','restore']as$method)$ok(str_contains($lifecycle,'function '.$method.'('),'SessionLifecycleService owns '.$method);
 $ok(substr_count($lifecycle,'WHERE id_=? AND user_id_=?')>=3,'session mutations and reloads are owner-scoped');
 foreach(['title','archive','restore']as$name){$endpoint=(string)file_get_contents($root.'/michat/chat2_session_'.$name.'.php');$ok(str_contains($endpoint,'ChatIdentity::resolveUserId(')&&str_contains($endpoint,'SessionLifecycleService'),$name.' adapter resolves identity and delegates');$ok(str_contains($endpoint,'user_id no coincide con la sesión autenticada'),$name.' request user_id cannot impersonate another user');$ok(!str_contains($endpoint,'UPDATE ChatSessions')&&!str_contains($endpoint,'SELECT id_'),$name.' adapter contains no session business SQL');}
