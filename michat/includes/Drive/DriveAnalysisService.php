@@ -49,6 +49,10 @@ final class DriveAnalysisService
                 }
                 // Literal evidence is independent of summarization, embeddings and sidecar persistence.
                 if (!$chunks && !$image) {
+                    if($this->indexer===null) {
+                        require_once __DIR__.'/AttachmentProcessingService.php';
+                        if(AttachmentProcessingService::media($file['Nombre']))return (new AttachmentProcessingService($this->db))->requestFile($user,$session,$fileId);
+                    }
                     self::progress($progress,'extracting','started','Extrayendo contenido y preparando fragmentos');
                     $stage='extraction_index';
                     if (is_callable($this->indexer)) $indexed=($this->indexer)($user,$session,$fileId);

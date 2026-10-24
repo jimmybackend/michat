@@ -37,6 +37,13 @@ if ($fileId <= 0 || $sessionId <= 0) {
 }
 
 try {
+    require_once __DIR__.'/includes/Drive/AttachmentProcessingService.php';
+    $owned=(new DocumentAccessRepository($db_connection))->requireFile($userId,$sessionId,$fileId);
+    if(AttachmentProcessingService::complex($owned['Nombre'])) {
+        $result=(new AttachmentProcessingService($db_connection))->requestFile($userId,$sessionId,$fileId);
+        session_write_close();
+        indexSessionFileExit($result);
+    }
     $imageService = new SessionImageKnowledgeService($db_connection);
     $isImage = $imageService->supports($userId, $sessionId, $fileId);
     $result = $isImage

@@ -36,6 +36,13 @@ try {
             'message'=>'Adjunto · pendiente de solicitud. No se ha procesado contenido.',
             'attachment'=>['file_id'=>$file,'filename'=>$working['Nombre'],'s3_key'=>idx_build_s3_key($working)]],JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);exit;
     }
+    require_once __DIR__.'/includes/Drive/AttachmentProcessingService.php';
+    $ownedFile=$access->requireFile($user,$session,$file);
+    if(AttachmentProcessingService::complex($ownedFile['Nombre'])) {
+        $result=(new AttachmentProcessingService($db_connection))->requestFile($user,$session,$file);
+        session_write_close();
+        echo json_encode($result,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE);exit;
+    }
     $result=DriveAnalysisService::production($db_connection)->analyze($user,$session,$file,!$attach);
     if($attach) $result['attachment']=['file_id'=>$file,'filename'=>$working['Nombre'],'s3_key'=>idx_build_s3_key($working)];
     if (empty($result['ok'])) http_response_code(!empty($result['pending'])?202:422);

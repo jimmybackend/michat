@@ -2,6 +2,9 @@
   'use strict';
   // File processing precedes prompt compilation and final model generation.
   root.prepareAttachmentsForQuestion = async function(options) {
+    return root.waitForAttachmentJobs(options);
+  };
+  root.waitForAttachmentJobs = async function(options, initialJobs) {
     const request = async (action, ids) => {
       const body = new URLSearchParams({action, session_id:String(options.sessionId), csrf:options.csrf,
         query:options.query, trace_id:options.traceId || '', job_ids:JSON.stringify(ids || [])});
@@ -10,7 +13,7 @@
       if(!response.ok || !data.ok) throw new Error(data.error || 'No se pudo preparar el archivo');
       return data;
     };
-    let data = await request('prepare', []);
+    let data = initialJobs ? {available:true,jobs:initialJobs} : await request('prepare', []);
     if(!data.available) return data;
     const started = Date.now();
     while((data.jobs || []).some(job => !['ready','partial'].includes(job.status))) {

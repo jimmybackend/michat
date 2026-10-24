@@ -72,6 +72,7 @@ final class AttachmentRequestService
             require_once __DIR__.'/AttachmentProcessingService.php';
             if(AttachmentProcessingService::complex($target['Nombre'])){
                 $processing=new AttachmentProcessingService($this->db);
+                if(!$processing->available()&&AttachmentProcessingService::media($target['Nombre']))throw new RuntimeException('La transcripción requiere aplicar fase14_attachment_processing; no se intentó leer el audio como texto.');
                 if($processing->available()){
                     $job=$processing->enqueue($user,$session,$id);
                     if(!in_array($job['status'],['ready','partial'],true)){

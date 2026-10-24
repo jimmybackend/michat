@@ -1683,7 +1683,7 @@ const CODE_EXTS = ['php','phtml','inc','js','mjs','cjs','jsx','ts','tsx','css','
   'html','htm','json','xml','yaml','yml','ini','conf','cfg','txt','md','markdown','sql',
   'sh','bash','zsh','bat','cmd','ps1','py','rb','java','c','h','cpp','hpp','cs','go','rs',
   'swift','kt','kts','vue','csv','tsv','log','srt','vtt','env','gitignore','htaccess'];
-const INDEXABLE_SESSION_EXTS = new Set([...CODE_EXTS, 'pdf','docx','dotx','xlsx','xlsm','xltx','xltm','pptx','ppsx','odt','ods','odp','rtf','epub','doc','xls','ppt','db','sqlite','sqlite3','jsonl','ndjson','toml','properties','dbml']);
+const INDEXABLE_SESSION_EXTS = new Set([...CODE_EXTS, 'pdf','docx','dotx','xlsx','xlsm','xltx','xltm','pptx','ppsx','odt','ods','odp','rtf','epub','doc','xls','ppt','pps','mp3','mp4','wav','flac','ogg','amr','webm','m4a','opus','mov','avi','mkv','jpg','jpeg','png','webp','gif','db','sqlite','sqlite3','jsonl','ndjson','toml','properties','dbml']);
 
 
 function getFileExt(name) {
@@ -1796,6 +1796,10 @@ async function processSessionFileAction(endpoint, fileId, label, btn) {
       throw new Error(j.error || j.mensaje || ('HTTP ' + r.status));
     }
 
+    if(j.processing_jobs?.length) {
+      await waitForSessionFileJobs(j.processing_jobs,sid);
+      j.message='Contenido preparado para responder.';
+    }
     showToast(label, esc(j.mensaje || j.message || 'Proceso completado.'), j.warnings?.length?'warning':'success');
 
 
@@ -1807,6 +1811,14 @@ async function processSessionFileAction(endpoint, fileId, label, btn) {
     btn.innerHTML = originalHtml;
     if(Number(currentSessionId)===Number(sid))await loadSessionAttachments(sid);
   }
+}
+
+async function waitForSessionFileJobs(jobs,sid) {
+  if(!window.waitForAttachmentJobs)throw new Error('Recarga la página para activar la preparación de archivos.');
+  await changeDriveKnowledge(null,'token',sid);
+  await window.waitForAttachmentJobs({sessionId:sid,csrf:driveKnowledgeCsrf,query:'',
+    isCurrent:()=>Number(currentSessionId)===Number(sid),
+    onProgress:items=>{if(Number(currentSessionId)===Number(sid))setStatus(items.map(job=>'#'+job.id+' '+job.message).join(' · '));}},jobs);
 }
 
 // =====================================================================
@@ -2439,7 +2451,7 @@ async function sendMessage() {
     };
 
     try {
-        if(window.prepareAttachmentsForQuestion && sessionAttachments.length) {
+        if(window.prepareAttachmentsForQuestion) {
             const preparationSession=currentSessionId;
             await changeDriveKnowledge(null,'token',preparationSession);
             await window.prepareAttachmentsForQuestion({sessionId:preparationSession,csrf:driveKnowledgeCsrf,query:text,traceId:activityTraceId,
@@ -4192,6 +4204,8 @@ async function loadSessionAttachments(sessionId) {
       else if (['php', 'js', 'css', 'html', 'json', 'xml'].includes(extension)) fileIcon = 'fa-file-code';
       else if (['doc', 'docx'].includes(extension)) fileIcon = 'fa-file-word';
       else if (['xls', 'xlsx', 'csv'].includes(extension)) fileIcon = 'fa-file-excel';
+      else if (['mp3','wav','flac','ogg','amr','m4a','opus'].includes(extension)) fileIcon = 'fa-file-audio';
+      else if (['mp4','webm','mov','avi','mkv'].includes(extension)) fileIcon = 'fa-file-video';
 
       return `
         <div class="chat-session-file" data-file-id="${fileId}">
@@ -4423,6 +4437,7 @@ function openSessionAttachmentsManager(forceOpen = false) {
             const r = await fetch(a.drive_linked?'drive_file_analysis.php':FILE_ENDPOINTS.indexFile,{method:'POST',credentials:'same-origin',body:fd});
             const j = await r.json();
             if(!r.ok || !j.ok) throw new Error(j.error || 'HTTP '+r.status);
+            if(j.processing_jobs?.length)await waitForSessionFileJobs(j.processing_jobs,currentSessionId);
             ok++;
           } catch(e) {
             console.error('Indexación adjunto:', a.filename, e);

@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/BedrockTextContinuation.php';
 
 /** Request-agnostic production runtime. AWS clients come exclusively from Config. */
 final class BedrockChatRuntime implements ChatRuntimeInterface
@@ -38,13 +39,21 @@ final class BedrockChatRuntime implements ChatRuntimeInterface
             $this->checkpoint($request);
             $heartbeat && $heartbeat();
             $response = $this->converse->converse($params);
+            $this->checkpoint($request);
+            // Charge/check every actual call, including automatic text continuations.
+            $budget?->recordUsage($response->usage['prompt_tokens'],$response->usage['completion_tokens']);
+            $response=BedrockTextContinuation::complete($params,$response,function(array $continuation)use($request,$heartbeat,$budget){
+                $this->checkpoint($request);$heartbeat&&$heartbeat();$budget?->beforeModelRound();
+                $part=$this->converse->converse($continuation);
+                $this->checkpoint($request);$budget?->recordUsage($part->usage['prompt_tokens'],$part->usage['completion_tokens']);
+                return $part;
+            });
             // Cancellation may arrive while Bedrock is in flight. Do not consume the
             // response or proceed to persistence/tool execution after that point.
             $this->checkpoint($request);
             $usage['prompt_tokens'] += $response->usage['prompt_tokens'];
             $usage['completion_tokens'] += $response->usage['completion_tokens'];
             $usage['total_tokens'] += $response->usage['total_tokens'];
-            $budget?->recordUsage($response->usage['prompt_tokens'],$response->usage['completion_tokens']);
             $text=$response->text;$uses=$response->toolUses;
             if($response->stopReason==='max_tokens')$text.="\n\n⚠️ La respuesta alcanzó el límite de salida del modelo y quedó incompleta. El contenido extraído se conserva.";
             if ($response->stopReason !== 'tool_use' || !$uses) {

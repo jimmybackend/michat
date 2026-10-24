@@ -3014,7 +3014,15 @@ if ($activityTraceId !== '') {
                 $model_id
             );
         }
-        $res = $bedrock->converse($converseParams);
+        require_once __DIR__.'/includes/Chat/BedrockTextContinuation.php';
+        $converseClient=new BedrockConverseClient($bedrock);
+        $normalized=BedrockTextContinuation::complete($converseParams,$converseClient->converse($converseParams),
+            static fn(array $params)=>$converseClient->converse($params),
+            static function(int $part)use($db_connection,$activityTraceId,$session_id,$user_id,$model_id){
+                if($activityTraceId!=='')activityEmit($db_connection,$activityTraceId,$session_id,$user_id,'respond','response_continuation_'.$part,'started','Completando respuesta · parte adicional '.$part,'El modelo alcanzó su límite por llamada; continúa con la misma evidencia.',['part'=>$part],$model_id);
+            });
+        $res=['stopReason'=>$normalized->stopReason,'output'=>['message'=>$normalized->outputMessage],
+            'usage'=>['inputTokens'=>$normalized->usage['prompt_tokens'],'outputTokens'=>$normalized->usage['completion_tokens'],'totalTokens'=>$normalized->usage['total_tokens']]];
         
         $usage['prompt_tokens']     += (int)($res['usage']['inputTokens'] ?? 0);
         $usage['completion_tokens'] += (int)($res['usage']['outputTokens'] ?? 0);
