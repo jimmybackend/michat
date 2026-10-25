@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once dirname(__DIR__).'/Memory/DocumentAccessRepository.php';
+require_once dirname(__DIR__).'/Files/GeneratedFileCatalog.php';
 
 /** The model proposes data filters only. It never supplies SQL or sees file content. */
 final class MetadataSearchService
@@ -60,6 +61,8 @@ final class MetadataSearchService
         $next=$rows?(int)end($rows)['id_']:0;
         $access=new DocumentAccessRepository($this->db);
         $rows=array_values(array_filter($rows,static fn($row)=>$access->file($user,(int)$row['id_'])!==null));
+        $catalog=new GeneratedFileCatalog($this->db);
+        foreach($rows as &$row)$row=$catalog->repairDerivedName($user,$row);unset($row);
         return ['files'=>$rows,'filters'=>$filters,'ai_used'=>$used,'has_more'=>$more,'next_cursor'=>$next,'search_scope'=>'FileS3 metadata only'];
     }
 }
