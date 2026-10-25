@@ -12,10 +12,46 @@ final class GeneratedFileCatalog
         $user=(int)($source['owner_id']??0);$sourceId=(int)($source['file_id']??0);
         $file=(new DocumentAccessRepository($this->db))->file($user,$sourceId);
         if(!$file||idx_build_s3_key($file)!==($source['key']??'')||$key===idx_build_s3_key($file))throw new DocumentAccessDenied('Origen del archivo derivado no autorizado');
-        return $this->register($user,$key,$bytes,'application/json',basename($key),[
+        $name=self::derivativeName((string)$file['Nombre'],$kind);
+        return $this->register($user,$key,$bytes,'application/json',$name,[
             'format'=>'michat.generated-file','version'=>1,'role'=>'derivative','kind'=>$kind,
             'owner_id'=>$user,'source_file_id'=>$sourceId,'source_key'=>$source['key'],'source_etag'=>$source['etag']??'',
+            'display_name'=>$name,
         ]);
+    }
+
+    public static function derivativeName(string $original,string $kind): string
+    {
+        $label=match($kind){'content'=>'Contenido','analysis'=>'Análisis','transcription'=>'Transcripción',
+            'transcription_copy'=>'Transcripción (copia del chat)',default=>'Resultado'};
+        $original=trim(preg_replace('~[\\x00-\\x1f\\x7f/\\\\]~u','-', $original)??'');
+        if($original==='')$original='Archivo';
+        $suffix=' — '.$label.'.json';
+        return mb_substr($original,0,255-mb_strlen($suffix)).$suffix;
+    }
+
+    /** Upgrade legacy automatic names on access. Never renames S3 objects or custom user labels. */
+    public function repairDerivedName(int $user,array $file): array
+    {
+        if((json_decode((string)($file['Metadatos']??''),true)['michat_generated']['role']??'')!=='derivative')return $file;
+        $access=new DocumentAccessRepository($this->db);$id=(int)$file['id_'];
+        $live=$access->file($user,$id);if(!$live)return $file;
+        $meta=json_decode((string)$live['Metadatos'],true)?:[];$ref=$meta['michat_generated']??[];
+        if(($ref['role']??'')!=='derivative')return $file;
+        $source=$access->file($user,(int)($ref['source_file_id']??0));
+        if(!$source)return $file;
+        $name=self::derivativeName((string)$source['Nombre'],(string)($ref['kind']??''));
+        $old=(string)$live['Nombre'];$automatic=$old===basename(idx_build_s3_key($live))||$old===($ref['display_name']??null);
+        if(!$automatic)return array_replace($file,['Nombre'=>$old,'Metadatos'=>$live['Metadatos']]);
+        $ref['display_name']=$name;$meta['michat_generated']=$ref;
+        $json=json_encode($meta,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+        if($old!==$name||$json!==$live['Metadatos']){
+            // Compare-and-set preserves concurrent user renames and metadata updates.
+            $q=$this->db->prepare('UPDATE FileS3 SET Nombre=?,Metadatos=? WHERE id_=? AND user_id_=? AND BINARY Nombre=BINARY ? AND BINARY Metadatos=BINARY ?');
+            $previous=(string)$live['Metadatos'];$q->bind_param('ssiiss',$name,$json,$id,$user,$old,$previous);$q->execute();$changed=$q->affected_rows;$q->close();
+            if(!$changed){$current=$access->file($user,$id);return $current?array_replace($file,$current):$file;}
+        }
+        return array_replace($file,['Nombre'=>$name,'Metadatos'=>$json]);
     }
 
     public function created(int $user,string $key,int $bytes,string $mime,string $name,string $kind,int $session=0): int
@@ -70,11 +106,17 @@ final class GeneratedFileCatalog
             }
             $meta=trim((string)($row['Metadatos']??''))===''?[]:json_decode($row['Metadatos'],true,64,JSON_THROW_ON_ERROR);
             if(!is_array($meta)||($meta!==[]&&array_is_list($meta)))throw new RuntimeException('Metadatos existentes incompatibles; no se sobrescribieron');
+            $oldRef=$meta['michat_generated']??[];$visible=(string)$row['Nombre'];
+            if(($provenance['role']??'')==='derivative'){
+                if($visible===$base||$visible===($oldRef['display_name']??null))$visible=$name;
+                // A custom name is not an automatically managed label.
+                if($visible!==$name)unset($provenance['display_name']);
+            }
             $meta['michat_generated']=$provenance;$meta['mime_type']=$mime;
             $json=json_encode($meta,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);$id=(int)$row['id_'];
-            // Existing visible name, protection and custom metadata survive both retries and sync-created rows.
-            $q=$this->db->prepare('UPDATE FileS3 SET Tamano=?,Metadatos=?,Found=1 WHERE id_=? AND user_id_=?');
-            $q->bind_param('isii',$bytes,$json,$id,$user);$q->execute();$q->close();return $id;
+            // Preserve custom names and protection; only automatic derivative labels are upgraded.
+            $q=$this->db->prepare('UPDATE FileS3 SET Tamano=?,Metadatos=?,Nombre=IF(BINARY Nombre=BINARY ?,?,Nombre),Found=1 WHERE id_=? AND user_id_=?');
+            $oldName=(string)$row['Nombre'];$q->bind_param('isssii',$bytes,$json,$oldName,$visible,$id,$user);$q->execute();$q->close();return $id;
         } finally {$q=$this->db->prepare('SELECT RELEASE_LOCK(?)');$q->bind_param('s',$lock);$q->execute();$q->close();}
     }
 }

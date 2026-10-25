@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once dirname(__DIR__).'/Memory/DocumentAccessRepository.php';
+require_once __DIR__.'/GeneratedFileCatalog.php';
 
 /** Read-only catalog. Relationships come from chat bindings and generated-file provenance. */
 final class ConversationDataRepository
@@ -51,6 +52,7 @@ final class ConversationDataRepository
                 if(!isset($sessions[$sid])||DocumentAccessRepository::detached($sessions[$sid],$id))continue;
             }else continue;
             if(!$access->file($user,$id))continue;
+            if($kind==='derivative')$file=(new GeneratedFileCatalog($this->db))->repairDerivedName($user,$file);
             if(!isset($files[$id]))$files[$id]=$this->item($file,$kind==='derivative'?'result':'generated',$sid);
         }
         $q->close();ksort($files,SORT_NUMERIC);$all=array_values($files);$offset=max(0,$offset);

@@ -42,6 +42,10 @@ final class FileDeliveryService
                     throw new FileDeliveryException('Archivo protegido. Desbloquéalo primero en ArcadeCloud.', 423);
                 }
             }
+            if(($ownMeta['michat_generated']['role']??'')==='derivative'){
+                require_once __DIR__.'/GeneratedFileCatalog.php';
+                $own=(new GeneratedFileCatalog($this->db))->repairDerivedName($userId,$own);
+            }
             $name = (string)$own['Nombre'];
             $ext = pathinfo($key, PATHINFO_EXTENSION);
             if ($ext !== '' && pathinfo($name, PATHINFO_EXTENSION) === '') $name .= '.' . $ext;
