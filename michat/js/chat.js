@@ -106,6 +106,10 @@
     let currentProjectId = null;
     let sessions = [];
     let sessionsRequestSerial = 0;
+    if (window.ConversationDataPanel) new window.ConversationDataPanel(() => {
+      const session = sessions.find(item => Number(item.id ?? item.id_) === Number(currentSessionId));
+      return {id: currentSessionId, title: session?.title, project: session?.project_id_ ?? session?.project_id};
+    });
     let sessionSelectionSerial = 0;
     let sessionSearchQuery = '';
     let hasMoreSessions = false;
