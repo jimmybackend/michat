@@ -413,6 +413,7 @@ function ext_de($nombre){ return strtolower(pathinfo($nombre, PATHINFO_EXTENSION
       <i class="fas fa-bars"></i>
     </button>
     <h1 class="chat-title" id="chat2Title">Nueva conversación</h1>
+    <button id="conversationDataOpen" class="btn-icon-sm" type="button" title="Archivos y resultados de la conversación o proyecto" aria-label="Abrir archivos y resultados" aria-haspopup="dialog" aria-controls="conversationDataDialog"><i class="fas fa-folder-open" aria-hidden="true"></i></button>
     <button id="chatFilesOpen" class="btn-icon-sm chat-files-trigger" type="button" title="🧠 Conocimiento de archivos: RAG, embeddings, análisis y versiones" aria-label="Abrir conocimiento de archivos" aria-haspopup="dialog" aria-controls="chatFilesDrawer" aria-expanded="false"><i class="fas fa-brain" aria-hidden="true"></i></button>
     <small class="text-muted ml-2 d-none" id="chat2SessionBadge"></small>
         <button id="chat2Rename" class="btn-icon-sm" title="Renombrar chat" type="button">
@@ -851,6 +852,28 @@ role="progressbar" style="width: 0%">0%</div>
 <script src="js/user_preferences.js"></script>
 <!-- chat.js administra sesiones/proyectos y exporta window.chatUtils. -->
 <script src="js/attachment-preparation.js?v=<?= substr(hash_file('sha256', __DIR__ . '/js/attachment-preparation.js'), 0, 16) ?>"></script>
+<style>
+#conversationDataDialog { width: min(900px, 94vw); max-height: 90vh; padding: 1rem; border: 1px solid #aaa; border-radius: 12px; color: var(--text, #212529); background: var(--bg2, #fff); }
+#conversationDataDialog::backdrop { background: rgba(0,0,0,.55); }
+.conversation-data-toolbar { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; margin-bottom:.75rem; }
+.conversation-data-file { border:1px solid #aaa; border-radius:8px; padding:.75rem; margin:.6rem 0; overflow-wrap:anywhere; }
+.conversation-data-file strong { display:block; }
+#conversationDataPreview { white-space:pre-wrap; overflow-wrap:anywhere; max-height:55vh; overflow:auto; padding:1rem; border:1px solid #aaa; }
+</style>
+<dialog id="conversationDataDialog" aria-labelledby="conversationDataTitle">
+  <div class="conversation-data-toolbar"><h3 id="conversationDataTitle" class="mr-auto">Archivos y resultados</h3><button id="conversationDataClose" type="button" class="btn btn-sm btn-outline-secondary" aria-label="Cerrar archivos y resultados">Cerrar</button></div>
+  <div class="conversation-data-toolbar">
+    <label for="conversationDataScope">Mostrar</label>
+    <select id="conversationDataScope" class="form-control" style="width:auto;max-width:100%"><option value="session">Esta conversación y sus fuentes de proyecto</option><option value="project">Todas las conversaciones del proyecto</option></select>
+    <button id="conversationDataRefresh" type="button" class="btn btn-sm btn-outline-primary">Actualizar lista</button>
+  </div>
+  <p class="small text-muted">Adjuntos, archivos generados y resultados registrados. Consultar esta lista no inicia un análisis. Los archivos retirados o sin permiso no se muestran.</p>
+  <p id="conversationDataStatus" role="status" aria-live="polite"></p>
+  <div id="conversationDataList"></div>
+  <button id="conversationDataMore" type="button" class="btn btn-outline-primary" hidden>Mostrar más</button>
+  <pre id="conversationDataPreview" hidden tabindex="0"></pre>
+</dialog>
+<script src="js/conversation-data-panel.js?v=<?= substr(hash_file('sha256', __DIR__ . '/js/conversation-data-panel.js'), 0, 16) ?>"></script>
 <script src="js/chat.js?v=<?= substr(hash_file('sha256', __DIR__ . '/js/chat.js'), 0, 16) ?>"></script>
 <!-- El micrófono utiliza Nova 2 Sonic: cargar su controlador tras chat.js. -->
 <script src="js/chat-voice.js?v=20261023-sonic-diagnostics"></script>
