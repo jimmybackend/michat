@@ -28,6 +28,7 @@ final class LegalBridgeDocumentService
         }
         $this->db->begin_transaction();
         $temp=null;
+        $created=false;
         try {
             $q=$this->db->prepare('SELECT current_revision FROM LegalBridgeSessions WHERE credential_id=? AND user_id_=? AND session_id_=? FOR UPDATE');
             $q->bind_param('sii',$credential,$user,$session);$q->execute();$binding=$q->get_result()->fetch_assoc();$q->close();
@@ -39,8 +40,7 @@ final class LegalBridgeDocumentService
                 if (!(new DocumentAccessRepository($this->db))->file($user,$fileId)) throw new LegalBridgeError('revision_unavailable',409);
                 $this->activate($credential,$user,$session,$revision,$fileId);
                 $this->db->commit();
-                return ['file_id'=>$fileId,'revision_sha256'=>$revision,'created'=>false,'status'=>'pending'];
-            }
+            } else {
             $q=$this->db->prepare('SELECT COUNT(*) AS total FROM LegalBridgeDocuments WHERE session_id_=? AND user_id_=?');
             $q->bind_param('ii',$session,$user);$q->execute();$total=(int)$q->get_result()->fetch_assoc()['total'];$q->close();
             if ($total>=90) throw new LegalBridgeError('revision_limit',409);
@@ -58,6 +58,8 @@ final class LegalBridgeDocumentService
             $q->bind_param('iisii',$session,$user,$revision,$fileId,$bytes);$q->execute();$q->close();
             $this->activate($credential,$user,$session,$revision,$fileId);
             $this->db->commit();
+            $created=true;
+            }
         } catch (Throwable $e) {
             $this->db->rollback();
             if ($e instanceof LegalBridgeError) throw $e;
@@ -70,9 +72,9 @@ final class LegalBridgeDocumentService
         try {
             $queued=(new SessionAttachmentKnowledgeService($this->db))->process($user,$session,$fileId);
         } catch(Throwable $e) {
-            return ['file_id'=>$fileId,'revision_sha256'=>$revision,'created'=>true,'status'=>'pending','index_enqueue'=>'failed'];
+            return ['file_id'=>$fileId,'revision_sha256'=>$revision,'created'=>$created,'status'=>'pending','index_enqueue'=>'failed'];
         }
-        return ['file_id'=>$fileId,'revision_sha256'=>$revision,'created'=>true,'status'=>'pending','index_enqueue'=>!empty($queued['ok'])?'accepted':'failed'];
+        return ['file_id'=>$fileId,'revision_sha256'=>$revision,'created'=>$created,'status'=>'pending','index_enqueue'=>!empty($queued['ok'])?'accepted':'failed'];
     }
 
     /** Must run under the locked LegalBridgeSessions transaction. */
