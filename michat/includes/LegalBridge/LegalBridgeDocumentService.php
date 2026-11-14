@@ -116,7 +116,7 @@ final class LegalBridgeDocumentService
         $state=$idx->status($source,(string)$source['embedding_model']);
         $job=(array)($state['job']??[]);
         $status='pending';
-        if($job['status']??''==='failed') $status='error';
+        if(($job['status']??'')==='failed') $status='error';
         elseif(($state['state']??'')==='ready' && ($job['status']??'')==='completed' && $state['chunks_total']>0 && $state['chunks_with_embedding']===$state['chunks_total']) $status='ready';
         elseif(($state['state']??'')==='partial') $status='partial';
         elseif(($job['phase']??'')==='extract') $status='extracting';
