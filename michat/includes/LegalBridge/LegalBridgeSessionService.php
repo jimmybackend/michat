@@ -11,6 +11,12 @@ final class LegalBridgeSessionService
 {
     public function __construct(private mysqli $db) {}
 
+    /** One advisory lock for both chat turns and revision activation. */
+    public static function chatLock(string $credential,int $user,int $session): string
+    {
+        return 'legal-chat:'.hash('sha256',$credential.':'.$user.':'.$session);
+    }
+
     /** @return array{session_id:int,created:bool,status:string} */
     public function open(string $credentialId, int $userId, array $request): array
     {
