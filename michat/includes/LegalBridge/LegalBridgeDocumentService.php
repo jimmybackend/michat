@@ -9,7 +9,7 @@ require_once __DIR__.'/LegalBridgeKnowledgeStatus.php';
 final class LegalBridgeDocumentService
 {
     /** Production uses MiChat S3/central index; callbacks allow AWS-free tests. */
-    public function __construct(private mysqli $db,private LegalBridgeSessionService $sessions,private $uploadOverride=null,private $enqueueOverride=null) {}
+    public function __construct(private mysqli $db,private LegalBridgeSessionService $sessions,private $uploadOverride=null,private $enqueueOverride=null,private $statusOverride=null) {}
 
     /** Copy-only upload; revisions are immutable S3 objects, never Legal originals. */
     public function attach(string $credential,int $user,int $session,array $input): array
@@ -132,6 +132,7 @@ final class LegalBridgeDocumentService
     public function status(string $credential,int $user,int $session): array
     {
         $this->sessions->assertOwned($credential,$user,$session);
+        if($this->statusOverride!==null) return ($this->statusOverride)($credential,$user,$session);
         $q=$this->db->prepare('SELECT l.current_revision,d.files3_id_,d.byte_size FROM LegalBridgeSessions l LEFT JOIN LegalBridgeDocuments d ON d.session_id_=l.session_id_ AND d.user_id_=l.user_id_ AND d.revision_sha256=l.current_revision WHERE l.credential_id=? AND l.user_id_=? AND l.session_id_=?');
         $q->bind_param('sii',$credential,$user,$session);$q->execute();$doc=$q->get_result()->fetch_assoc();$q->close();
         if (!$doc||!(int)($doc['files3_id_']??0)) return ['status'=>'pending','coverage'=>'none','revision_sha256'=>$doc['current_revision']??null,'chunks_total'=>0,'chunks_with_embedding'=>0];
