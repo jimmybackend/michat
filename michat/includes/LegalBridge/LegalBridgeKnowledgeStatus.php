@@ -19,10 +19,11 @@ final class LegalBridgeKnowledgeStatus
           &&$embedded===$total&&$activeModel!==''&&hash_equals($activeModel,$sourceModel)
           &&(string)($state['state']??'')==='ready'&&$coverage!=='partial')return 'ready';
         if($status==='blocked'&&$done>0)return 'partial';
-        if(in_array($status,['pending','running','retry'],true)) {
+        if($status==='running') {
             if($phase==='extract')return 'extracting';
             if(in_array($phase,['chunks','embeddings'],true))return 'indexing';
         }
+        if(in_array($status,['pending','retry'],true))return 'pending';
         if($total>0&&$done>0)return 'partial';
         return 'pending';
     }
