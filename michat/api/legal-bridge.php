@@ -35,6 +35,8 @@ try {
     require_once dirname(__DIR__).'/app_bootstrap.php';
     require_once dirname(__DIR__).'/includes/LegalBridge/LegalBridgeAuth.php';
     require_once dirname(__DIR__).'/includes/LegalBridge/LegalBridgeSessionService.php';
+    require_once dirname(__DIR__).'/includes/LegalBridge/LegalBridgeDocumentService.php';
+    require_once dirname(__DIR__).'/includes/LegalBridge/LegalBridgeChatService.php';
     if (!isset($db_connection) || !($db_connection instanceof mysqli)) throw new LegalBridgeError('bridge_unavailable',503);
     $headers=[];
     foreach (['X-Legal-Key-Id','X-Legal-Timestamp','X-Legal-Nonce','X-Legal-Signature'] as $header) {
@@ -51,6 +53,7 @@ try {
     if (!is_array($payload) || array_is_list($payload) && $payload!==[]) throw new LegalBridgeError('invalid_payload',400);
     $sessions=new LegalBridgeSessionService($db_connection);
     $userId=$identity['user_id'];$credential=$identity['credential_id'];
+    $documents=new LegalBridgeDocumentService($db_connection,$sessions);
 
     if ($op==='health') {
         legalBridgeReply(['ok'=>true,'enabled'=>true,'authenticated'=>true,'services'=>['database'=>'available']]);
@@ -67,10 +70,19 @@ try {
             : $sessions->activity($credential,$userId,$sessionId,$cursor,$limit);
         legalBridgeReply(['ok'=>true]+$result);
     }
-    // No alternate Bedrock or S3 implementation is exposed. Unfinished
-    // operations fail closed until their shared-engine adapters are tested.
-    if (in_array($op,['document.attach','document.status','chat.send','document.suggestions'],true)) {
-        throw new LegalBridgeError('not_implemented',501);
+    if ($op==='document.attach') {
+        $out=$documents->attach($credential,$userId,(int)($payload['session_id']??0),$payload);
+        legalBridgeReply(['ok'=>true]+$out,!empty($out['created'])?202:200);
+    }
+    if ($op==='document.status') {
+        legalBridgeReply(['ok'=>true]+$documents->status($credential,$userId,(int)($payload['session_id']??0)));
+    }
+    if ($op==='chat.send' || $op==='document.suggestions') {
+        $chat=new LegalBridgeChatService($db_connection,$sessions,$documents);
+        $out=$op==='chat.send'
+            ?$chat->send($credential,$userId,(int)($payload['session_id']??0),$payload)
+            :$chat->suggestions($credential,$userId,(int)($payload['session_id']??0),$payload);
+        legalBridgeReply(['ok'=>true]+$out);
     }
     throw new LegalBridgeError('unknown_operation',400);
 } catch (LegalBridgeError $e) {
