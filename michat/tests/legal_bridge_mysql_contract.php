@@ -66,6 +66,8 @@ function runLegalBridgeMysqlContracts(mysqli $db, callable $check): void
         $q->bind_param('i',$sid);$q->execute();$q->close();
         $activity=$svc->activity('legal-hostgator',900001,$sid,0,10);
         $check(count($activity['events'])===1 && !array_key_exists('details_json',$activity['events'][0]),'activity exposes only whitelisted operational fields');
+        require_once __DIR__.'/legal_bridge_document_mysql_contract.php';
+        runLegalBridgeDocumentMysqlContracts($db,$check,$sid,(int)$other['session_id']);
     } finally {
         foreach($old as $k=>$v) {if($v===false)putenv($k);else putenv($k.'='.$v);}
     }
