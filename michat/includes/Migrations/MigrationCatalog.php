@@ -20,6 +20,7 @@ final class MigrationCatalog
         'fase12b_6_system_role_authorization.sql',
         'fase13_document_knowledge.sql',
         'fase14_attachment_processing.sql',
+        'fase15_legal_bridge.sql',
     ];
 
     private string $sqlDirectory;

@@ -194,7 +194,7 @@ final class ContextBuilder
         // -------------------------------------------------------------
         $sessionResult = ['context' => '', 'items' => [], 'telemetry' => ['source' => 'router_skipped']];
         if ($features['session_memory_read'] && $memoryRoute->uses('use_session_context')) {
-            $sessionResult = $this->sessionRepo->retrieve($userId, $sessionId, $queryText, 30, $memoryScope);
+            $sessionResult = $this->sessionRepo->retrieve($userId, $sessionId, $queryText, 30, $memoryScope, (string)($request['legal_revision']??''));
             $bundle->addItems('session_memory', $sessionResult['items']);
         }
         $bundle->setTelemetry('session', $sessionResult['telemetry']);
@@ -204,7 +204,7 @@ final class ContextBuilder
         // -------------------------------------------------------------
         if ($stage === 'compile') {
             if ($features['session_memory_read'] && $memoryRoute->uses('use_session_context')) {
-                $bundle->addItems('recent_messages', $this->sessionRepo->recentMessages($userId, $sessionId, 6));
+                $bundle->addItems('recent_messages', $this->sessionRepo->recentMessages($userId, $sessionId, 6, (string)($request['legal_revision']??'')));
             }
 
             $ranking = $features['context_ranking']

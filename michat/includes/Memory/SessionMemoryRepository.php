@@ -8,7 +8,7 @@ final class SessionMemoryRepository
     public function __construct(mysqli $db) { $this->db = $db; }
 
     /** @return array{context:string,items:array<int,ContextItem>,telemetry:array<string,mixed>} */
-    public function retrieve(int $userId, int $sessionId, string $queryText, int $limit = 30, ?ConversationScope $scope = null): array
+    public function retrieve(int $userId, int $sessionId, string $queryText, int $limit = 30, ?ConversationScope $scope = null, string $legalRevision = ''): array
     {
         $scope ??= (new ConversationScopeResolver($this->db))->resolve($userId, $sessionId);
         $metaQuery = $this->isMetaCognitiveQuery($queryText);
@@ -20,7 +20,7 @@ final class SessionMemoryRepository
         if ($userId <= 0 || $sessionId <= 0) return ['context'=>'','items'=>[],'telemetry'=>$telemetry];
 
         // Una rama hereda sólo el linaje explícito. No consulta otros chats libres.
-        if ($scope->hasLineage()) {
+        if ($legalRevision==='' && $scope->hasLineage()) {
             $branchItems = $this->branchHistory($userId, $scope, 28);
             foreach ($branchItems as $item) $items[] = $item;
             $telemetry['source'] = 'branch_lineage';
@@ -28,8 +28,10 @@ final class SessionMemoryRepository
         }
 
         // Resumen consolidado de la sesión ACTUAL.
-        $stmt = $this->db->prepare("SELECT context_summary FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1");
-        if ($stmt) {
+        if ($legalRevision==='') {
+            $stmt = $this->db->prepare("SELECT context_summary FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1");
+        }
+        if ($legalRevision==='' && $stmt) {
             $stmt->bind_param('ii', $sessionId, $userId);
             $stmt->execute();
             if ($row = $stmt->get_result()->fetch_assoc()) {
@@ -46,19 +48,21 @@ final class SessionMemoryRepository
         $limit = max(1, min(60, $limit));
         // Consultas explícitas sobre decisiones/reglas/preferencias o historial necesitan
         // level_0 reciente aunque el worker de embeddings/resúmenes aún no haya corrido.
-        $includeLevel0 = $metaQuery || $scope->hasLineage();
+        $includeLevel0 = $legalRevision!=='' || $metaQuery || $scope->hasLineage();
         $typesSql = $includeLevel0
             ? "scb.block_type IN ('level_0','level_1','level_2','level_3')"
             : "scb.block_type IN ('level_1','level_2','level_3')";
 
+        $revisionClause = $legalRevision!=='' ? " AND EXISTS (SELECT 1 FROM ChatMessages question WHERE question.id_=scb.question_msg_id AND question.session_id_=scb.session_id_ AND JSON_UNQUOTE(JSON_EXTRACT(question.meta,'$.revision_sha256'))=?)" : '';
         $sql = "SELECT scb.id_, scb.block_type, scb.content_preview, scb.created_at, scb.question_msg_id, scb.answer_msg_id
                 FROM SessionContextBlocks scb
                 INNER JOIN ChatSessions cs ON cs.id_=scb.session_id_
-                WHERE scb.session_id_=? AND cs.user_id_=? AND {$typesSql}
+                WHERE scb.session_id_=? AND cs.user_id_=? AND {$typesSql}{$revisionClause}
                 ORDER BY scb.created_at DESC LIMIT {$limit}";
         $stmt = $this->db->prepare($sql);
         if ($stmt) {
-            $stmt->bind_param('ii', $sessionId, $userId);
+            if ($legalRevision!=='') $stmt->bind_param('iis', $sessionId, $userId, $legalRevision);
+            else $stmt->bind_param('ii', $sessionId, $userId);
             $stmt->execute();
             $rows = [];
             $res = $stmt->get_result();
@@ -81,7 +85,7 @@ final class SessionMemoryRepository
 
         // Follow-ups y consultas de memoria deben funcionar incluso antes de crear level_0.
         if (($metaQuery || !$items || $scope->hasLineage())) {
-            foreach ($this->recentMessages($userId, $sessionId, 8) as $recent) $items[] = $recent;
+            foreach ($this->recentMessages($userId, $sessionId, 8, $legalRevision) as $recent) $items[] = $recent;
             if ($telemetry['source'] === 'none') $telemetry['source'] = 'recent_messages_fallback';
         }
 
@@ -95,19 +99,21 @@ final class SessionMemoryRepository
     }
 
     /** @return ContextItem[] */
-    public function recentMessages(int $userId, int $sessionId, int $limit = 6): array
+    public function recentMessages(int $userId, int $sessionId, int $limit = 6, string $legalRevision = ''): array
     {
         if ($userId <= 0 || $sessionId <= 0) return [];
         $limit = max(1, min(20, $limit));
+        $revisionClause = $legalRevision!=='' ? " AND JSON_UNQUOTE(JSON_EXTRACT(cm.meta,'$.revision_sha256'))=?" : '';
         $stmt = $this->db->prepare(
             "SELECT cm.id_, cm.role, cm.content, cm.created_at FROM ChatMessages cm
              INNER JOIN ChatSessions cs ON cs.id_=cm.session_id_
              WHERE cm.session_id_=? AND cs.user_id_=? AND cm.user_id_=?
-               AND cm.role IN ('user','assistant') AND cm.content IS NOT NULL AND cm.content<>''
+               AND cm.role IN ('user','assistant') AND cm.content IS NOT NULL AND cm.content<>''{$revisionClause}
              ORDER BY cm.id_ DESC LIMIT {$limit}"
         );
         if (!$stmt) return [];
-        $stmt->bind_param('iii', $sessionId, $userId, $userId);
+        if ($legalRevision!=='') $stmt->bind_param('iiis',$sessionId,$userId,$userId,$legalRevision);
+        else $stmt->bind_param('iii', $sessionId, $userId, $userId);
         $stmt->execute();
         $rows=[]; $res=$stmt->get_result(); while($row=$res->fetch_assoc()) $rows[]=$row; $stmt->close();
         $rows=array_reverse($rows); $items=[];

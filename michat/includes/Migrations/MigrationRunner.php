@@ -184,6 +184,7 @@ final class MigrationRunner
             'fase12b_5_mysql_generated_column_compatibility'=>false,
             'fase12b_6_system_role_authorization'=>false,
             'fase14_attachment_processing'=>$this->tableExists('AttachmentProcessingJobs')||$this->tableExists('AttachmentProcessingCosts'),
+            'fase15_legal_bridge'=>array_reduce(['LegalBridgeClients','LegalBridgePrincipals','LegalBridgeNonces','LegalBridgeSessions','LegalBridgeDocuments'],fn($found,$table)=>$found||$this->tableExists($table),false),
             'fase13_document_knowledge'=>array_reduce(['DocumentKnowledgeSources','DocumentKnowledgeChunks','DocumentKnowledgeJobs','DocumentKnowledgeEvents'],fn($found,$table)=>$found||$this->tableExists($table),false),
             default=>true,
         };

@@ -53,13 +53,21 @@ try{
     // Existing history is authoritative; match the real catalog, without applying unrelated SQL.
     $db->query("CREATE TABLE SchemaMigrations(migration_id varchar(128) PRIMARY KEY,filename varchar(255),checksum_sha256 char(64),applied_at timestamp(6) DEFAULT CURRENT_TIMESTAMP(6),execution_ms int,application_mode varchar(32),runner_version varchar(64))");
     $repo=new SchemaMigrationRepository($db,$name);$catalog=new MigrationCatalog();$definitions=$catalog->all();
-    foreach(array_slice($definitions,0,-1) as $definition)$repo->insertHistory($definition,0,'applied','fixture-only');
+    // The test fixture already has runtime-created phase14 structures. Phase15
+    // must be applied normally against minimal real FK targets, not fabricated
+    // as an applied history row.
+    $db->query('CREATE TABLE Users(id int NOT NULL PRIMARY KEY) ENGINE=InnoDB');
+    $db->query('CREATE TABLE ChatSessions(id_ int NOT NULL PRIMARY KEY) ENGINE=InnoDB');
+    foreach($definitions as $definition) {
+        if(in_array($definition['migration_id'],['fase14_attachment_processing','fase15_legal_bridge'],true))continue;
+        $repo->insertHistory($definition,0,'applied','fixture-only');
+    }
     $runner=new MigrationRunner($catalog,$repo,new SqlMigrationExecutor($db));
-    $check($runner->apply()===['fase14_attachment_processing']&&$runner->status()['global']==='APPLIED','CLI runner recognizes the exact runtime-created tables and records the real checksum');
+    $check($runner->apply()===['fase14_attachment_processing','fase15_legal_bridge']&&$runner->status()['global']==='APPLIED','CLI runner recognizes the exact runtime-created tables and records the real checksum');
     $check($runner->apply()===[],'Subsequent CLI migration is idempotent');
     $db->query("UPDATE SchemaMigrations SET checksum_sha256=REPEAT('0',64) WHERE migration_id='fase14_attachment_processing'");$blocked=false;try{$schema->ensure(true);}catch(RuntimeException $e){$blocked=str_contains($e->getMessage(),'DRIFT');}
     $check($blocked,'Recorded migration checksum drift prevents automatic repair');
-    $last=end($definitions);$q=$db->prepare("UPDATE SchemaMigrations SET checksum_sha256=? WHERE migration_id='fase14_attachment_processing'");$q->bind_param('s',$last['checksum_sha256']);$q->execute();$q->close();
+    $phase14=array_values(array_filter($definitions,static fn($m)=>$m['migration_id']==='fase14_attachment_processing'))[0];$q=$db->prepare("UPDATE SchemaMigrations SET checksum_sha256=? WHERE migration_id='fase14_attachment_processing'");$q->bind_param('s',$phase14['checksum_sha256']);$q->execute();$q->close();
     $db->query('DROP TABLE AttachmentProcessingCosts');$blocked=false;try{$schema->ensure();}catch(RuntimeException $e){$blocked=str_contains($e->getMessage(),'historial');}
     $check($blocked,'Missing table after recorded success is treated as integrity loss, not silently recreated');
     $check($db->query('SELECT * FROM AttachmentProcessingJobs')->fetch_all(MYSQLI_ASSOC)===$original&&$db->query('SELECT Nombre FROM FileS3')->fetch_assoc()['Nombre']==='private original, never modify','Queue data and unrelated shared file records remain byte-for-byte unchanged');
