@@ -29,13 +29,13 @@ final class LegalBridgeSessionService
         $this->db->begin_transaction();
         try {
             // Client row locking serializes concurrent opens for one credential.
-            $q=$this->db->prepare('SELECT user_id_ FROM LegalBridgeClients WHERE credential_id=? AND user_id_=? AND enabled=1 FOR UPDATE');
-            $q->bind_param('si',$credentialId,$userId);
+            $q=$this->db->prepare('SELECT credential_id FROM LegalBridgeClients WHERE credential_id=? AND enabled=1 FOR UPDATE');
+            $q->bind_param('s',$credentialId);
             $q->execute(); $client=$q->get_result()->fetch_assoc(); $q->close();
             if (!$client) throw new LegalBridgeError('principal_not_authorized',403);
 
-            $q=$this->db->prepare('SELECT l.session_id_,s.status,s.user_id_ FROM LegalBridgeSessions l JOIN ChatSessions s ON s.id_=l.session_id_ WHERE l.credential_id=? AND l.external_system=? AND l.external_document_type=? AND l.external_document_id=? LIMIT 1');
-            $q->bind_param('ssss',$credentialId,$system,$type,$id);
+            $q=$this->db->prepare('SELECT l.session_id_,s.status,s.user_id_ FROM LegalBridgeSessions l JOIN ChatSessions s ON s.id_=l.session_id_ WHERE l.credential_id=? AND l.user_id_=? AND l.external_system=? AND l.external_document_type=? AND l.external_document_id=? LIMIT 1');
+            $q->bind_param('sisss',$credentialId,$userId,$system,$type,$id);
             $q->execute(); $existing=$q->get_result()->fetch_assoc(); $q->close();
             if ($existing) {
                 if ((int)$existing['user_id_'] !== $userId) throw new LegalBridgeError('session_forbidden',403);
