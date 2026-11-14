@@ -2,9 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__.'/LegalBridgeSessionService.php';
-require_once dirname(__DIR__,2).'/S3Manager.php';
 require_once dirname(__DIR__).'/Memory/DocumentAccessRepository.php';
-require_once dirname(__DIR__).'/SessionAttachmentKnowledgeService.php';
 require_once dirname(__DIR__).'/Documents/CentralDocumentIndex.php';
 require_once __DIR__.'/LegalBridgeKnowledgeStatus.php';
 
@@ -62,7 +60,7 @@ final class LegalBridgeDocumentService
             $name='legal-'.$revision.'.txt';
             $result=$this->uploadOverride!==null
                 ? ($this->uploadOverride)($temp,$name,$prefix,$user,'text/plain; charset=utf-8',strlen($content))
-                : (new S3Manager())->uploadFile($temp,$name,$prefix,$user,'text/plain; charset=utf-8',strlen($content));
+                : $this->productionUpload($temp,$name,$prefix,$user,strlen($content));
             $fileId=(int)($result['id']??0);
             if ($fileId<1) throw new RuntimeException('upload_failed');
             $bytes=strlen($content);
@@ -84,7 +82,7 @@ final class LegalBridgeDocumentService
         try {
             $queued=$this->enqueueOverride!==null
                 ? ($this->enqueueOverride)($user,$session,$fileId)
-                : (new SessionAttachmentKnowledgeService($this->db))->process($user,$session,$fileId);
+                : $this->productionEnqueue($user,$session,$fileId);
         } catch(Throwable $e) {
             return ['file_id'=>$fileId,'revision_sha256'=>$revision,'created'=>$created,'status'=>'pending','index_enqueue'=>'failed'];
         }
@@ -93,6 +91,18 @@ final class LegalBridgeDocumentService
             $q=$this->db->prepare('SELECT RELEASE_LOCK(?)');
             $q->bind_param('s',$lock);$q->execute();$q->close();
         }
+    }
+
+    private function productionUpload(string $temp,string $name,string $prefix,int $user,int $bytes): array
+    {
+        require_once dirname(__DIR__,2).'/S3Manager.php';
+        return (new S3Manager())->uploadFile($temp,$name,$prefix,$user,'text/plain; charset=utf-8',$bytes);
+    }
+
+    private function productionEnqueue(int $user,int $session,int $file): array
+    {
+        require_once dirname(__DIR__).'/SessionAttachmentKnowledgeService.php';
+        return (new SessionAttachmentKnowledgeService($this->db))->process($user,$session,$file);
     }
 
     /** Must run under the locked LegalBridgeSessions transaction. */
