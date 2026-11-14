@@ -69,6 +69,9 @@ function runLegalBridgeCentralIndexMysqlContracts(mysqli $db,callable $check,int
     $check($state['chunks_total']>0&&$state['chunks_done']===$state['chunks_total']&&$state['chunks_with_embedding']===$state['chunks_total'],'legal central index reports full indexed and embedded coverage');
     $row=$central->rows($sources[$currentFile],0,20);
     $check(count($row)>0 && str_contains((string)$row[0]['content_preview'],'BORRADOR v2'),'legal RAG evidence derived from active copied text');
+    $retrieved=(new AttachmentContextRepository($db,null))->retrieve($owner,$session,'BORRADOR','always',null,null);
+    $evidence=implode("\n",array_map(static fn($item)=>(string)$item->content,$retrieved['items']));
+    $check(count($retrieved['items'])>0 && str_contains($evidence,'BORRADOR v2') && !str_contains($evidence,'BORRADOR v1'),'legal actual attachment RAG returns only the active revision');
     $oldKey=$db->query('SELECT Encriptado FROM FileS3 WHERE id_='.$staleFile)->fetch_assoc()['Encriptado'];
     $check(isset($objects[$oldKey])&&str_contains($objects[$oldKey]['body'],'BORRADOR v1'),'legal historical immutable object remains unchanged');
     $check($access->requireFile($owner,$session,$currentFile)['id_']===$currentFile,'legal current document passes live ownership checks');
