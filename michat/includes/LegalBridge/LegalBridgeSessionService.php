@@ -14,7 +14,7 @@ final class LegalBridgeSessionService
     /** One advisory lock for both chat turns and revision activation. */
     public static function chatLock(string $credential,int $user,int $session): string
     {
-        return 'legal-chat:'.hash('sha256',$credential.':'.$user.':'.$session);
+        return 'legal-chat:'.substr(hash('sha256',$credential.':'.$user.':'.$session),0,48);
     }
 
     /** @return array{session_id:int,created:bool,status:string} */
