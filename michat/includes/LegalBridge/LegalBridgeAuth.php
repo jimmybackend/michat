@@ -45,15 +45,26 @@ final class LegalBridgeAuth
         $expected = hash_hmac('sha256', self::canonical($method, $path, $body, $timestamp, $nonce, $keyId), $secret);
         if (!hash_equals($expected, $signature)) throw new LegalBridgeError('invalid_signature', 401);
 
+        // Parse only after HMAC verification. Subject is inside the signed body.
+        $signedRequest = json_decode($body, true);
+        $subject = is_array($signedRequest) ? ($signedRequest['external_subject'] ?? null) : null;
+        if (!is_string($subject) || !preg_match('/^[A-Za-z0-9_.:@-]{1,180}$/D', $subject)) {
+            throw new LegalBridgeError('invalid_subject', 422);
+        }
+
         // Row lock serializes the per-credential rate check and nonce insertion.
         $this->db->begin_transaction();
         try {
-            $q = $this->db->prepare("SELECT c.user_id_ FROM LegalBridgeClients c JOIN Users u ON u.id=c.user_id_ WHERE c.credential_id=? AND c.enabled=1 AND u.userstatus='Activo' AND u.chat=1 LIMIT 1 FOR UPDATE");
+            $q = $this->db->prepare("SELECT c.credential_id FROM LegalBridgeClients c WHERE c.credential_id=? AND c.enabled=1 LIMIT 1 FOR UPDATE");
             $q->bind_param('s', $keyId);
             $q->execute();
             $row = $q->get_result()->fetch_assoc();
             $q->close();
             if (!$row) throw new LegalBridgeError('principal_not_authorized', 403);
+            $p = $this->db->prepare("SELECT p.user_id_ FROM LegalBridgePrincipals p JOIN Users u ON u.id=p.user_id_ WHERE p.credential_id=? AND p.external_subject=? AND p.enabled=1 AND u.userstatus='Activo' AND u.chat=1 LIMIT 1");
+            $p->bind_param('ss',$keyId,$subject);
+            $p->execute(); $principal=$p->get_result()->fetch_assoc();$p->close();
+            if (!$principal) throw new LegalBridgeError('principal_not_authorized',403);
 
             $q = $this->db->prepare('SELECT COUNT(*) AS n FROM LegalBridgeNonces WHERE credential_id=? AND created_at >= (UTC_TIMESTAMP() - INTERVAL 60 SECOND)');
             $q->bind_param('s', $keyId);
@@ -67,7 +78,7 @@ final class LegalBridgeAuth
             if (!$q->execute()) throw new LegalBridgeError('replayed_nonce', 409);
             $q->close();
             $this->db->commit();
-            return ['user_id'=>(int)$row['user_id_'],'credential_id'=>$keyId];
+            return ['user_id'=>(int)$principal['user_id_'],'credential_id'=>$keyId,'external_subject'=>$subject];
         } catch (Throwable $e) {
             $this->db->rollback();
             if ($e instanceof mysqli_sql_exception && (int)$e->getCode() === 1062) {
