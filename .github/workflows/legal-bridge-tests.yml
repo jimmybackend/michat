@@ -1,0 +1,30 @@
+name: Legal bridge isolated validation
+
+on:
+  pull_request:
+    paths:
+      - 'michat/api/legal-bridge.php'
+      - 'michat/includes/LegalBridge/**'
+      - 'michat/sql/legal_bridge.sql'
+      - 'michat/tests/legal_bridge_auth_test.php'
+      - '.github/workflows/legal-bridge-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  php-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: PHP syntax validation
+        run: |
+          php -v
+          php -l michat/api/legal-bridge.php
+          php -l michat/includes/LegalBridge/LegalBridgeAuth.php
+          php -l michat/includes/LegalBridge/LegalBridgeSessionService.php
+          php -l michat/tests/legal_bridge_auth_test.php
+      - name: Isolated HMAC checks (no secrets, DB, S3 or AWS)
+        run: php michat/tests/legal_bridge_auth_test.php
