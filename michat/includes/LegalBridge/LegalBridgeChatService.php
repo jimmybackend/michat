@@ -72,7 +72,7 @@ final class LegalBridgeChatService
             }
             return ['session_id'=>$session,'message_id'=>$origin,'assistant_message_id'=>$answer,
                 'trace_id'=>$trace,'revision_sha256'=>$revision,'reply'=>$result->replyText,
-                'coverage'=>$state['coverage'],'citations_in_reply'=>true];
+                'coverage'=>$state['coverage'],'evidence_status'=>'not_separately_verified'];
         } catch(LegalBridgeError $e) { throw $e; }
         catch(Throwable $e) { throw new LegalBridgeError('chat_execution_failed',503); }
         finally {
