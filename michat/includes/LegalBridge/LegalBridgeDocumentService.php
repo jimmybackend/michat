@@ -6,6 +6,7 @@ require_once dirname(__DIR__,2).'/S3Manager.php';
 require_once dirname(__DIR__).'/Memory/DocumentAccessRepository.php';
 require_once dirname(__DIR__).'/SessionAttachmentKnowledgeService.php';
 require_once dirname(__DIR__).'/Documents/CentralDocumentIndex.php';
+require_once __DIR__.'/LegalBridgeKnowledgeStatus.php';
 
 final class LegalBridgeDocumentService
 {
@@ -119,13 +120,7 @@ final class LegalBridgeDocumentService
         try { $activeModel=(new BedrockDocumentKnowledgeRuntime($this->db))->embeddingModel($user); }
         catch (Throwable $e) { $activeModel=''; }
         $state=$idx->status($source,$activeModel);
-        $job=(array)($state['job']??[]);
-        $status='pending';
-        if(($job['status']??'')==='failed') $status='error';
-        elseif($activeModel!=='' && $activeModel===(string)$source['embedding_model'] && ($state['state']??'')==='ready' && ($job['status']??'')==='completed' && $state['chunks_total']>0 && $state['chunks_with_embedding']===$state['chunks_total']) $status='ready';
-        elseif(($state['state']??'')==='partial') $status='partial';
-        elseif(($job['phase']??'')==='extract') $status='extracting';
-        elseif(in_array(($job['phase']??''),['chunks','embeddings'],true)) $status='indexing';
+        $status=LegalBridgeKnowledgeStatus::map($state,$activeModel,(string)$source['embedding_model']);
         return ['file_id'=>$fileId,'revision_sha256'=>$doc['current_revision'],'status'=>$status,
             'coverage'=>$state['coverage'],'chunks_total'=>$state['chunks_total'],
             'chunks_done'=>$state['chunks_done'],'chunks_with_embedding'=>$state['chunks_with_embedding']];
