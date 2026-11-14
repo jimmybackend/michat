@@ -68,6 +68,8 @@ function runLegalBridgeDocumentMysqlContracts(mysqli $db,callable $check,int $se
         $check($reused['created']===false&&$reused['index_enqueue']==='failed'&&$uploadCount===2,'legal queue failure is reported without duplicating S3 object');
         $check(hash('sha256',$legalOriginal)===$originalDigest&&count($objects)===2,'legal untouched original retains byte-for-byte hash');
         $check($enqueueCount===4,'legal retries never silently discard enqueue attempts');
+        require_once __DIR__.'/legal_bridge_chat_mysql_contract.php';
+        runLegalBridgeChatMysqlContracts($db,$check,$session,$otherSession);
     } finally {
         if($old===false)putenv('MICHAT_DOCUMENT_KNOWLEDGE_ENABLED');else putenv('MICHAT_DOCUMENT_KNOWLEDGE_ENABLED='.$old);
     }
