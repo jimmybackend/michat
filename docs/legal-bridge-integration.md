@@ -1,6 +1,6 @@
 # Puente privado MiChat ↔ Esforzados Legal
 
-**Estado: revisión de desarrollo (PR #144); NO activar ni fusionar hasta aprobar las pruebas de aceptación.**
+**Estado: pruebas aisladas de aceptación aprobadas en CI para fusión de código, con el puente apagado. NO activar ni aplicar migraciones en producción.**
 
 MiChat es el propietario de las sesiones, los archivos S3, el índice documental, la memoria y el runtime Bedrock. Esforzados Legal conserva sus expedientes, documentos originales y la aprobación de cambios. Nunca se comparte una conexión MySQL entre Legal y MiChat ni se incrusta la interfaz del chat.
 
@@ -190,7 +190,7 @@ git status --short
 php michat/bin/migrations.php status
 ```
 
-No ejecutar `apply` ni `git pull` sin aprobación y respaldo; `apply` puede incluir más migraciones pendientes. El bootstrap carga `MICHAT_ENV_FILE` o `.env`; el endpoint también intenta `/etc/michat.env` con `EnvironmentLoader`. Se debe confirmar que PHP-FPM puede leer el archivo privado y que el HTTPS efectivo se comunica como `HTTPS` al proceso PHP.
+No ejecutar `apply` ni `git pull` sin aprobación de despliegue y respaldo; `apply` puede incluir más migraciones pendientes. La autorización para fusionar código NO autoriza ejecutarlas. El bootstrap carga `MICHAT_ENV_FILE` o `.env`; el endpoint también intenta `/etc/michat.env` con `EnvironmentLoader`. Se debe confirmar que PHP-FPM puede leer el archivo privado y que el HTTPS efectivo se comunica como `HTTPS` al proceso PHP.
 
 Conservar `LEGAL_BRIDGE_ENABLED=false` hasta completar pruebas con credencial ficticia en infraestructura de ensayo, vinculación administrativa de usuarios y aceptación operacional de procesamiento central. Para desactivar, cambiar `LEGAL_BRIDGE_ENABLED=false` bajo procedimiento aprobado y recargar la configuración efectiva de PHP-FPM. No borrar tablas, archivos ni conversaciones para desactivar.
 
@@ -198,7 +198,7 @@ Conservar `LEGAL_BRIDGE_ENABLED=false` hasta completar pruebas con credencial fi
 
 Tests automáticos existentes: `michat/tests/legal_bridge_auth_test.php` (HMAC puro), `michat/tests/legal_bridge_mysql_contract.php` (usado por `migration_runner_mysql_test.php` sobre MySQL descartable), y workflow `.github/workflows/legal-bridge-tests.yml`. La suite general `.github/workflows/fase12b-validation.yml` ejecuta lint PHP, regresión, migraciones y contrato de catálogo cerrado.
 
-**No confundir una prueba sintáctica o MySQL ficticia con validación AWS/HostGator real.** Antes de activar exigir además pruebas de adjuntos y versiones con S3 simulado/aislado, indexación completa/parcial/error, Bedrock simulado, RAG filtrado por revisión, propuestas no autorizadas y protección del original. Confirmar cada caso, resultado y evidencia en el PR.
+**Pruebas aisladas completadas.** Se ejecutaron sobre MySQL temporal y dobles de S3/embeddings/Bedrock pruebas de adjuntos y revisiones, indexación completa/parcial/error, RAG filtrado por revisión, memoria acotada, propuestas no autorizadas, errores de Bedrock y protección del original ficticio. Evidencia en `docs/legal-bridge-acceptance.md`. **No confundir estas pruebas con validación AWS/HostGator real ni activación de producción.**
 
 ## INSTRUCCIONES PARA EL PROYECTO ESFORZADOS LEGAL
 
@@ -213,3 +213,9 @@ Crear un **cliente PHP del lado de HostGator** con `LEGAL_MICHAT_BASE_URL=https:
 7. No activar cliente real hasta que PR #144 esté completamente probado, fusionado según autorización y el puente esté activado administrativamente.
 
 La interfaz Legal puede ser completamente distinta de MiChat; no utilizar iframe ni copiar HTML/CSS/JS del chat.
+
+## Concurrencia y aislamiento por revisión
+
+Un único bloqueo MySQL GET_LOCK (nombre menor a 64 caracteres) serializa por `credential_id + user_id_ + session_id_` tanto `document.attach` como `chat.send`. De este modo no se activa otra revisión mientras se construye la respuesta de un turno. El adaptador pasa `legal_revision` a `ChatContextPreparationService`; para Legal se excluyen memorias globales/de proyecto y preguntas de otras sesiones. `SessionMemoryRepository` filtra los mensajes recientes y `SessionContextBlocks` por la revisión anotada en `ChatMessages.meta`, sin incorporar resúmenes globales de revisiones previas. El RAG documental mantiene las comprobaciones de `DocumentAccessRepository`, `CentralDocumentIndex` y `detached_file_ids`.
+
+El código queda preparado para ser fusionado con `LEGAL_BRIDGE_ENABLED=false`, sin alterar infraestructura; la activación de red, las claves, la migración y la vinculación administrativa de usuarios siguen siendo operaciones separadas, sujetas a autorización explícita.
