@@ -18,7 +18,8 @@ final class LegalBridgeChatService
     public function __construct(
         private mysqli $db,
         private LegalBridgeSessionService $sessions,
-        private LegalBridgeDocumentService $documents
+        private LegalBridgeDocumentService $documents,
+        private $engineFactory=null, private $finalizeOverride=null
     ) {}
 
     public function send(string $credential,int $user,int $session,array $input): array
@@ -34,7 +35,7 @@ final class LegalBridgeChatService
         $state=$this->documents->status($credential,$user,$session);
         if(!in_array($state['status'],['ready','partial'],true)) throw new LegalBridgeError('document_not_ready',409);
 
-        $lock='legal-chat:'.hash('sha256',$credential.':'.$user.':'.$session);
+        $lock=LegalBridgeSessionService::chatLock($credential,$user,$session);
         $q=$this->db->prepare('SELECT GET_LOCK(?,1) AS acquired');
         $q->bind_param('s',$lock);$q->execute();$locked=(int)($q->get_result()->fetch_assoc()['acquired']??0)===1;$q->close();
         if(!$locked) throw new LegalBridgeError('session_busy',409);
@@ -55,7 +56,9 @@ final class LegalBridgeChatService
             // Factory creates the existing ContextBuilder -> Bedrock runtime.
             // A rejecting gate prevents any tool execution even on a malicious
             // or unexpected model tool_use response.
-            $engine=(new ChatExecutionServiceFactory($this->db,null,null,new LegalBridgeDenyTools()))->create();
+            $engine=$this->engineFactory!==null
+                ? ($this->engineFactory)($this->db,new LegalBridgeDenyTools())
+                : (new ChatExecutionServiceFactory($this->db,null,null,new LegalBridgeDenyTools()))->create();
             $result=$engine->execute($request);
             if($result->isPauseAlreadyPersisted() || trim($result->replyText)==='') throw new LegalBridgeError('model_response_unavailable',503);
             // If a revision was switched during Bedrock execution, do not
@@ -64,8 +67,12 @@ final class LegalBridgeChatService
             $answer=$this->storeMessage($user,$session,'assistant',$result->replyText,$result->modelId,
                 ['trace_id'=>$trace,'revision_sha256'=>$revision,'stop_reason'=>$result->stopReason]);
             try {
-                (new ChatTokenUsageService($this->db))->recordFinal($user,$session,$answer,$result->modelId,$result->tokenUsage,$result->latencyMs);
-                (new ChatMemoryFinalizationService($this->db,Config::getBedrockRuntime()))->finalize($user,$session,null,$origin,$answer,[],[]);
+                if($this->finalizeOverride!==null) {
+                    ($this->finalizeOverride)($user,$session,$origin,$answer,$result);
+                } else {
+                    (new ChatTokenUsageService($this->db))->recordFinal($user,$session,$answer,$result->modelId,$result->tokenUsage,$result->latencyMs);
+                    (new ChatMemoryFinalizationService($this->db,Config::getBedrockRuntime()))->finalize($user,$session,null,$origin,$answer,[],[]);
+                }
             } catch(Throwable $e) {
                 // Persistence already succeeded. Never log content or secrets.
                 error_log('LEGAL_BRIDGE_MEMORY type='.get_class($e));
