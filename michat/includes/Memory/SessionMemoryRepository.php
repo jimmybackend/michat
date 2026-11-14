@@ -28,8 +28,10 @@ final class SessionMemoryRepository
         }
 
         // Resumen consolidado de la sesión ACTUAL.
-        $stmt = $this->db->prepare("SELECT context_summary FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1");
-        if ($stmt && $legalRevision==='') {
+        if ($legalRevision==='') {
+            $stmt = $this->db->prepare("SELECT context_summary FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1");
+        }
+        if ($legalRevision==='' && $stmt) {
             $stmt->bind_param('ii', $sessionId, $userId);
             $stmt->execute();
             if ($row = $stmt->get_result()->fetch_assoc()) {
