@@ -58,7 +58,7 @@ function runLegalBridgeChatMysqlContracts(mysqli $db,callable $check,int $sessio
     $memory=new SessionMemoryRepository($db);
     $recent=$memory->recentMessages(900001,$session,20,$revision);
     $contents=implode(' | ',array_map(static fn($x)=>$x->content,$recent));
-    $check(!str_contains($contents,$oldText)&&str_contains($contents,'Resumen los hechos')===false,'legal revision filter excludes stale messages without fabricated context');
+    $check(!str_contains($contents,$oldText)&&str_contains($contents,'Resume los hechos'),'legal revision filter excludes stale messages without fabricated context');
     $retrieved=$memory->retrieve(900001,$session,'Resume la conversacion',30,null,$revision);
     $check(str_contains($retrieved['context'],$currentBlock)&&!str_contains($retrieved['context'],$oldBlock),'legal revision-bound memory excludes stale SessionContextBlocks');
     $before=(int)$db->query('SELECT COUNT(*) AS n FROM ChatMessages WHERE session_id_='.$session." AND role='assistant'")->fetch_assoc()['n'];
