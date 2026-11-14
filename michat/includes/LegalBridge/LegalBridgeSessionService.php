@@ -19,6 +19,8 @@ final class LegalBridgeSessionService
         $id = (string)($request['external_document_id'] ?? '');
         $revision = (string)($request['external_revision'] ?? '');
         $title = (string)($request['title'] ?? 'Documento Legal');
+        $instructions = (string)($request['session_instructions'] ?? '');
+        if (mb_strlen($instructions)>3000) throw new LegalBridgeError('invalid_session_instructions',422);
         if ($system !== 'esforzados-legal'
             || !preg_match('/^[a-z0-9_-]{1,80}$/D', $type)
             || !preg_match('/^[A-Za-z0-9_.:-]{1,180}$/D', $id)
@@ -49,8 +51,8 @@ final class LegalBridgeSessionService
             $created = (new SessionLifecycleService($this->db))->create($userId,$title,$model);
             $sessionId = (int)$created['id'];
 
-            $q=$this->db->prepare('INSERT INTO LegalBridgeSessions (credential_id,user_id_,external_system,external_document_type,external_document_id,session_id_,current_revision) VALUES (?,?,?,?,?,?,?)');
-            $q->bind_param('sisssis',$credentialId,$userId,$system,$type,$id,$sessionId,$revision);
+            $q=$this->db->prepare('INSERT INTO LegalBridgeSessions (credential_id,user_id_,external_system,external_document_type,external_document_id,session_id_,current_revision,session_instructions) VALUES (?,?,?,?,?,?,?,?)');
+            $q->bind_param('sisssiss',$credentialId,$userId,$system,$type,$id,$sessionId,$revision,$instructions);
             $q->execute();$q->close();
             $this->db->commit();
             return ['session_id'=>$sessionId,'created'=>true,'status'=>(string)$created['status']];
