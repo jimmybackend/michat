@@ -10,7 +10,8 @@ require_once __DIR__.'/LegalBridgeKnowledgeStatus.php';
 
 final class LegalBridgeDocumentService
 {
-    public function __construct(private mysqli $db,private LegalBridgeSessionService $sessions) {}
+    /** Production uses MiChat S3/central index; callbacks allow AWS-free tests. */
+    public function __construct(private mysqli $db,private LegalBridgeSessionService $sessions,private $uploadOverride=null,private $enqueueOverride=null) {}
 
     /** Copy-only upload; revisions are immutable S3 objects, never Legal originals. */
     public function attach(string $credential,int $user,int $session,array $input): array
@@ -27,6 +28,14 @@ final class LegalBridgeDocumentService
             || !hash_equals($revision,hash('sha256',$content))) {
             throw new LegalBridgeError('invalid_document_revision',422);
         }
+        // Serialize document revision changes with Bedrock turns for this session.
+        $lock=LegalBridgeSessionService::chatLock($credential,$user,$session);
+        $lq=$this->db->prepare('SELECT GET_LOCK(?,10) AS acquired');
+        $lq->bind_param('s',$lock);$lq->execute();
+        $acquired=(int)($lq->get_result()->fetch_assoc()['acquired']??0)===1;
+        $lq->close();
+        if(!$acquired) throw new LegalBridgeError('session_busy',409);
+        try {
         $this->db->begin_transaction();
         $temp=null;
         $created=false;
@@ -51,7 +60,9 @@ final class LegalBridgeDocumentService
             $now=new DateTimeImmutable('now',new DateTimeZone('UTC'));
             $prefix='Data/Chat/Uploads/'.$user.'/'.$now->format('Y/m/d').'/'.$session.'/';
             $name='legal-'.$revision.'.txt';
-            $result=(new S3Manager())->uploadFile($temp,$name,$prefix,$user,'text/plain; charset=utf-8',strlen($content));
+            $result=$this->uploadOverride!==null
+                ? ($this->uploadOverride)($temp,$name,$prefix,$user,'text/plain; charset=utf-8',strlen($content))
+                : (new S3Manager())->uploadFile($temp,$name,$prefix,$user,'text/plain; charset=utf-8',strlen($content));
             $fileId=(int)($result['id']??0);
             if ($fileId<1) throw new RuntimeException('upload_failed');
             $bytes=strlen($content);
@@ -71,11 +82,17 @@ final class LegalBridgeDocumentService
         // A failed enqueue never falsely reports ready; the object stays private
         // and document.status reports missing index until retried administratively.
         try {
-            $queued=(new SessionAttachmentKnowledgeService($this->db))->process($user,$session,$fileId);
+            $queued=$this->enqueueOverride!==null
+                ? ($this->enqueueOverride)($user,$session,$fileId)
+                : (new SessionAttachmentKnowledgeService($this->db))->process($user,$session,$fileId);
         } catch(Throwable $e) {
             return ['file_id'=>$fileId,'revision_sha256'=>$revision,'created'=>$created,'status'=>'pending','index_enqueue'=>'failed'];
         }
         return ['file_id'=>$fileId,'revision_sha256'=>$revision,'created'=>$created,'status'=>'pending','index_enqueue'=>!empty($queued['ok'])?'accepted':'failed'];
+        } finally {
+            $q=$this->db->prepare('SELECT RELEASE_LOCK(?)');
+            $q->bind_param('s',$lock);$q->execute();$q->close();
+        }
     }
 
     /** Must run under the locked LegalBridgeSessions transaction. */
