@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS LegalBridgeSessions (
   external_document_id varchar(180) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   session_id_ int NOT NULL,
   current_revision char(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  session_instructions text DEFAULT NULL,
   created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id_),
