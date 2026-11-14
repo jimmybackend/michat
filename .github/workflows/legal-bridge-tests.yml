@@ -5,8 +5,9 @@ on:
     paths:
       - 'michat/api/legal-bridge.php'
       - 'michat/includes/LegalBridge/**'
-      - 'docs/sql/legal_bridge.sql'
+      - 'michat/sql/fase15_legal_bridge.sql'
       - 'michat/tests/legal_bridge_auth_test.php'
+      - 'michat/tests/legal_bridge_mysql_contract.php'
       - '.github/workflows/legal-bridge-tests.yml'
   workflow_dispatch:
 
@@ -25,6 +26,8 @@ jobs:
           php -l michat/api/legal-bridge.php
           php -l michat/includes/LegalBridge/LegalBridgeAuth.php
           php -l michat/includes/LegalBridge/LegalBridgeSessionService.php
+          php -l michat/includes/LegalBridge/LegalBridgeDocumentService.php
+          php -l michat/includes/LegalBridge/LegalBridgeChatService.php
           php -l michat/tests/legal_bridge_auth_test.php
       - name: Isolated HMAC checks (no secrets, DB, S3 or AWS)
         run: php michat/tests/legal_bridge_auth_test.php
