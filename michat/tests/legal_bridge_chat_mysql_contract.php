@@ -41,6 +41,26 @@ function runLegalBridgeChatMysqlContracts(mysqli $db,callable $check,int $sessio
     $row=$db->query('SELECT role,meta FROM ChatMessages WHERE id_='.(int)$response['assistant_message_id'])->fetch_assoc();
     $meta=json_decode((string)$row['meta'],true);
     $check($row['role']==='assistant'&&($meta['revision_sha256']??'')===$revision,'legal assistant message records exact active revision');
+    // Source-derived memory from an older revision must not enter the new prompt.
+    $staleRevision=str_repeat('a',64);
+    $staleMeta=json_encode(['revision_sha256'=>$staleRevision],JSON_THROW_ON_ERROR);
+    $role='user';$type='text';$oldText='ANTIGUA REVISION NO USAR';
+    $q=$db->prepare("INSERT INTO ChatMessages (session_id_,user_id_,role,content_type,content,meta) VALUES (?,900001,?,?,?,?)");
+    $q->bind_param('issss',$session,$role,$type,$oldText,$staleMeta);$q->execute();$staleMessage=(int)$db->insert_id;$q->close();
+    $oldBlock='MEMORIA VIEJA, EXCLUIR';
+    $currentBlock='MEMORIA ACTUAL, PERMITIR';
+    $typeBlock='level_0';
+    $q=$db->prepare('INSERT INTO SessionContextBlocks (session_id_,block_type,question_msg_id,content_preview) VALUES (?,?,?,?)');
+    $q->bind_param('isis',$session,$typeBlock,$staleMessage,$oldBlock);$q->execute();$q->close();
+    $currentMessage=(int)$response['message_id'];
+    $q=$db->prepare('INSERT INTO SessionContextBlocks (session_id_,block_type,question_msg_id,content_preview) VALUES (?,?,?,?)');
+    $q->bind_param('isis',$session,$typeBlock,$currentMessage,$currentBlock);$q->execute();$q->close();
+    $memory=new SessionMemoryRepository($db);
+    $recent=$memory->recentMessages(900001,$session,20,$revision);
+    $contents=implode(' | ',array_map(static fn($x)=>$x->content,$recent));
+    $check(!str_contains($contents,$oldText)&&str_contains($contents,'Resumen los hechos')===false,'legal revision filter excludes stale messages without fabricated context');
+    $retrieved=$memory->retrieve(900001,$session,'Resume la conversacion',30,null,$revision);
+    $check(str_contains($retrieved['context'],$currentBlock)&&!str_contains($retrieved['context'],$oldBlock),'legal revision-bound memory excludes stale SessionContextBlocks');
     $before=(int)$db->query('SELECT COUNT(*) AS n FROM ChatMessages WHERE session_id_='.$session." AND role='assistant'")->fetch_assoc()['n'];
     $throwBedrock=true;
     try{$chat->send('legal-hostgator',900001,$session,$request);$check(false,'simulated Bedrock failure');}
