@@ -115,11 +115,14 @@ final class LegalBridgeDocumentService
         $idx=new CentralDocumentIndex($this->db);
         $source=$idx->sources($user,$session,$sessionData,false)[$fileId]??null;
         if(!$source) return ['status'=>'pending','coverage'=>'none','revision_sha256'=>$doc['current_revision'],'file_id'=>$fileId];
-        $state=$idx->status($source,(string)$source['embedding_model']);
+        require_once dirname(__DIR__).'/Documents/BedrockDocumentKnowledgeRuntime.php';
+        try { $activeModel=(new BedrockDocumentKnowledgeRuntime($this->db))->embeddingModel($user); }
+        catch (Throwable $e) { $activeModel=''; }
+        $state=$idx->status($source,$activeModel);
         $job=(array)($state['job']??[]);
         $status='pending';
         if(($job['status']??'')==='failed') $status='error';
-        elseif(($state['state']??'')==='ready' && ($job['status']??'')==='completed' && $state['chunks_total']>0 && $state['chunks_with_embedding']===$state['chunks_total']) $status='ready';
+        elseif($activeModel!=='' && $activeModel===(string)$source['embedding_model'] && ($state['state']??'')==='ready' && ($job['status']??'')==='completed' && $state['chunks_total']>0 && $state['chunks_with_embedding']===$state['chunks_total']) $status='ready';
         elseif(($state['state']??'')==='partial') $status='partial';
         elseif(($job['phase']??'')==='extract') $status='extracting';
         elseif(in_array(($job['phase']??''),['chunks','embeddings'],true)) $status='indexing';
