@@ -14,16 +14,16 @@ Este archivo distingue **comprobación automatizada** de **validación pendiente
 | 8 | Acceso a sesión ajena | `legal_bridge_mysql_contract.php` | Automatizada (MySQL descartable) |
 | 9 | Creación de sesión | `legal_bridge_mysql_contract.php`, `SessionLifecycleService` | Automatizada (MySQL descartable) |
 | 10 | Reutilización de sesión | `legal_bridge_mysql_contract.php` | Automatizada (MySQL descartable) |
-| 11 | Adjuntar documento | `LegalBridgeDocumentService` implementado; falta ensayo con S3 privado simulado/aislado | **Pendiente** |
-| 12 | Documento duplicado | Reutilización por `LegalBridgeDocuments` y SHA; falta ensayo S3 aislado | **Pendiente** |
-| 13 | Nueva revisión | FileS3 independiente y detached_file_ids; falta verificar retriever con revisiones y AWS simulado | **Pendiente** |
+| 11 | Adjuntar documento | `legal_bridge_document_mysql_contract.php`: S3 privado simulado + FileS3 real | Automatizada (por validar en CI) |
+| 12 | Documento duplicado | `legal_bridge_document_mysql_contract.php`: idempotencia y nuevo encolado | Automatizada (por validar en CI) |
+| 13 | Nueva revisión | `legal_bridge_document_mysql_contract.php` + `legal_bridge_central_index_mysql_contract.php`: fichero distinto, revisión vieja excluida | Automatizada (por validar en CI) |
 | 14 | Estado pendiente | `legal_bridge_knowledge_status_test.php` con estados persistidos ficticios | Automatizada (pura) |
-| 15 | Indexación completada | `legal_bridge_knowledge_status_test.php` valida sólo la conversión de estado; no completó embeddings reales | Parcial / falta integración |
-| 16 | Error de Bedrock | Runtime compartido empleado; falta inyectar un fallo Bedrock en integración aislada | **Pendiente** |
+| 15 | Indexación completada | `legal_bridge_central_index_mysql_contract.php`: job real, chunks y embeddings simulados, cobertura completa | Automatizada (por validar en CI) |
+| 16 | Error de Bedrock | `legal_bridge_chat_mysql_contract.php`: runtime simulado falla sin inventar respuesta | Automatizada (por validar en CI) |
 | 17 | Recuperación de mensajes | `legal_bridge_mysql_contract.php` | Automatizada (MySQL descartable) |
-| 18 | Evidencia RAG | ContextBuilder reutilizado; falta certificar filtrado por revisión y citas con datos ficticios | **Pendiente** |
-| 19 | Rechazo de propuestas no autorizadas | Auth/session checks implementados; falta prueba directa de `document.suggestions` sin autorización | **Pendiente** |
-| 20 | Original sin modificaciones | No hay código que escriba en Legal; falta comparar bytes del original durante ensayo de revisiones | **Pendiente** |
+| 18 | Evidencia RAG | `legal_bridge_central_index_mysql_contract.php`: recuperación real de chunks, filtro de revisión; `legal_bridge_chat_mysql_contract.php`: memoria filtrada | Automatizada (por validar en CI) |
+| 19 | Rechazo de propuestas no autorizadas | `legal_bridge_chat_mysql_contract.php`: propuestas de usuario ajeno rechazadas antes de IA | Automatizada (por validar en CI) |
+| 20 | Original sin modificaciones | `legal_bridge_document_mysql_contract.php`: hash del original ficticio intacto y objetos separados | Automatizada (por validar en CI) |
 
 ## Reglas para aprobar el PR
 
@@ -33,3 +33,9 @@ Este archivo distingue **comprobación automatizada** de **validación pendiente
 - Revisar que `LEGAL_BRIDGE_ENABLED=false` en la configuración privada de EC2. No realizar esa comprobación por cambios en producción durante la tarea de código.
 - Revisar la migración fase15 con el administrador y **no** ejecutar `migrations.php apply` en producción hasta autorización.
 - Mantener PR #144 en borrador y sin fusión mientras existan pendientes.
+
+## Alcance de las simulaciones
+
+La ruta S3 se ejecuta con un uploader falso inyectado que escribe la misma tabla `FileS3` del esquema real. El índice documental central, los workers de índices, la tabla de chunks, el repositorio de acceso y el retriever son reales, pero su S3, extracción y modelo de embedding están simulados, sin claves ni redes. El adaptador conversacional usa el `ChatExecutionService` real con `CallableChatRuntime` para provocar respuestas y errores sin consumir Bedrock. La prueba no equivale a un ensayo de AWS/HostGator en producción.
+
+Las pruebas son necesarias pero no sustituyen la inspección de la implementación frente a ataques de concurrencia, documentos maliciosos, ni la revisión de CI antes de fusionar.
