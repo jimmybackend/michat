@@ -5,7 +5,7 @@ on:
     paths:
       - 'michat/api/legal-bridge.php'
       - 'michat/includes/LegalBridge/**'
-      - 'michat/sql/legal_bridge.sql'
+      - 'docs/sql/legal_bridge.sql'
       - 'michat/tests/legal_bridge_auth_test.php'
       - '.github/workflows/legal-bridge-tests.yml'
   workflow_dispatch:
