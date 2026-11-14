@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS LegalBridgeSessions (
   created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id_),
-  UNIQUE KEY uq_legal_document (credential_id, external_system, external_document_type, external_document_id),
+  UNIQUE KEY uq_legal_document (credential_id, user_id_, external_system, external_document_type, external_document_id),
   UNIQUE KEY uq_legal_session (session_id_),
   KEY idx_legal_owner (user_id_, session_id_),
   CONSTRAINT fk_lbs_client FOREIGN KEY (credential_id) REFERENCES LegalBridgeClients(credential_id) ON DELETE RESTRICT,
