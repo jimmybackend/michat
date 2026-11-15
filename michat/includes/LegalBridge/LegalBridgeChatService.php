@@ -147,7 +147,7 @@ final class LegalBridgeChatService
                 && !preg_match('/\b(no es|no se trata de) (un |una )?(machote|plantilla|modelo)\b/u',$normalized)) {
                 $template=true;
             }
-            if(preg_match('/\b(no se ha presentado|no ha sido presentado|nunca se present|aun no se present|sin presentar)\b/u',$normalized)) {
+            if(preg_match('/\b(no se ha presentado|no ha sido presentado|nunca se present|aun no se present|sin presentar|presentado nunca)\b/u',$normalized)) {
                 $presented=false;
             }
             if(preg_match('/\b(ya se presento|fue presentado|se presento ante|acabo de presentar)\b/u',$normalized)) {
