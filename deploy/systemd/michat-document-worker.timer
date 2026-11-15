@@ -1,9 +1,9 @@
 [Unit]
-Description=Process queued MiChat document knowledge every minute
+Description=Process queued MiChat document knowledge with a short idle interval
 
 [Timer]
-OnBootSec=1min
-OnUnitInactiveSec=1min
+OnBootSec=10s
+OnUnitInactiveSec=10s
 Unit=michat-document-worker.service
 
 [Install]
