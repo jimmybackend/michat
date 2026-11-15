@@ -11,6 +11,7 @@ function legalBridgeReply(array $data,int $status=200): never {
     exit;
 }
 
+$bridgeStage = 'bootstrap';
 try {
     // The standard bootstrap loads MICHAT_ENV_FILE or repository .env, not
     // /etc/michat.env unconditionally. Read the already-existing private
@@ -45,16 +46,19 @@ try {
         if (str_contains($value,',')) throw new LegalBridgeError('invalid_signature',401);
         $headers[strtolower($header)]=$value;
     }
+    $bridgeStage = 'authentication';
     $identity=(new LegalBridgeAuth($db_connection))->verify('POST',$path,$body,$headers,$tls);
     $request=json_decode($body,true,32,JSON_THROW_ON_ERROR);
     if (!is_array($request) || array_is_list($request)) throw new LegalBridgeError('invalid_json',400);
     $op=(string)($request['operation']??'');
     $payload=$request['data']??[];
     if (!is_array($payload) || array_is_list($payload) && $payload!==[]) throw new LegalBridgeError('invalid_payload',400);
+    $bridgeStage = 'service_init';
     $sessions=new LegalBridgeSessionService($db_connection);
     $userId=$identity['user_id'];$credential=$identity['credential_id'];
     $documents=new LegalBridgeDocumentService($db_connection,$sessions);
 
+    $bridgeStage = 'operation_' . (in_array($op, ['health','session.open','chat.history','chat.activity','document.attach','document.status','chat.send','document.suggestions'], true) ? str_replace('.', '_', $op) : 'unknown');
     if ($op==='health') {
         legalBridgeReply(['ok'=>true,'enabled'=>true,'authenticated'=>true,'services'=>['database'=>'available']]);
     }
@@ -91,6 +95,8 @@ try {
     legalBridgeReply(['ok'=>false,'error'=>['code'=>'invalid_json']],400);
 } catch (Throwable $e) {
     // No request bodies, secrets, exception details or document contents in logs.
-    error_log('LEGAL_BRIDGE_FAILURE type='.get_class($e));
+    // Operational context only: no exception messages, request data, secrets or SQL.
+    error_log('LEGAL_BRIDGE_FAILURE stage=' . $bridgeStage . ' type=' . get_class($e)
+        . ' source=' . basename($e->getFile()) . ' line=' . $e->getLine());
     legalBridgeReply(['ok'=>false,'error'=>['code'=>'bridge_unavailable']],503);
 }
