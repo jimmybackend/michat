@@ -118,20 +118,23 @@ final class LegalBridgeChatService
         $this->sessions->assertOwned($credential,$user,$session);
         $revision=(string)($input['revision_sha256']??'');
         $section=(string)($input['section']??'');
-        $answerContext=$input['answer_context']??'';
+        // All proposal wording comes from Legal's central server-side prompts.
+        // Only signed Legal bridge requests can reach this service.
+        $proposalPrompt=$input['proposal_prompt']??null;
+        $proposalGuidance=$input['legal_proposal_guidance']??null;
         if(!preg_match('/^[a-f0-9]{64}$/D',$revision)
           || trim($section)===''||mb_strlen($section)>150
-          || !is_string($answerContext)||mb_strlen($answerContext,'UTF-8')>8000) {
+          || !is_string($proposalPrompt)||trim($proposalPrompt)===''
+          || mb_strlen($proposalPrompt,'UTF-8')>12000
+          || !is_string($proposalGuidance)||trim($proposalGuidance)===''
+          || mb_strlen($proposalGuidance,'UTF-8')>1800) {
             throw new LegalBridgeError('invalid_suggestion_request',422);
         }
         $request=[
             'revision_sha256'=>$revision,
             'legal_intent'=>'answer',
-            'legal_guidance'=>'Devuelve exclusivamente el JSON solicitado con cambios exactos respaldados en el documento. No hagas preguntas, no agregues explicaciones ni texto fuera del JSON.',
-            'message'=>$answerContext!=='' ?
-                "Instrucción interna exclusiva del puente Legal para PROPONER un cambio al borrador, no para responder al usuario. Aclaración del usuario: ". $answerContext .
-                "\nRevisa solo el apartado \"".$section."\" del documento adjunto. Devuelve SOLO JSON válido con clave suggestions (arreglo). Para cada cambio devuelve section, original (párrafo EXACTO que exista en el documento adjunto), proposed (párrafo completo actualizado, mismo estilo, primera persona y fechas manuales intactas), justification, information_used, evidence_references (arreglo), pending_confirmation (arreglo). SOLO modifica lo respaldado por la aclaración. No inventes hechos, fundamentos ni fechas. No reproduzcas frases de instrucciones en el escrito. Si no existe un original inequívoco, no propongas modificación: suggestions vacío. No modifiques archivos ni ejecutes herramientas." :
-                "Revisa exclusivamente el apartado \"".$section."\" del documento adjunto. Devuelve SOLO un objeto JSON con la clave suggestions (arreglo). Cada elemento debe incluir section, original, proposed, justification, information_used, evidence_references (arreglo), and pending_confirmation (arreglo). No inventes hechos, jurisprudencia, autoridades ni fuentes. Si no hay evidencia suficiente devuelve suggestions vacío e identifica pendientes. No ejecutes herramientas ni modifiques archivos."
+            'legal_guidance'=>$proposalGuidance,
+            'message'=>$proposalPrompt,
         ];
         $chat=$this->send($credential,$user,$session,$request);
         $raw=trim((string)$chat['reply']);
