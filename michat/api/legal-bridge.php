@@ -58,7 +58,7 @@ try {
     $userId=$identity['user_id'];$credential=$identity['credential_id'];
     $documents=new LegalBridgeDocumentService($db_connection,$sessions);
 
-    $bridgeStage = 'operation_' . (in_array($op, ['health','session.open','chat.history','chat.activity','document.attach','document.status','chat.send','document.suggestions'], true) ? str_replace('.', '_', $op) : 'unknown');
+    $bridgeStage = 'operation_' . (in_array($op, ['health','session.open','chat.history','chat.activity','document.attach','document.status','chat.send','chat.clarification','document.suggestions'], true) ? str_replace('.', '_', $op) : 'unknown');
     if ($op==='health') {
         legalBridgeReply(['ok'=>true,'enabled'=>true,'authenticated'=>true,'services'=>['database'=>'available']]);
     }
@@ -81,11 +81,13 @@ try {
     if ($op==='document.status') {
         legalBridgeReply(['ok'=>true]+$documents->status($credential,$userId,(int)($payload['session_id']??0)));
     }
-    if ($op==='chat.send' || $op==='document.suggestions') {
+    if ($op==='chat.send' || $op==='chat.clarification' || $op==='document.suggestions') {
         $chat=new LegalBridgeChatService($db_connection,$sessions,$documents);
         $out=$op==='chat.send'
             ?$chat->send($credential,$userId,(int)($payload['session_id']??0),$payload)
-            :$chat->suggestions($credential,$userId,(int)($payload['session_id']??0),$payload);
+            :($op==='chat.clarification'
+                ?$chat->recordClarification($credential,$userId,(int)($payload['session_id']??0),$payload)
+                :$chat->suggestions($credential,$userId,(int)($payload['session_id']??0),$payload));
         legalBridgeReply(['ok'=>true]+$out);
     }
     throw new LegalBridgeError('unknown_operation',400);
