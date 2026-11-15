@@ -65,6 +65,9 @@ final class LegalBridgeSessionService
         } catch(Throwable $e) {
             $this->db->rollback();
             if ($e instanceof LegalBridgeError) throw $e;
+            // A sanitized internal location helps diagnose the actual failed call.
+            error_log('LEGAL_BRIDGE_SESSION_OPEN_FAILURE type=' . get_class($e)
+                . ' source=' . basename($e->getFile()) . ' line=' . $e->getLine());
             throw new LegalBridgeError('bridge_unavailable',503);
         }
     }
