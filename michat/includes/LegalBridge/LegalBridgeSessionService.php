@@ -47,9 +47,33 @@ final class LegalBridgeSessionService
             $q->execute(); $existing=$q->get_result()->fetch_assoc(); $q->close();
             if ($existing) {
                 if ((int)$existing['user_id_'] !== $userId) throw new LegalBridgeError('session_forbidden',403);
-                // Prompts are owned by Legal. Refresh instructions for an existing
-                // authorized document session without replacing its ID or history.
-                // This also repairs older sessions that kept obsolete prompts.
+                // Respect the user's archive/trash decision. A closed/archived
+                // MiChat conversation must never be silently reopened or reused.
+                // Rotate the Legal binding to a fresh conversation; existing
+                // ChatMessages, LegalBridgeDocuments and S3 objects stay with
+                // the former session, and Legal remains the source of truth.
+                if ((string)$existing['status'] !== 'open') {
+                    $q=$this->db->prepare('SELECT model_id FROM UserPreferences WHERE user_id_=? LIMIT 1');
+                    $q->bind_param('i',$userId);$q->execute();
+                    $pref=$q->get_result()->fetch_assoc();$q->close();
+                    $model=trim((string)($pref['model_id']??''));
+                    if ($model === '') throw new LegalBridgeError('model_not_configured',503);
+                    $created=(new SessionLifecycleService($this->db))->create($userId,$title,$model);
+                    $newSessionId=(int)$created['id'];
+                    $oldSessionId=(int)$existing['session_id_'];
+                    $q=$this->db->prepare('UPDATE LegalBridgeSessions
+                        SET session_id_=?, current_revision=?, session_instructions=?
+                        WHERE credential_id=? AND user_id_=? AND external_system=?
+                          AND external_document_type=? AND external_document_id=? AND session_id_=?');
+                    $q->bind_param('isssisssi',$newSessionId,$revision,$instructions,
+                        $credentialId,$userId,$system,$type,$id,$oldSessionId);
+                    $q->execute();$changed=$q->affected_rows;$q->close();
+                    if ($changed !== 1) throw new LegalBridgeError('session_binding_conflict',409);
+                    $this->db->commit();
+                    return ['session_id'=>$newSessionId,'created'=>true,'status'=>(string)$created['status'],
+                        'replaced_closed_session'=>true];
+                }
+                // Preserve active chats and refresh their Legal-owned prompts.
                 if (trim($instructions) !== '') {
                     $existingId=(int)$existing['session_id_'];
                     $u=$this->db->prepare('UPDATE LegalBridgeSessions SET session_instructions=? WHERE credential_id=? AND user_id_=? AND session_id_=? AND external_system=? AND external_document_type=? AND external_document_id=?');
@@ -57,7 +81,7 @@ final class LegalBridgeSessionService
                     $u->execute();$u->close();
                 }
                 $this->db->commit();
-                return ['session_id'=>(int)$existing['session_id_'],'created'=>false,'status'=>(string)$existing['status']];
+                return ['session_id'=>(int)$existing['session_id_'],'created'=>false,'status'=>'open'];
             }
             $q=$this->db->prepare('SELECT model_id FROM UserPreferences WHERE user_id_=? LIMIT 1');
             $q->bind_param('i',$userId);$q->execute();$pref=$q->get_result()->fetch_assoc();$q->close();
