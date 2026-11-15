@@ -138,6 +138,15 @@ final class LegalBridgeChatService
         // Models may wrap JSON in Markdown. Only accept strict JSON: never
         // interpret free text as permission to modify the Legal original.
         $parsed=json_decode($raw,true);
+        if (!is_array($parsed)) {
+            // Some Bedrock models wrap valid JSON in a Markdown fence/preamble.
+            // This remains proposal-only and never grants write permissions.
+            $start=strpos($raw,'{');
+            $end=strrpos($raw,'}');
+            if ($start!==false && $end!==false && $end>$start && $end-$start<65000) {
+                $parsed=json_decode(substr($raw,$start,$end-$start+1),true);
+            }
+        }
         if(!is_array($parsed)||!isset($parsed['suggestions'])||!is_array($parsed['suggestions'])) {
             return ['session_id'=>$session,'trace_id'=>$chat['trace_id'],'suggestions'=>[],
                 'status'=>'invalid_model_output','requires_review'=>true];
