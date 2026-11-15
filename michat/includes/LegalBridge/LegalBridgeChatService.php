@@ -45,7 +45,8 @@ final class LegalBridgeChatService
             $q=$this->db->prepare("SELECT c.model_id,c.status,l.session_instructions FROM ChatSessions c JOIN LegalBridgeSessions l ON l.session_id_=c.id_ AND l.user_id_=c.user_id_ WHERE c.id_=? AND c.user_id_=? LIMIT 1");
             $q->bind_param('ii',$session,$user);$q->execute();$chat=$q->get_result()->fetch_assoc();$q->close();
             if(!$chat || $chat['status']!=='open') throw new LegalBridgeError('session_not_open',409);
-            $editorialContext=$this->editorialContext($user,$session,$message);
+            $editorialState=$this->editorialState($user,$session,$message);
+            $editorialContext=$editorialState['context'];
             $trace=self::traceId();
             $origin=$this->storeMessage($user,$session,'user',$message,null,['trace_id'=>$trace,'revision_sha256'=>$revision]);
             $request=new ChatExecutionRequest(
@@ -65,21 +66,30 @@ final class LegalBridgeChatService
             // If a revision was switched during Bedrock execution, do not
             // publish this answer under the new revision. User turn is retained.
             $this->assertRevision($credential,$user,$session,$revision);
-            $answer=$this->storeMessage($user,$session,'assistant',$result->replyText,$result->modelId,
-                ['trace_id'=>$trace,'revision_sha256'=>$revision,'stop_reason'=>$result->stopReason]);
+            $reply=$result->replyText;
+            $guarded=false;
+            if ($editorialState['blank_dates'] && self::asksForManualDate($reply)) {
+                // Deterministic postcondition: model output must not negate an
+                // explicit editorial decision by demanding blank dates again.
+                $reply='Entendido. Este documento es un borrador de trabajo; las fechas señaladas para llenado manual se conservarán en blanco. No hace falta proporcionarlas ahora. ¿Qué aspecto de los actos reclamados deseas revisar a continuación?';
+                $guarded=true;
+            }
+            $answer=$this->storeMessage($user,$session,'assistant',$reply,$result->modelId,
+                ['trace_id'=>$trace,'revision_sha256'=>$revision,'stop_reason'=>$result->stopReason,'editorial_guard_applied'=>$guarded]);
             try {
                 if($this->finalizeOverride!==null) {
-                    ($this->finalizeOverride)($user,$session,$origin,$answer,$result);
+                    // Test adapters may verify usage; do not feed rejected text into memory.
+                    if (!$guarded) ($this->finalizeOverride)($user,$session,$origin,$answer,$result);
                 } else {
                     (new ChatTokenUsageService($this->db))->recordFinal($user,$session,$answer,$result->modelId,$result->tokenUsage,$result->latencyMs);
-                    (new ChatMemoryFinalizationService($this->db,Config::getBedrockRuntime()))->finalize($user,$session,null,$origin,$answer,[],[]);
+                    if (!$guarded) (new ChatMemoryFinalizationService($this->db,Config::getBedrockRuntime()))->finalize($user,$session,null,$origin,$answer,[],[]);
                 }
             } catch(Throwable $e) {
                 // Persistence already succeeded. Never log content or secrets.
                 error_log('LEGAL_BRIDGE_MEMORY type='.get_class($e));
             }
             return ['session_id'=>$session,'message_id'=>$origin,'assistant_message_id'=>$answer,
-                'trace_id'=>$trace,'revision_sha256'=>$revision,'reply'=>$result->replyText,
+                'trace_id'=>$trace,'revision_sha256'=>$revision,'reply'=>$reply,
                 'coverage'=>$state['coverage'],'evidence_status'=>'not_separately_verified'];
         } catch(LegalBridgeError $e) { throw $e; }
         catch(Throwable $e) { throw new LegalBridgeError('chat_execution_failed',503); }
@@ -131,7 +141,7 @@ final class LegalBridgeChatService
      * User's explicit editorial decisions remain authoritative across turns
      * even when retrieved document chunks emphasize blank placeholders.
      */
-    private function editorialContext(int $user,int $session,string $currentMessage): string
+    private function editorialState(int $user,int $session,string $currentMessage): array
     {
         $q=$this->db->prepare("SELECT content FROM ChatMessages WHERE session_id_=? AND user_id_=? AND role='user' ORDER BY id_ DESC LIMIT 40");
         $q->bind_param('ii',$session,$user);$q->execute();
@@ -161,13 +171,25 @@ final class LegalBridgeChatService
                 $blankDates=false;
             }
         }
-        if(!$template && $presented===null && !$blankDates) return '';
+        if(!$template && $presented===null && !$blankDates) return ['context'=>'','blank_dates'=>false];
         $rules=[];
         if($template) $rules[]='El usuario identificó este documento como machote, modelo o plantilla. No afirmes que los hechos son acreditados por ese solo motivo; revisa la estructura y los hechos ilustrativos.';
         if($presented===false) $rules[]='El usuario aclaró que el amparo NO ha sido presentado. No preguntes la fecha de presentación ni presupongas que existe un expediente de amparo judicial.';
         if($blankDates) $rules[]='El usuario decidió dejar las fechas y líneas vacías para completarlas A MANO cuando ocurra el hecho. Es una decisión editorial resuelta, NO una pregunta pendiente; conserva los espacios en blanco y revisa otro aspecto.';
         if($presented===true) $rules[]='El usuario aclaró que el escrito ya fue presentado; adapta el contexto al estado más reciente.';
-        return "\n\nDecisiones expresas del usuario para esta sesión (sin modificar el escrito):\n- ".implode("\n- ",$rules);
+        return ['context'=>"\n\nDecisiones expresas del usuario para esta sesión (sin modificar el escrito):\n- ".implode("\n- ",$rules),'blank_dates'=>$blankDates];
+    }
+
+    /** Reject only actual questions asking for dates the user reserved for manual completion. */
+    private static function asksForManualDate(string $reply): bool
+    {
+        if (preg_match_all('/¿[^?]{1,700}\?/u', $reply, $questions)) {
+            foreach ($questions[0] as $question) {
+                if (preg_match('/\b(fecha|fechas|cu[aá]ndo|d[ií]a|mes|año)\b/iu', $question)) return true;
+            }
+        }
+        // Also recognize answers that omit the Spanish opening question mark.
+        return (bool) preg_match('/(?:pregunta\s*:\s*|(?:^|\n)\s*)(?:en\s+qu[eé]\s+fecha|cu[aá]ndo|qu[eé]\s+d[ií]a)[^?\n]{1,450}\?/iu', $reply);
     }
 
     private function assertRevision(string $credential,int $user,int $session,string $revision): void
