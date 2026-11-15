@@ -47,6 +47,15 @@ final class LegalBridgeSessionService
             $q->execute(); $existing=$q->get_result()->fetch_assoc(); $q->close();
             if ($existing) {
                 if ((int)$existing['user_id_'] !== $userId) throw new LegalBridgeError('session_forbidden',403);
+                // Prompts are owned by Legal. Refresh instructions for an existing
+                // authorized document session without replacing its ID or history.
+                // This also repairs older sessions that kept obsolete prompts.
+                if (trim($instructions) !== '') {
+                    $existingId=(int)$existing['session_id_'];
+                    $u=$this->db->prepare('UPDATE LegalBridgeSessions SET session_instructions=? WHERE credential_id=? AND user_id_=? AND session_id_=? AND external_system=? AND external_document_type=? AND external_document_id=?');
+                    $u->bind_param('ssiisss',$instructions,$credentialId,$userId,$existingId,$system,$type,$id);
+                    $u->execute();$u->close();
+                }
                 $this->db->commit();
                 return ['session_id'=>(int)$existing['session_id_'],'created'=>false,'status'=>(string)$existing['status']];
             }
