@@ -73,6 +73,8 @@ final class LegalBridgeDocumentService
         } catch (Throwable $e) {
             $this->db->rollback();
             if ($e instanceof LegalBridgeError) throw $e;
+            error_log('LEGAL_BRIDGE_DOCUMENT_FAILURE stage=attach type=' . get_class($e)
+                . ' source=' . basename($e->getFile()) . ' line=' . $e->getLine());
             throw new LegalBridgeError('document_attach_failed',503);
         } finally {
             if ($temp!==null && is_file($temp)) @unlink($temp);
@@ -84,6 +86,8 @@ final class LegalBridgeDocumentService
                 ? ($this->enqueueOverride)($user,$session,$fileId)
                 : $this->productionEnqueue($user,$session,$fileId);
         } catch(Throwable $e) {
+            error_log('LEGAL_BRIDGE_DOCUMENT_FAILURE stage=enqueue type=' . get_class($e)
+                . ' source=' . basename($e->getFile()) . ' line=' . $e->getLine());
             return ['file_id'=>$fileId,'revision_sha256'=>$revision,'created'=>$created,'status'=>'pending','index_enqueue'=>'failed'];
         }
         return ['file_id'=>$fileId,'revision_sha256'=>$revision,'created'=>$created,'status'=>'pending','index_enqueue'=>!empty($queued['ok'])?'accepted':'failed'];
