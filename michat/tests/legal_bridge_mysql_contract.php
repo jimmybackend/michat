@@ -68,6 +68,39 @@ function runLegalBridgeMysqlContracts(mysqli $db, callable $check): void
         $check(count($activity['events'])===1 && !array_key_exists('details_json',$activity['events'][0]),'activity exposes only whitelisted operational fields');
         require_once __DIR__.'/legal_bridge_document_mysql_contract.php';
         runLegalBridgeDocumentMysqlContracts($db,$check,$sid,(int)$other['session_id']);
+
+        // Archived / trashed sessions are the user's decision: restart
+        // the same Legal document from a NEW empty chat without resurrecting
+        // history or the old document revision attachment.
+        (new SessionLifecycleService($db))->archive(900001,$sid);
+        $archived=$svc->open('legal-hostgator',900001,$ref);
+        $check($archived['created']===true && $archived['session_id']!==$sid
+            && $archived['status']==='open','legal archived session rotates to new open conversation');
+        $q=$db->prepare('SELECT status FROM ChatSessions WHERE id_=? AND user_id_=900001');
+        $q->bind_param('i',$sid);$q->execute();
+        $oldStatus=$q->get_result()->fetch_assoc()['status']??null;$q->close();
+        $check($oldStatus==='archived','legal rotation leaves archived chat unchanged');
+        $newId=(int)$archived['session_id'];
+        $check(count($svc->history('legal-hostgator',900001,$newId,0,10)['messages'])===0,
+            'legal restarted chat has no inherited old messages');
+        try {$svc->assertOwned('legal-hostgator',900001,$sid);$check(false,'old binding remains');}
+        catch(LegalBridgeError $e){$check($e->httpStatus===404,'old archived session no longer used by Legal bridge');}
+        $q=$db->prepare('SELECT COUNT(*) total FROM LegalBridgeDocuments WHERE session_id_=? AND user_id_=900001');
+        $q->bind_param('i',$sid);$q->execute();
+        $oldCopies=(int)$q->get_result()->fetch_assoc()['total'];$q->close();
+        $check($oldCopies>=2,'legal old S3 document references are preserved');
+        $againFresh=$svc->open('legal-hostgator',900001,$ref);
+        $check($againFresh['created']===false && $againFresh['session_id']===$newId,
+            'legal repeated open reuses only the active replacement');
+        (new SessionLifecycleService($db))->trash(900001,$newId);
+        $trashed=$svc->open('legal-hostgator',900001,$ref);
+        $check($trashed['created']===true && $trashed['session_id']!==$newId
+            && $trashed['status']==='open','legal trashed session rotates to another fresh chat');
+        $q=$db->prepare('SELECT status FROM ChatSessions WHERE id_=? AND user_id_=900001');
+        $q->bind_param('i',$newId);$q->execute();
+        $trashedStatus=$q->get_result()->fetch_assoc()['status']??null;$q->close();
+        $check($trashedStatus==='closed','legal rotation leaves trashed session closed');
+
     } finally {
         foreach($old as $k=>$v) {if($v===false)putenv($k);else putenv($k.'='.$v);}
     }
