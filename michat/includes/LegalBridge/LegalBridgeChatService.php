@@ -113,6 +113,42 @@ final class LegalBridgeChatService
         }
     }
 
+    /**
+     * Record a direct answer in the authorized Legal session without generating
+     * a redundant model reply. Other MiChat conversations remain unchanged.
+     */
+    public function recordClarification(string $credential,int $user,int $session,array $input): array
+    {
+        $this->sessions->assertOwned($credential,$user,$session);
+        $revision=$input['revision_sha256']??null;
+        $answer=$input['answer']??null;
+        if (!is_string($revision) || !preg_match('/^[a-f0-9]{64}$/D',$revision)
+            || !is_string($answer) || trim($answer)===''
+            || mb_strlen($answer,'UTF-8')>8000) throw new LegalBridgeError('invalid_message',422);
+        $this->assertRevision($credential,$user,$session,$revision);
+        $lock=LegalBridgeSessionService::chatLock($credential,$user,$session);
+        $q=$this->db->prepare('SELECT GET_LOCK(?,5) AS acquired');
+        $q->bind_param('s',$lock);$q->execute();
+        $acquired=(int)($q->get_result()->fetch_assoc()['acquired']??0)===1;
+        $q->close();
+        if(!$acquired) throw new LegalBridgeError('session_busy',409);
+        try {
+            $this->assertRevision($credential,$user,$session,$revision);
+            $q=$this->db->prepare("SELECT status FROM ChatSessions WHERE id_=? AND user_id_=? LIMIT 1");
+            $q->bind_param('ii',$session,$user);$q->execute();
+            $status=(string)($q->get_result()->fetch_assoc()['status']??'');
+            $q->close();
+            if($status!=='open') throw new LegalBridgeError('session_not_open',409);
+            $messageId=$this->storeMessage($user,$session,'user',trim($answer),null,[
+                'trace_id'=>self::traceId(),'revision_sha256'=>$revision,
+                'legal_clarification'=>true]);
+            return ['session_id'=>$session,'message_id'=>$messageId,'recorded'=>true];
+        } finally {
+            $q=$this->db->prepare('SELECT RELEASE_LOCK(?)');
+            $q->bind_param('s',$lock);$q->execute();$q->close();
+        }
+    }
+
     public function suggestions(string $credential,int $user,int $session,array $input): array
     {
         $this->sessions->assertOwned($credential,$user,$session);
