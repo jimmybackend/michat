@@ -78,7 +78,8 @@ final class LegalBridgeChatService
                 ['trace_id'=>$trace,'revision_sha256'=>$revision,'stop_reason'=>$result->stopReason,'editorial_guard_applied'=>$guarded]);
             try {
                 if($this->finalizeOverride!==null) {
-                    ($this->finalizeOverride)($user,$session,$origin,$answer,$result);
+                    // Test adapters may verify usage; do not feed rejected text into memory.
+                    if (!$guarded) ($this->finalizeOverride)($user,$session,$origin,$answer,$result);
                 } else {
                     (new ChatTokenUsageService($this->db))->recordFinal($user,$session,$answer,$result->modelId,$result->tokenUsage,$result->latencyMs);
                     if (!$guarded) (new ChatMemoryFinalizationService($this->db,Config::getBedrockRuntime()))->finalize($user,$session,null,$origin,$answer,[],[]);
