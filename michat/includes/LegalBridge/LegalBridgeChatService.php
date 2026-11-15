@@ -29,7 +29,7 @@ final class LegalBridgeChatService
         $revision=$input['revision_sha256']??null;
         // Legal-only, signed server-to-server request fields. This does not alter
         // MiChat's general chat prompts, agents, or other conversations.
-        $legalIntent=$input['legal_intent']??'answer';
+        $legalIntent=$input['legal_intent']??'review';
         $legalGuidance=$input['legal_guidance']??'';
         if (!is_string($legalIntent) || !in_array($legalIntent,['answer','review'],true)
             || !is_string($legalGuidance) || mb_strlen($legalGuidance,'UTF-8')>1800) {
