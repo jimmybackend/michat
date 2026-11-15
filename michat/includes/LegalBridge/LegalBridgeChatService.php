@@ -121,7 +121,7 @@ final class LegalBridgeChatService
         $answerContext=$input['answer_context']??'';
         if(!preg_match('/^[a-f0-9]{64}$/D',$revision)
           || trim($section)===''||mb_strlen($section)>150
-          || !is_string($answerContext)||mb_strlen($answerContext,'UTF-8')>12000) {
+          || !is_string($answerContext)||mb_strlen($answerContext,'UTF-8')>8000) {
             throw new LegalBridgeError('invalid_suggestion_request',422);
         }
         $request=[
